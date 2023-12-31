@@ -1,0 +1,21 @@
+[log]
+mode = "off"
+timing = false
+
+[log.stdout]
+level = "warn"
+
+[log.file]
+level = "info"
+# path = "~/.cache/runcore/runcore.log"
+
+[persistence]
+enabled = true
+type = "sqlite"
+max_records = -1
+max_age = "" #ISO 8601 duration format
+# database = "~/.local/share/runcore/jobs.db"
+
+[plugins]
+enabled = false
+# load = ["taro_sns"]
