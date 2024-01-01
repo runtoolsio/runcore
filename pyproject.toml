@@ -26,9 +26,6 @@ test = ["pytest"]
 name = "runtoolsio.runcore"
 
 [tool.pytest.ini_options]
-addopts = [
-    "--import-mode=importlib",
-]
 pythonpath = "src"
 
 [project.urls]
