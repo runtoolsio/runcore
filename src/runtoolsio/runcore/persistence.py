@@ -33,7 +33,7 @@ import sys
 from enum import Enum
 from typing import List
 
-from tarotools import taro
+from runtoolsio import runcore
 from runtoolsio.runcore import paths, db
 from runtoolsio.runcore import util, cfg
 from runtoolsio.runcore.common import TaroException
@@ -58,12 +58,12 @@ def load_persistence(persistence_type):
     if not cfg.persistence_enabled:
         return _NoPersistence()
 
-    for finder, name, is_pkg in pkgutil.iter_modules(taro.db.__path__, taro.db.__name__ + "."):
-        if name == taro.db.__name__ + "." + persistence_type:
+    for finder, name, is_pkg in pkgutil.iter_modules(runcore.db.__path__, runcore.db.__name__ + "."):
+        if name == runcore.db.__name__ + "." + persistence_type:
             db_module = importlib.import_module(name)
             return db_module.create_persistence()
 
-    raise PersistenceNotFoundError(taro.db.__name__ + "." + persistence_type)
+    raise PersistenceNotFoundError(runcore.db.__name__ + "." + persistence_type)
 
 
 class _PersistenceHolder(dict):
