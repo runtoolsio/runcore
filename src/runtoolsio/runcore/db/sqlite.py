@@ -176,7 +176,7 @@ class SQLite(InstanceTransitionObserver):
             ended_at = parse_dt_sql(t[5])
             phases = tuple(PhaseMetadata.deserialize(p) for p in json.loads(t[7]))
             lifecycle = Lifecycle.deserialize(json.loads(t[8]))
-            term_status = TerminationStatus[t[9]]
+            term_status = TerminationStatus.from_code(t[9])
             failure = RunFailure.deserialize(json.loads(t[10])) if t[10] else None
             error = RunError.deserialize(json.loads(t[11])) if t[11] else None
             task = TrackedTask.deserialize(json.loads(t[12])) if t[12] else None

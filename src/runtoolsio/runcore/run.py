@@ -71,46 +71,37 @@ class Outcome(Enum):
     FAULT = range(31, 41)  # Failed.
 
 
-class TerminationStatusMeta(EnumMeta):
-    _value2member_map_ = {}  # Stores mapping of integer values to enum members
+class TerminationStatus(Enum):
+    NONE = 0
+    UNKNOWN = -1
 
-    def __getitem__(self, item):
-        if isinstance(item, int):
-            # Lookup by integer value
-            return self._value2member_map_.get(item, TerminationStatus.UNKNOWN)
-        elif isinstance(item, str):
-            # Lookup by string name, handling case insensitivity
-            return super().__getitem__(item.upper())
-        else:
-            raise KeyError("Invalid key: must be integer or string")
+    COMPLETED = 1
 
+    CANCELLED = 11
+    STOPPED = 12
+    INTERRUPTED = 13
 
-class TerminationStatus(Enum, metaclass=TerminationStatusMeta):
-    NONE = (Outcome.NONE, 0)
-    UNKNOWN = (Outcome.NONE, -1)
+    TIMEOUT = 21
+    INVALID_OVERLAP = 22
+    UNSATISFIED = 23
 
-    COMPLETED = (Outcome.SUCCESS, 1)
+    FAILED = 31
+    ERROR = 32
 
-    CANCELLED = (Outcome.ABORT, 11)
-    STOPPED = (Outcome.ABORT, 12)
-    INTERRUPTED = (Outcome.ABORT, 13)
+    @classmethod
+    def from_code(cls, code):
+        for member in cls:
+            if member.value == code:
+                return member
 
-    TIMEOUT = (Outcome.REJECT, 21)
-    INVALID_OVERLAP = (Outcome.REJECT, 22)
-    UNSATISFIED = (Outcome.REJECT, 23)
+        return TerminationStatus.UNKNOWN
 
-    FAILED = (Outcome.FAULT, 31)
-    ERROR = (Outcome.FAULT, 32)
-
-    def __new__(cls, outcome, code):
-        obj = object.__new__(cls)
-        obj.code = code
-        obj.outcome = outcome
-        if code not in outcome.value:
-            raise ValueError(f"Value {code} not in range for outcome {outcome}")
-        obj._value_ = code
-        cls._value2member_map_[code] = obj
-        return obj
+    @property
+    def outcome(self):
+        for outcome in Outcome:
+            if self.value in outcome.value:
+                return outcome
+        return Outcome.NONE
 
     def __bool__(self):
         return self != TerminationStatus.NONE
@@ -381,8 +372,8 @@ class PhaseMetadata:
 
 class TerminateRun(Exception):
     def __init__(self, term_status: TerminationStatus):
-        if term_status.code <= 1:
-            raise ValueError("Termination status code must be >1 but it was: " + term_status.code)
+        if term_status.value <= 1:
+            raise ValueError("Termination status code must be >1 but it was: " + str(term_status.value))
         self.term_status = term_status
         super().__init__(f"Termination status: {term_status}")
 

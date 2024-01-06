@@ -388,7 +388,7 @@ class JobRunAggregatedCriteria(MatchCriteria[JobRun]):
         return not self.job_run_id_criteria or any(c((job_id, run_id)) for c in self.job_run_id_criteria)
 
     def matches_interval(self, job_run):
-        return not self.interval_criteria or any(c(job_run.lifecycle) for c in self.interval_criteria)
+        return not self.interval_criteria or any(c(job_run.run.lifecycle) for c in self.interval_criteria)
 
     def matches_termination(self, job_run):
         return not self.termination_criteria or any(c(job_run.run.termination) for c in self.termination_criteria)

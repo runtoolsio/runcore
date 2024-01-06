@@ -50,6 +50,7 @@ def configure(log_mode, log_stdout_level='warn', log_file_level='info', log_file
     tarotools_logger.setLevel(logging.WARNING)
 
     if log_mode == LogMode.PROPAGATE:
+        # TODO log level must be set for the root logger, otherwise it's always WARNING
         config_logger(enable=True, propagate=True)
         return
 
