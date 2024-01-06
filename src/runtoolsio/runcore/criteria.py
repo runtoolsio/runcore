@@ -301,7 +301,7 @@ class TerminationCriterion(MatchCriteria[TerminationInfo]):
         return self.matches(term_info)
 
     def matches(self, term_info):
-        return any(outcome == term_info.status.outcome for outcome in self.outcomes)
+        return any(term_info.status.is_outcome(outcome) for outcome in self.outcomes)
 
     def __bool__(self):
         return bool(self.outcomes)

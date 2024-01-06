@@ -64,16 +64,17 @@ class RunState(Enum, metaclass=RunStateMeta):
 
 
 class Outcome(Enum):
-    NONE = range(-1, 1)  # Null value.
-    SUCCESS = range(1, 11)  # Completed successfully.
-    ABORT = range(11, 21)  # Aborted by user.
-    REJECT = range(21, 31)  # Rejected by not satisfying a condition.
-    FAULT = range(31, 41)  # Failed.
+    NONE = range(-1, 1)         # Null value.
+    SUCCESS = range(1, 11)      # Completed successfully.
+    NON_SUCCESS = range(11, 99) # Not completed successfully.
+    ABORTED = range(11, 21)     # Aborted by user.
+    REJECTED = range(21, 31)    # Rejected by not satisfying a condition.
+    FAULT = range(31, 41)       # Failed.
 
 
 class TerminationStatus(Enum):
-    NONE = 0
     UNKNOWN = -1
+    NONE = 0
 
     COMPLETED = 1
 
@@ -96,12 +97,8 @@ class TerminationStatus(Enum):
 
         return TerminationStatus.UNKNOWN
 
-    @property
-    def outcome(self):
-        for outcome in Outcome:
-            if self.value in outcome.value:
-                return outcome
-        return Outcome.NONE
+    def is_outcome(self, outcome):
+        return self.value in outcome.value
 
     def __bool__(self):
         return self != TerminationStatus.NONE
