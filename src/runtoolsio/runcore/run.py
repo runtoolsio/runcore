@@ -636,7 +636,7 @@ M = TypeVar('M', bound=InstanceMetadata)
 
 
 @dataclass(frozen=True)
-class InstanceRun(Generic[M]):
+class EntityRun(Generic[M]):
 
     """Descriptive information about this run"""
     metadata: M

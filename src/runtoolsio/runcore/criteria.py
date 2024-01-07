@@ -10,8 +10,7 @@ from dataclasses import dataclass, field
 from datetime import timezone, time, timedelta
 from typing import Dict, Any, Set, Optional, TypeVar, Generic, Tuple
 
-from runtoolsio.runcore.job import JobRun
-from runtoolsio.runcore.run import Outcome, RunState, Lifecycle, TerminationInfo
+from runtoolsio.runcore.run import Outcome, RunState, Lifecycle, TerminationInfo, EntityRun
 from runtoolsio.runcore.util import MatchingStrategy, and_, or_, parse, single_day_range, days_range, \
     format_dt_iso, to_list
 
@@ -32,18 +31,18 @@ class MatchCriteria(ABC, Generic[T]):
 
 
 @dataclass
-class JobRunIdCriterion(MatchCriteria[Tuple[str, str]]):
+class EntityRunIdCriterion(MatchCriteria[Tuple[str, str]]):
     """
     This class specifies criteria for matching `JobRun` instances.
     If both `job_id` and `run_id` are empty, the matching strategy defaults to `MatchingStrategy.ALWAYS_TRUE`.
 
     Attributes:
-        job_id (str): The pattern for job ID matching. If empty, the field is ignored.
+        entity_id (str): The pattern for job ID matching. If empty, the field is ignored.
         run_id (str): The pattern for run ID matching. If empty, the field is ignored.
         match_both_ids (bool): If False, a match with either job_id or instance_id is sufficient. Default is True.
         strategy (MatchingStrategy): The strategy to use for matching. Default is `MatchingStrategy.EXACT`.
     """
-    job_id: str
+    entity_id: str
     run_id: str = ''
     match_both_ids: bool = True
     strategy: MatchingStrategy = MatchingStrategy.EXACT
@@ -61,19 +60,19 @@ class JobRunIdCriterion(MatchCriteria[Tuple[str, str]]):
             job_inst: The specific job instance to create a match for.
 
         Returns:
-            JobRunIdCriterion: A criteria object that will match the given job instance.
+            EntityRunIdCriterion: A criteria object that will match the given job instance.
         """
-        return JobRunIdCriterion(job_id=job_inst.metadata.entity_id, run_id=job_inst.metadata.run_id)
+        return EntityRunIdCriterion(entity_id=job_inst.metadata.entity_id, run_id=job_inst.metadata.run_id)
 
     @classmethod
     def parse_pattern(cls, pattern: str, strategy=MatchingStrategy.EXACT):
         """
         Parses the provided pattern and returns the corresponding JobRunIdMatchCriteria object.
-        The pattern can contain the `@` token to denote `job_id` and `instance_id` parts in this format:
-        `{job_id}@{instance_id}`. If the token is not included, then the pattern is matched against both IDs,
+        The pattern can contain the `@` token to denote `entity_id` and `instance_id` parts in this format:
+        `{entity_id}@{instance_id}`. If the token is not included, then the pattern is matched against both IDs,
         and a match on any fields results in a positive match.
 
-        For matching only `job_id`, use the format: `{job_id}@`
+        For matching only `entity_id`, use the format: `{entity_id}@`
         For matching only `instance_id`, use the format: `@{instance_id}`
 
         Args:
@@ -81,24 +80,24 @@ class JobRunIdCriterion(MatchCriteria[Tuple[str, str]]):
             strategy (MatchingStrategy, optional): The strategy to use for matching. Default is `MatchingStrategy.EXACT`
 
         Returns:
-            JobRunIdCriterion: A new IDMatchCriteria object with the parsed job_id, instance_id, and strategy.
+            EntityRunIdCriterion: A new IDMatchCriteria object with the parsed entity_id, instance_id, and strategy.
         """
         if "@" in pattern:
-            job_id, instance_id = pattern.split("@")
+            entity_id, instance_id = pattern.split("@")
             match_both = True
         else:
-            job_id = instance_id = pattern
+            entity_id = instance_id = pattern
             match_both = False
-        return cls(job_id, instance_id, match_both, strategy)
+        return cls(entity_id, instance_id, match_both, strategy)
 
     @classmethod
     def deserialize(cls, as_dict):
-        return cls(as_dict['job_id'], as_dict['run_id'], as_dict['match_both_ids'],
+        return cls(as_dict['entity_id'], as_dict['run_id'], as_dict['match_both_ids'],
                    MatchingStrategy[as_dict['strategy'].upper()])
 
     def serialize(self):
         return {
-            'job_id': self.job_id,
+            'entity_id': self.entity_id,
             'run_id': self.run_id,
             'match_both_ids': self.match_both_ids,
             'strategy': self.strategy.name.lower(),
@@ -121,8 +120,8 @@ class JobRunIdCriterion(MatchCriteria[Tuple[str, str]]):
             bool: Whether the provided job instance ID matches this criteria
         """
         op = self._op()
-        job_id, run_id = id_tuple
-        return op(not self.job_id or self.strategy(job_id, self.job_id),
+        entity_id, run_id = id_tuple
+        return op(not self.entity_id or self.strategy(entity_id, self.entity_id),
                   not self.run_id or self.strategy(run_id, self.run_id))
 
     def matches_instance(self, job_inst):
@@ -308,10 +307,10 @@ class TerminationCriterion(MatchCriteria[TerminationInfo]):
 
 
 def parse_criteria(pattern: str, strategy: MatchingStrategy = MatchingStrategy.EXACT):
-    return JobRunAggregatedCriteria.parse_pattern(pattern, strategy)
+    return EntityRunAggregatedCriteria.parse_pattern(pattern, strategy)
 
 
-class JobRunAggregatedCriteria(MatchCriteria[JobRun]):
+class EntityRunAggregatedCriteria(MatchCriteria[EntityRun]):
     """
     This object aggregates various criteria for querying and matching job instances.
     An instance must meet all the provided criteria to be considered a match.
@@ -320,7 +319,7 @@ class JobRunAggregatedCriteria(MatchCriteria[JobRun]):
         jobs (List[Job]):
             A list of specific job IDs for matching.
             An instance matches if its job ID is in this list.
-        job_run_id_criteria (List[JobRunIdCriterion]):
+        job_run_id_criteria (List[EntityRunIdCriterion]):
             A list of criteria for matching based on job run IDs.
             An instance matches if it meets any of the criteria in this list.
         interval_criteria (List[IntervalCriterion]):
@@ -336,7 +335,7 @@ class JobRunAggregatedCriteria(MatchCriteria[JobRun]):
 
     def __init__(self, *, jobs=None, job_run_id_criteria=None, interval_criteria=None, termination_criteria=None):
         self.jobs = to_list(jobs) or []
-        self.job_run_id_criteria = to_list(job_run_id_criteria) or []
+        self.entity_run_id_criteria = to_list(job_run_id_criteria) or []
         self.interval_criteria = to_list(interval_criteria) or []
         self.termination_criteria = to_list(termination_criteria) or []
 
@@ -344,7 +343,7 @@ class JobRunAggregatedCriteria(MatchCriteria[JobRun]):
     def deserialize(cls, as_dict):
         new = cls()
         new.jobs = as_dict.get('jobs', [])
-        new.job_run_id_criteria = [JobRunIdCriterion.deserialize(c) for c in as_dict.get('job_run_id_criteria', ())]
+        new.entity_run_id_criteria = [EntityRunIdCriterion.deserialize(c) for c in as_dict.get('entity_run_id_criteria', ())]
         new.interval_criteria = [IntervalCriterion.deserialize(c) for c in as_dict.get('interval_criteria', ())]
         new.termination_criteria = [TerminationCriterion.deserialize(c) for c in
                                     as_dict.get('termination_criteria', ())]
@@ -353,7 +352,7 @@ class JobRunAggregatedCriteria(MatchCriteria[JobRun]):
     def serialize(self):
         return {
             'jobs': self.jobs,
-            'job_run_id_criteria': [c.serialize() for c in self.job_run_id_criteria],
+            'entity_run_id_criteria': [c.serialize() for c in self.entity_run_id_criteria],
             'interval_criteria': [c.serialize() for c in self.interval_criteria],
             'state_criteria': [c.serialize() for c in self.termination_criteria],
         }
@@ -361,7 +360,7 @@ class JobRunAggregatedCriteria(MatchCriteria[JobRun]):
     @classmethod
     def parse_pattern(cls, pattern: str, strategy: MatchingStrategy = MatchingStrategy.EXACT):
         new = cls()
-        new += JobRunIdCriterion.parse_pattern(pattern, strategy)
+        new += EntityRunIdCriterion.parse_pattern(pattern, strategy)
         return new
 
     def __iadd__(self, criterion):
@@ -371,8 +370,8 @@ class JobRunAggregatedCriteria(MatchCriteria[JobRun]):
         match criterion:
             case str():
                 self.jobs.append(criterion)
-            case JobRunIdCriterion():
-                self.job_run_id_criteria.append(criterion)
+            case EntityRunIdCriterion():
+                self.entity_run_id_criteria.append(criterion)
             case IntervalCriterion():
                 self.interval_criteria.append(criterion)
             case TerminationCriterion():
@@ -382,10 +381,10 @@ class JobRunAggregatedCriteria(MatchCriteria[JobRun]):
 
         return self
 
-    def matches_job_run_id(self, job_run):
+    def matches_entity_run_id(self, job_run):
         job_id = job_run.metadata.entity_id
         run_id = job_run.metadata.run_id
-        return not self.job_run_id_criteria or any(c((job_id, run_id)) for c in self.job_run_id_criteria)
+        return not self.entity_run_id_criteria or any(c((job_id, run_id)) for c in self.entity_run_id_criteria)
 
     def matches_interval(self, job_run):
         return not self.interval_criteria or any(c(job_run.run.lifecycle) for c in self.interval_criteria)
@@ -406,20 +405,20 @@ class JobRunAggregatedCriteria(MatchCriteria[JobRun]):
         Returns:
             bool: Whether the provided job instance matches all criteria.
         """
-        return self.matches_job_run_id(job_run) \
+        return self.matches_entity_run_id(job_run) \
             and self.matches_interval(job_run) \
             and self.matches_termination(job_run) \
             and self.matches_jobs(job_run)
 
     def __bool__(self):
-        return (bool(self.job_run_id_criteria)
+        return (bool(self.entity_run_id_criteria)
                 or bool(self.interval_criteria)
                 or bool(self.termination_criteria)
                 or bool(self.jobs))
 
     def __repr__(self):
         return (f"{self.__class__.__name__}("
-                f"{self.job_run_id_criteria=}, "
+                f"{self.entity_run_id_criteria=}, "
                 f"{self.interval_criteria=}, "
                 f"{self.termination_criteria=}, "
                 f"{self.jobs=})")

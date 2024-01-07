@@ -3,7 +3,7 @@ from datetime import datetime as dt
 
 import pytest
 
-from runtoolsio.runcore.criteria import IntervalCriterion, JobRunAggregatedCriteria, \
+from runtoolsio.runcore.criteria import IntervalCriterion, EntityRunAggregatedCriteria, \
     parse_criteria
 from runtoolsio.runcore.db.sqlite import SQLite
 from runtoolsio.runcore.run import RunState, TerminationStatus
@@ -104,17 +104,17 @@ def test_interval(sut):
     sut.store_job_runs(run('j3', created=dt(2023, 4, 22), completed=dt(2023, 4, 22, 23, 59, 58)))
 
     ic = IntervalCriterion(run_state=RunState.ENDED, from_dt=dt(2023, 4, 23))
-    jobs = sut.read_job_runs(JobRunAggregatedCriteria(interval_criteria=ic))
+    jobs = sut.read_job_runs(EntityRunAggregatedCriteria(interval_criteria=ic))
     assert jobs.job_ids == ['j1']
 
     ic = IntervalCriterion(run_state=RunState.ENDED, to_dt=dt(2023, 4, 22, 23, 59, 59))
-    jobs = sut.read_job_runs(JobRunAggregatedCriteria(interval_criteria=ic))
+    jobs = sut.read_job_runs(EntityRunAggregatedCriteria(interval_criteria=ic))
     assert sorted(jobs.job_ids) == ['j2', 'j3']
 
     ic = IntervalCriterion(run_state=RunState.ENDED, to_dt=dt(2023, 4, 22, 23, 59, 59), include_to=False)
-    jobs = sut.read_job_runs(JobRunAggregatedCriteria(interval_criteria=ic))
+    jobs = sut.read_job_runs(EntityRunAggregatedCriteria(interval_criteria=ic))
     assert jobs.job_ids == ['j3']
 
     ic = IntervalCriterion(run_state=RunState.ENDED, from_dt=dt(2023, 4, 22, 23, 59, 59), to_dt=dt(2023, 4, 23))
-    jobs = sut.read_job_runs(JobRunAggregatedCriteria(interval_criteria=ic))
+    jobs = sut.read_job_runs(EntityRunAggregatedCriteria(interval_criteria=ic))
     assert sorted(jobs.job_ids) == ['j1', 'j2']

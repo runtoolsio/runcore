@@ -16,7 +16,7 @@ from typing import Dict, Any, List, Optional, Type
 
 from runtoolsio.runcore.output import Mode
 from runtoolsio.runcore.run import TerminationStatus, P, RunState, Run, PhaseRun, PhaseMetadata, InstanceMetadata, \
-    InstanceRun, JobInstanceMetadata
+    EntityRun, JobInstanceMetadata
 from runtoolsio.runcore.track import TrackedTask
 from runtoolsio.runcore.util import MatchingStrategy, format_dt_iso
 from runtoolsio.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
@@ -361,7 +361,7 @@ class JobInstance(abc.ABC):
 
 
 @dataclass(frozen=True)
-class JobRun(InstanceRun[JobInstanceMetadata]):
+class JobRun(EntityRun[JobInstanceMetadata]):
     """
     Immutable snapshot of job instance
     """
