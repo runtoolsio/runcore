@@ -17,7 +17,7 @@ from copy import copy
 from dataclasses import dataclass
 from enum import Enum, EnumMeta
 from threading import Event, Condition
-from typing import Optional, List, Dict, Any, TypeVar, Type, Callable, Tuple, Iterable
+from typing import Optional, List, Dict, Any, TypeVar, Type, Callable, Tuple, Iterable, Generic
 
 from runtoolsio.runcore import util
 from runtoolsio.runcore.common import InvalidStateError
@@ -532,7 +532,6 @@ class TerminationInfo:
             "error": self.error.serialize() if self.error else None
         }
 
-
 @dataclass(frozen=True)
 class Run:
     phases: Tuple[PhaseMetadata]
@@ -562,6 +561,87 @@ def unique_phases_to_dict(phases) -> Dict[str, Phase]:
             raise ValueError(f"Duplicate phase found: {phase.name}")
         name_to_phase[phase.name] = phase
     return name_to_phase
+
+class CommonEntities(Enum):
+
+    JOB = 'job'
+    SERVICE = 'service'
+
+@dataclass
+class InstanceMetadata(ABC):
+    """
+    A dataclass that contains metadata information related to a specific job run. This object is designed
+    to represent essential information about a job run in a compact and serializable format. By using this object
+    instead of a full `JobRun` snapshot, you can reduce the amount of data transmitted when sending information
+    across a network or between different parts of a system.
+
+    Attributes:
+        entity_id (str):
+            The unique identifier of the job associated with the instance.
+        run_id (str):
+            The unique identifier of the job instance run.
+        instance_id (str):
+            The reference identifier of the job instance.
+        system_parameters (Dict[str, Any]):
+            A dictionary containing system parameters for the job instance.
+            These parameters are implementation-specific and contain information needed by the system to
+            perform certain tasks or enable specific features.
+        user_params (Dict[str, Any]):
+            A dictionary containing user-defined parameters associated with the instance.
+            These are arbitrary parameters set by the user, and they do not affect the functionality.
+    """
+    entity_id: str
+    run_id: str
+    instance_id: str
+    system_parameters: Dict[str, Any]
+    user_params: Dict[str, Any]
+
+    def serialize(self) -> Dict[str, Any]:
+        return {
+            "entity_id": self.entity_id,
+            "entity_type": self.entity_type,
+            "run_id": self.run_id,
+            "instance_id": self.instance_id,
+            "system_parameters": self.system_parameters,
+            "user_params": self.user_params,
+        }
+
+
+    @property
+    @abstractmethod
+    def entity_type(self):
+        pass
+
+    def contains_system_parameters(self, *params):
+        return all(param in self.system_parameters for param in params)
+
+class JobInstanceMetadata(InstanceMetadata):
+
+    @classmethod
+    def deserialize(cls, as_dict):
+        return cls(
+            as_dict['entity_id'],
+            as_dict['run_id'],
+            as_dict['instance_id'],
+            as_dict['system_parameters'],
+            as_dict['user_params'],
+        )
+
+    @property
+    def entity_type(self):
+        return CommonEntities.JOB.value
+
+
+M = TypeVar('M', bound=InstanceMetadata)
+
+
+@dataclass(frozen=True)
+class InstanceRun(Generic[M]):
+
+    """Descriptive information about this run"""
+    metadata: M
+    """The snapshot of the run represented by this instance"""
+    run: Run
 
 
 P = TypeVar('P')

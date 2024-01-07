@@ -15,7 +15,8 @@ from threading import Thread
 from typing import Dict, Any, List, Optional, Type
 
 from runtoolsio.runcore.output import Mode
-from runtoolsio.runcore.run import TerminationStatus, P, RunState, Run, PhaseRun, PhaseMetadata
+from runtoolsio.runcore.run import TerminationStatus, P, RunState, Run, PhaseRun, PhaseMetadata, InstanceMetadata, \
+    InstanceRun, JobInstanceMetadata
 from runtoolsio.runcore.track import TrackedTask
 from runtoolsio.runcore.util import MatchingStrategy, format_dt_iso
 from runtoolsio.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
@@ -210,58 +211,6 @@ class JobStats:
         return result
 
 
-@dataclass
-class JobInstanceMetadata:
-    """
-    A dataclass that contains metadata information related to a specific job run. This object is designed
-    to represent essential information about a job run in a compact and serializable format. By using this object
-    instead of a full `JobRun` snapshot, you can reduce the amount of data transmitted when sending information
-    across a network or between different parts of a system.
-
-    Attributes:
-        job_id (str):
-            The unique identifier of the job associated with the instance.
-        run_id (str):
-            The unique identifier of the job instance run.
-        instance_id (str):
-            The reference identifier of the job instance.
-        system_parameters (Dict[str, Any]):
-            A dictionary containing system parameters for the job instance.
-            These parameters are implementation-specific and contain information needed by the system to
-            perform certain tasks or enable specific features.
-        user_params (Dict[str, Any]):
-            A dictionary containing user-defined parameters associated with the instance.
-            These are arbitrary parameters set by the user, and they do not affect the functionality.
-    """
-    job_id: str
-    run_id: str
-    instance_id: str
-    system_parameters: Dict[str, Any]
-    user_params: Dict[str, Any]
-
-    @classmethod
-    def deserialize(cls, as_dict):
-        return cls(
-            as_dict['job_id'],
-            as_dict['run_id'],
-            as_dict['instance_id'],
-            as_dict['system_parameters'],
-            as_dict['user_params'],
-        )
-
-    def serialize(self) -> Dict[str, Any]:
-        return {
-            "job_id": self.job_id,
-            "run_id": self.run_id,
-            "instance_id": self.instance_id,
-            "system_parameters": self.system_parameters,
-            "user_params": self.user_params,
-        }
-
-    def contains_system_parameters(self, *params):
-        return all(param in self.system_parameters for param in params)
-
-
 class JobInstance(abc.ABC):
     """
     The `JobInstance` class is a central component of this package. It denotes a single occurrence of a job.
@@ -284,7 +233,7 @@ class JobInstance(abc.ABC):
     def metadata(self):
         """
         Returns:
-            JobInstanceMetadata: Descriptive information about this instance.
+            runtoolsio.runcore.run.InstanceMetadata: Descriptive information about this instance.
         """
 
     @property
@@ -293,7 +242,7 @@ class JobInstance(abc.ABC):
         Returns:
             str: Job part of the instance identifier.
         """
-        return self.metadata.job_id
+        return self.metadata.entity_id
 
     @property
     def run_id(self):
@@ -301,7 +250,7 @@ class JobInstance(abc.ABC):
         Returns:
             str: Run part of the instance identifier.
         """
-        return self.metadata.job_id
+        return self.metadata.entity_id
 
     @property
     @abc.abstractmethod
@@ -412,15 +361,11 @@ class JobInstance(abc.ABC):
 
 
 @dataclass(frozen=True)
-class JobRun:
+class JobRun(InstanceRun[JobInstanceMetadata]):
     """
     Immutable snapshot of job instance
     """
 
-    """Descriptive information about this job run"""
-    metadata: JobInstanceMetadata
-    """The snapshot of the job run represented by this instance"""
-    run: Run
     """Detailed information about the run in the form of the tracked task"""
     task: TrackedTask
 
@@ -445,7 +390,7 @@ class JobRun:
         Returns:
             str: Job part of the instance identifier.
         """
-        return self.metadata.job_id
+        return self.metadata.entity_id
 
     @property
     def run_id(self) -> str:
@@ -519,7 +464,7 @@ class InstanceTransitionObserver(abc.ABC):
 class InstanceOutputObserver(abc.ABC):
 
     @abc.abstractmethod
-    def new_instance_output(self, instance_meta: JobInstanceMetadata, phase: PhaseMetadata, output: str, is_err: bool):
+    def new_instance_output(self, instance_meta: InstanceMetadata, phase: PhaseMetadata, output: str, is_err: bool):
         """TODO"""
 
 

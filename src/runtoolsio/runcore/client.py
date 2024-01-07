@@ -10,7 +10,8 @@ from json import JSONDecodeError
 from typing import List, Any, Dict, NamedTuple, Optional, TypeVar, Generic, Callable, Tuple
 
 from runtoolsio.runcore import paths
-from runtoolsio.runcore.job import JobInstanceMetadata, JobRun
+from runtoolsio.runcore.job import JobRun
+from runtoolsio.runcore.run import InstanceMetadata, JobInstanceMetadata
 from runtoolsio.runcore.util.socket import SocketClient, ServerResponse, Error
 
 log = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ class InstanceResponse(NamedTuple):
         instance_meta: Metadata about the job instance.
         body: The JSON body of the response, as a dictionary.
     """
-    instance_meta: JobInstanceMetadata
+    instance_meta: InstanceMetadata
     body: Dict[str, Any]
 
 
@@ -115,7 +116,7 @@ class AggregatedResponse(Generic[T]):
 
 @dataclass
 class JobInstanceResponse:
-    instance_metadata: JobInstanceMetadata
+    instance_metadata: InstanceMetadata
 
 
 class ApprovalResult(Enum):

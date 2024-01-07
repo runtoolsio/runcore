@@ -5,8 +5,8 @@ from abc import abstractmethod
 from json import JSONDecodeError
 
 from runtoolsio.runcore import util, paths
-from runtoolsio.runcore.job import JobInstanceMetadata, JobRun, InstanceTransitionObserver, InstanceOutputObserver
-from runtoolsio.runcore.run import PhaseRun, PhaseMetadata
+from runtoolsio.runcore.job import JobRun, InstanceTransitionObserver, InstanceOutputObserver
+from runtoolsio.runcore.run import PhaseRun, PhaseMetadata, JobInstanceMetadata
 from runtoolsio.runcore.util.observer import ObservableNotification
 from runtoolsio.runcore.util.socket import SocketServer
 

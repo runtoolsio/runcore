@@ -11,10 +11,10 @@ from typing import List
 
 from runtoolsio.runcore import cfg
 from runtoolsio.runcore import paths
-from runtoolsio.runcore.job import JobStats, JobInstanceMetadata, JobRun, JobRuns, InstanceTransitionObserver
+from runtoolsio.runcore.job import JobStats, JobRun, JobRuns, InstanceTransitionObserver
 from runtoolsio.runcore.persistence import SortCriteria
 from runtoolsio.runcore.run import RunState, Lifecycle, PhaseMetadata, RunFailure, RunError, Run, TerminationInfo, \
-    TerminationStatus, Outcome
+    TerminationStatus, Outcome, InstanceMetadata, JobInstanceMetadata
 from runtoolsio.runcore.track import TrackedTask
 from runtoolsio.runcore.util import MatchingStrategy, format_dt_sql, parse_dt_sql
 

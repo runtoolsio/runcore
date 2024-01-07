@@ -63,7 +63,7 @@ class JobRunIdCriterion(MatchCriteria[Tuple[str, str]]):
         Returns:
             JobRunIdCriterion: A criteria object that will match the given job instance.
         """
-        return JobRunIdCriterion(job_id=job_inst.metadata.job_id, run_id=job_inst.metadata.run_id)
+        return JobRunIdCriterion(job_id=job_inst.metadata.entity_id, run_id=job_inst.metadata.run_id)
 
     @classmethod
     def parse_pattern(cls, pattern: str, strategy=MatchingStrategy.EXACT):
@@ -133,7 +133,7 @@ class JobRunIdCriterion(MatchCriteria[Tuple[str, str]]):
         Returns:
             bool: Whether the provided job instance matches this criteria
         """
-        return self.matches((job_inst.metadata.job_id, job_inst.metadata.run_id))
+        return self.matches((job_inst.metadata.entity_id, job_inst.metadata.run_id))
 
 
 @dataclass
@@ -383,7 +383,7 @@ class JobRunAggregatedCriteria(MatchCriteria[JobRun]):
         return self
 
     def matches_job_run_id(self, job_run):
-        job_id = job_run.metadata.job_id
+        job_id = job_run.metadata.entity_id
         run_id = job_run.metadata.run_id
         return not self.job_run_id_criteria or any(c((job_id, run_id)) for c in self.job_run_id_criteria)
 
@@ -394,7 +394,7 @@ class JobRunAggregatedCriteria(MatchCriteria[JobRun]):
         return not self.termination_criteria or any(c(job_run.run.termination) for c in self.termination_criteria)
 
     def matches_jobs(self, job_run):
-        return not self.jobs or job_run.job_id in self.jobs
+        return not self.jobs or job_run.entity_id in self.jobs
 
     def __call__(self, job_run):
         return self.matches(job_run)

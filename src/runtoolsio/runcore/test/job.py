@@ -2,11 +2,11 @@ from datetime import datetime, timedelta
 from typing import Type, Optional
 
 from runtoolsio.runcore import util
-from runtoolsio.runcore.job import JobInstance, JobRun, JobInstanceMetadata, InstanceTransitionObserver, \
+from runtoolsio.runcore.job import JobInstance, JobRun, InstanceTransitionObserver, \
     InstanceOutputObserver
 from runtoolsio.runcore.output import InMemoryOutput, Mode
 from runtoolsio.runcore.run import PhaseRun, TerminationInfo, Lifecycle, RunState, PhaseMetadata, Run, PhaseNames, \
-    TerminationStatus, RunFailure, Phase, P
+    TerminationStatus, RunFailure, Phase, P, JobInstanceMetadata
 from runtoolsio.runcore.test.run import FakePhaser
 from runtoolsio.runcore.track import TaskTrackerMem
 from runtoolsio.runcore.util.observer import ObservableNotification, DEFAULT_OBSERVER_PRIORITY
@@ -141,7 +141,7 @@ class FakeJobInstanceBuilder(AbstractBuilder):
     def build(self) -> FakeJobInstance:
         lifecycle = Lifecycle()
         phaser = FakePhaser(self.phases, lifecycle)
-        return FakeJobInstance(self.metadata.job_id, phaser, lifecycle, run_id=self.metadata.run_id,
+        return FakeJobInstance(self.metadata.entity_id, phaser, lifecycle, run_id=self.metadata.run_id,
                                **self.metadata.user_params)
 
 
