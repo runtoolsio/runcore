@@ -64,12 +64,12 @@ class RunState(Enum, metaclass=RunStateMeta):
 
 
 class Outcome(Enum):
-    NONE = range(-1, 1)         # Null value.
-    SUCCESS = range(1, 11)      # Completed successfully.
-    NON_SUCCESS = range(11, 99) # Not completed successfully.
-    ABORTED = range(11, 21)     # Aborted by user.
-    REJECTED = range(21, 31)    # Rejected by not satisfying a condition.
-    FAULT = range(31, 41)       # Failed.
+    NONE = range(-1, 1)  # Null value.
+    SUCCESS = range(1, 11)  # Completed successfully.
+    NON_SUCCESS = range(11, 99)  # Not completed successfully.
+    ABORTED = range(11, 21)  # Aborted by user.
+    REJECTED = range(21, 31)  # Rejected by not satisfying a condition.
+    FAULT = range(31, 41)  # Failed.
 
 
 class TerminationStatus(Enum):
@@ -532,6 +532,7 @@ class TerminationInfo:
             "error": self.error.serialize() if self.error else None
         }
 
+
 @dataclass(frozen=True)
 class Run:
     phases: Tuple[PhaseMetadata]
@@ -562,10 +563,11 @@ def unique_phases_to_dict(phases) -> Dict[str, Phase]:
         name_to_phase[phase.name] = phase
     return name_to_phase
 
-class CommonEntities(Enum):
 
+class CommonEntities(Enum):
     JOB = 'job'
     SERVICE = 'service'
+
 
 @dataclass
 class InstanceMetadata(ABC):
@@ -606,7 +608,6 @@ class InstanceMetadata(ABC):
             "user_params": self.user_params,
         }
 
-
     @property
     @abstractmethod
     def entity_type(self):
@@ -614,6 +615,7 @@ class InstanceMetadata(ABC):
 
     def contains_system_parameters(self, *params):
         return all(param in self.system_parameters for param in params)
+
 
 class JobInstanceMetadata(InstanceMetadata):
 
@@ -637,7 +639,6 @@ M = TypeVar('M', bound=InstanceMetadata)
 
 @dataclass(frozen=True)
 class EntityRun(Generic[M]):
-
     """Descriptive information about this run"""
     metadata: M
     """The snapshot of the run represented by this instance"""
