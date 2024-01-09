@@ -112,7 +112,7 @@ class SortCriteria(Enum):
     TIME = 3
 
 
-def read_instances(instance_match=None, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=-1, last=False) \
+def read_runs(instance_match=None, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=-1, last=False) \
         -> JobRuns:
     """
     Fetches ended job instances based on specified criteria.
