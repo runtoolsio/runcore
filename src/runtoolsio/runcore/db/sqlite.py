@@ -39,7 +39,7 @@ def _build_where_clause(run_match, alias=''):
     job_conditions = [f'{alias}job_id = "{j}"' for j in run_match.jobs]
 
     id_conditions = []
-    for c in run_match.entity_run_id_criteria:
+    for c in run_match.metadata_criteria:
         if c.strategy == MatchingStrategy.ALWAYS_TRUE:
             id_conditions.clear()
             break

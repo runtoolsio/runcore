@@ -42,9 +42,9 @@ def _read_metadata(req_body_json):
 
 class EventReceiver(SocketServer):
 
-    def __init__(self, socket_name, id_match=None, event_types=()):
+    def __init__(self, socket_name, metadata_match=None, event_types=()):
         super().__init__(lambda: paths.socket_path(socket_name, create=True), allow_ping=True)
-        self.id_match = id_match
+        self.metadata_match = metadata_match
         self.event_types = event_types
 
     def handle(self, req_body):
@@ -61,7 +61,7 @@ class EventReceiver(SocketServer):
             return
 
         if (self.event_types and event_type not in self.event_types) or \
-                (self.id_match and not self.id_match(instance_meta.id)):
+                (self.metadata_match and not self.metadata_match(instance_meta)):
             return
 
         self.handle_event(event_type, instance_meta, req_body_json.get('event'))
@@ -73,8 +73,8 @@ class EventReceiver(SocketServer):
 
 class InstanceTransitionReceiver(EventReceiver):
 
-    def __init__(self, id_match=None, phases=()):
-        super().__init__(_listener_socket_name(TRANSITION_LISTENER_FILE_EXTENSION), id_match)
+    def __init__(self, metadata_match=None, phases=()):
+        super().__init__(_listener_socket_name(TRANSITION_LISTENER_FILE_EXTENSION), metadata_match)
         self.phases = phases
         self._notification = ObservableNotification[InstanceTransitionObserver]()
 
@@ -99,8 +99,8 @@ class InstanceTransitionReceiver(EventReceiver):
 
 class InstanceOutputReceiver(EventReceiver):
 
-    def __init__(self, id_match=None):
-        super().__init__(_listener_socket_name(OUTPUT_LISTENER_FILE_EXTENSION), id_match)
+    def __init__(self, metadata_match=None):
+        super().__init__(_listener_socket_name(OUTPUT_LISTENER_FILE_EXTENSION), metadata_match)
         self._notification = ObservableNotification[InstanceOutputObserver]()
 
     def handle_event(self, _, instance_meta, event):
