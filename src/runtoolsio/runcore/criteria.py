@@ -144,7 +144,7 @@ def compound_metadata_filter(metadata_criteria):
 
 
 @dataclass
-class IntervalCriterion(MatchCriteria[Lifecycle]):
+class LifecycleCriterion(MatchCriteria[Lifecycle]):
     """
     A class to represent criteria for determining if the first occurrence of a given run state in a lifecycle falls
     within a specified datetime interval. This criterion is used to filter or identify lifecycles based
@@ -218,7 +218,7 @@ class IntervalCriterion(MatchCriteria[Lifecycle]):
                 to_dt = datetime.datetime.combine(to_val + timedelta(days=1), time.min).astimezone(timezone.utc)
                 include_to = False
 
-        return IntervalCriterion(event, from_dt, to_dt, include_to=include_to)
+        return LifecycleCriterion(event, from_dt, to_dt, include_to=include_to)
 
     @classmethod
     def single_day_period(cls, event, day_offset, *, to_utc=False):
@@ -315,10 +315,10 @@ class TerminationCriterion(MatchCriteria[TerminationInfo]):
 
 
 def parse_criteria(pattern: str, strategy: MatchingStrategy = MatchingStrategy.EXACT):
-    return EntityRunAggregatedCriteria.parse_pattern(pattern, strategy)
+    return EntityRunCriteria.parse_pattern(pattern, strategy)
 
 
-class EntityRunAggregatedCriteria(MatchCriteria[EntityRun]):
+class EntityRunCriteria(MatchCriteria[EntityRun]):
     """
     This object aggregates various criteria for querying and matching job instances.
     An instance must meet all the provided criteria to be considered a match.
@@ -352,7 +352,7 @@ class EntityRunAggregatedCriteria(MatchCriteria[EntityRun]):
         new = cls()
         new.jobs = as_dict.get('jobs', [])
         new.metadata_criteria = [InstanceMetadataCriterion.deserialize(c) for c in as_dict.get('metadata_criteria', ())]
-        new.interval_criteria = [IntervalCriterion.deserialize(c) for c in as_dict.get('interval_criteria', ())]
+        new.interval_criteria = [LifecycleCriterion.deserialize(c) for c in as_dict.get('interval_criteria', ())]
         new.termination_criteria = [TerminationCriterion.deserialize(c) for c in
                                     as_dict.get('termination_criteria', ())]
         return new
@@ -380,7 +380,7 @@ class EntityRunAggregatedCriteria(MatchCriteria[EntityRun]):
                 self.jobs.append(criterion)
             case InstanceMetadataCriterion():
                 self.metadata_criteria.append(criterion)
-            case IntervalCriterion():
+            case LifecycleCriterion():
                 self.interval_criteria.append(criterion)
             case TerminationCriterion():
                 self.termination_criteria.append(criterion)

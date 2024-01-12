@@ -1,11 +1,11 @@
-from runtoolsio.runcore.criteria import IntervalCriterion, TerminationCriterion
+from runtoolsio.runcore.criteria import LifecycleCriterion, TerminationCriterion
 from runtoolsio.runcore.run import RunState, TerminationStatus, TerminationInfo, Outcome
 
 from runtoolsio.runcore.util import utc_now
 
 
 def test_interval_utc_conversion():
-    c = IntervalCriterion.to_utc(RunState.CREATED, from_val='2023-11-10T09:00+02:00', to_val=None)
+    c = LifecycleCriterion.to_utc(RunState.CREATED, from_val='2023-11-10T09:00+02:00', to_val=None)
     assert c.from_dt.hour == 7
 
 
