@@ -150,7 +150,7 @@ class JobStats:
         average_time (timedelta): Average execution time across all instances in the interval.
         slowest_time (timedelta): Longest execution time among all instances in the interval.
         last_time (timedelta): Execution time of the most recent instance in the interval.
-        last_state (TerminationStatus): State of the last executed instance in the interval.
+        termination_status (TerminationStatus): State of the last executed instance in the interval.
         failed_count (int): Number of instances that failed during the time interval.
         warning_count (int): Number of instances with at least one warning during the time interval.
     """
@@ -163,7 +163,7 @@ class JobStats:
     average_time: Optional[timedelta] = None
     slowest_time: Optional[timedelta] = None
     last_time: Optional[timedelta] = None
-    last_state: TerminationStatus = TerminationStatus.NONE
+    termination_status: TerminationStatus = TerminationStatus.NONE
     failed_count: int = 0
     warning_count: int = 0
 
@@ -171,7 +171,7 @@ class JobStats:
         result = {
             'job_id': self.job_id,
             'count': self.count,
-            'last_state': self.last_state.name,
+            'last_state': self.termination_status.name,
             'failed_count': self.failed_count,
             'warning_count': self.warning_count,
         }

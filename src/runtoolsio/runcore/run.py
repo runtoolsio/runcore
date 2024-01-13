@@ -744,8 +744,8 @@ class Phaser(AbstractPhaser):
                     return
 
         with self._transition_lock:
-            self._next_phase(TerminalPhase())
             self._termination = self._term_info(TerminationStatus.COMPLETED)
+            self._next_phase(TerminalPhase())
 
     def _run_handle_errors(self, phase: Phase, run_ctx: RunContext) \
             -> Tuple[Optional[TerminationInfo], Optional[BaseException]]:
