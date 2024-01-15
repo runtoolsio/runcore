@@ -131,7 +131,7 @@ class ApprovalResponse(JobInstanceResponse):
 
 
 class StopResult(Enum):
-    INITIATED = auto()
+    STOP_INITIATED = auto()
     NOT_APPLICABLE = auto()
     UNKNOWN = auto()
 
