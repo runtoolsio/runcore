@@ -6,7 +6,7 @@ TODO: Remove immutable properties
 
 import datetime
 from abc import abstractmethod, ABC
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import timezone, time, timedelta
 from typing import Dict, Any, Set, Optional, TypeVar, Generic
 
@@ -289,29 +289,29 @@ class TerminationCriterion(MatchCriteria[TerminationInfo]):
     This class is used to filter termination info instances.
 
     Attributes:
-        outcomes (Set[Outcome]): A set of outcomes to match against the termination status.
+        outcome (Set[Outcome]): A set of outcomes to match against the termination status.
     """
 
-    outcomes: Set[Outcome] = field(default_factory=set)
+    outcome: Outcome = Outcome.ANY
 
     @classmethod
     def deserialize(cls, data):
-        outcomes = set(Outcome[outcome_str] for outcome_str in data.get('outcomes', []))
-        return cls(outcomes)
+        outcome = Outcome[data.get('outcome', Outcome.ANY.name)]
+        return cls(outcome)
 
     def serialize(self):
         return {
-            "outcomes": [outcome.name for outcome in self.outcomes],
+            "outcome": self.outcome.name,
         }
 
     def __call__(self, term_info):
         return self.matches(term_info)
 
     def matches(self, term_info):
-        return any(term_info.status.is_outcome(outcome) for outcome in self.outcomes)
+        return term_info.status.is_outcome(self.outcome)
 
     def __bool__(self):
-        return bool(self.outcomes)
+        return self.outcome != Outcome.ANY
 
 
 def parse_criteria(pattern: str, strategy: MatchingStrategy = MatchingStrategy.EXACT):

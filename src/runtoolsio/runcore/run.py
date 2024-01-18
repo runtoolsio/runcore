@@ -56,15 +56,10 @@ class RunState(Enum, metaclass=RunStateMeta):
         else:
             return lifecycle.state_first_at(self)
 
-    def __new__(cls, value):
-        member = object.__new__(cls)
-        member._value_ = value
-        cls._value2member_map_[value] = member
-        return member
-
 
 class Outcome(Enum):
     NONE = range(-1, 1)  # Null value.
+    ANY = range(-1, 9999)
     SUCCESS = range(1, 11)  # Completed successfully.
     NON_SUCCESS = range(11, 99)  # Not completed successfully.
     ABORTED = range(11, 21)  # Aborted by user.
@@ -134,12 +129,14 @@ class PhaseRun:
             'phase_name': self.phase_name,
             'run_state': self.run_state.name,
             'started_at': format_dt_iso(self.started_at),
-            'ended_at': format_dt_iso(self.ended_at)
+            'ended_at': format_dt_iso(self.ended_at),
         }
 
     @property
     def run_time(self):
-        return self.ended_at - self.started_at
+        if self.started_at and self.ended_at:
+            return self.ended_at - self.started_at
+        return None
 
     def __bool__(self):
         return bool(self.phase_name) and self.run_state != RunState.NONE

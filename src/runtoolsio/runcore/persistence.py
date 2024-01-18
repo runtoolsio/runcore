@@ -135,7 +135,7 @@ def read_runs(instance_match=None, sort=SortCriteria.ENDED, *, asc=True, limit=-
     Returns:
         JobRuns: A collection of job instances that match the given criteria.
     """
-    return _instance().read_instances(instance_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+    return _instance().read_job_runs(instance_match, sort, asc=asc, limit=limit, offset=offset, last=last)
 
 
 def read_stats(instance_match=None) -> List[JobStats]:

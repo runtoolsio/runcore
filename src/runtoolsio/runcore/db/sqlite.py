@@ -14,7 +14,7 @@ from runtoolsio.runcore import paths
 from runtoolsio.runcore.job import JobStats, JobRun, JobRuns, InstanceTransitionObserver
 from runtoolsio.runcore.persistence import SortCriteria
 from runtoolsio.runcore.run import RunState, Lifecycle, PhaseMetadata, RunFailure, RunError, Run, TerminationInfo, \
-    TerminationStatus, Outcome, InstanceMetadata, JobInstanceMetadata
+    TerminationStatus, Outcome, JobInstanceMetadata
 from runtoolsio.runcore.track import TrackedTask
 from runtoolsio.runcore.util import MatchingStrategy, format_dt_sql, parse_dt_sql
 
@@ -95,16 +95,15 @@ def _build_where_clause(run_match, alias=''):
     if run_match.termination_criteria:
         term_conditions = []
 
-        if outcomes := run_match.termination_criteria.outcomes:
-            range_conditions = []
-            for outcome in outcomes:
-                start, end = outcome.value.start, outcome.value.stop
-                range_condition = f"({alias}termination_status BETWEEN {start} AND {end})"
-                range_conditions.append(range_condition)
+        range_conditions = []
+        for c in run_match.termination_criteria:
+            start, end = c.outcome.value.start, c.outcome.value.stop
+            range_condition = f"({alias}termination_status BETWEEN {start} AND {end})"
+            range_conditions.append(range_condition)
 
-            if range_conditions:
-                combined_condition = " OR ".join(range_conditions)
-                term_conditions.append(f"({combined_condition})")
+        if range_conditions:
+            combined_condition = " OR ".join(range_conditions)
+            term_conditions.append(f"({combined_condition})")
 
     all_conditions_list = (job_conditions, id_conditions, int_conditions, term_conditions)
     all_conditions_str = ["(" + " OR ".join(c_list) + ")" for c_list in all_conditions_list if c_list]

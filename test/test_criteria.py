@@ -10,8 +10,8 @@ def test_interval_utc_conversion():
 
 
 def test_termination_criteria():
-    matching = TerminationCriterion(outcomes={Outcome.REJECTED})
-    not_matching = TerminationCriterion(outcomes={Outcome.ABORTED})
+    matching = TerminationCriterion(outcome=Outcome.REJECTED)
+    not_matching = TerminationCriterion(outcome=Outcome.ABORTED)
 
     tested_info = TerminationInfo(TerminationStatus.INVALID_OVERLAP, utc_now())
     assert matching(tested_info)
