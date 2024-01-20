@@ -230,7 +230,7 @@ def _sort_key(sort: SortCriteria):
     """TODO To remove?"""
     def key(j):
         if sort == SortCriteria.CREATED:
-            return j.lifecycle.state_first_at(RunState.CREATED)
+            return j.lifecycle.state_first_transition_at(RunState.CREATED)
         if sort == SortCriteria.ENDED:
             return j.lifecycle.ended_at
         if sort == SortCriteria.TIME:

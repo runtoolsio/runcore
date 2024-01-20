@@ -73,21 +73,22 @@ def _build_where_clause(run_match, alias=''):
     int_criteria = run_match.interval_criteria
     int_conditions = []
     for c in int_criteria:
-        if c.run_state == RunState.CREATED:
-            e = f'{alias}created'
-        elif c.run_state == RunState.ENDED:
-            e = f'{alias}ended'
-        else:
-            continue
-
         conditions = []
-        if c.from_dt:
-            conditions.append(f"{e} >= '{format_dt_sql(c.from_dt)}'")
-        if c.to_dt:
+        if c.created_from:
+            conditions.append(f"{alias}created >= '{format_dt_sql(c.created_from)}'")
+        if c.created_to:
             if c.include_to:
-                conditions.append(f"{e} <= '{format_dt_sql(c.to_dt)}'")
+                conditions.append(f"{alias}created <= '{format_dt_sql(c.created_to)}'")
             else:
-                conditions.append(f"{e} < '{format_dt_sql(c.to_dt)}'")
+                conditions.append(f"{alias}created < '{format_dt_sql(c.created_to)}'")
+
+        if c.ended_from:
+            conditions.append(f"{alias}ended >= '{format_dt_sql(c.ended_from)}'")
+        if c.ended_to:
+            if c.include_to:
+                conditions.append(f"{alias}ended <= '{format_dt_sql(c.ended_to)}'")
+            else:
+                conditions.append(f"{alias}ended < '{format_dt_sql(c.ended_to)}'")
 
         int_conditions.append("(" + " AND ".join(conditions) + ")")
 

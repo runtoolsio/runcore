@@ -6,7 +6,7 @@ import pytest
 from runtoolsio.runcore.criteria import LifecycleCriterion, EntityRunCriteria, \
     parse_criteria
 from runtoolsio.runcore.db.sqlite import SQLite
-from runtoolsio.runcore.run import RunState, TerminationStatus
+from runtoolsio.runcore.run import TerminationStatus
 from runtoolsio.runcore.test.job import ended_run as run
 from runtoolsio.runcore.util import parse_iso8601_duration, MatchingStrategy
 
@@ -103,18 +103,18 @@ def test_interval(sut):
     sut.store_job_runs(run('j2', created=dt(2023, 4, 22), completed=dt(2023, 4, 22, 23, 59, 59)))
     sut.store_job_runs(run('j3', created=dt(2023, 4, 22), completed=dt(2023, 4, 22, 23, 59, 58)))
 
-    ic = LifecycleCriterion(run_state=RunState.ENDED, from_dt=dt(2023, 4, 23))
+    ic = LifecycleCriterion(ended_from=dt(2023, 4, 23))
     jobs = sut.read_job_runs(EntityRunCriteria(interval_criteria=ic))
     assert jobs.job_ids == ['j1']
 
-    ic = LifecycleCriterion(run_state=RunState.ENDED, to_dt=dt(2023, 4, 22, 23, 59, 59))
+    ic = LifecycleCriterion(ended_to=dt(2023, 4, 22, 23, 59, 59))
     jobs = sut.read_job_runs(EntityRunCriteria(interval_criteria=ic))
     assert sorted(jobs.job_ids) == ['j2', 'j3']
 
-    ic = LifecycleCriterion(run_state=RunState.ENDED, to_dt=dt(2023, 4, 22, 23, 59, 59), include_to=False)
+    ic = LifecycleCriterion(ended_to=dt(2023, 4, 22, 23, 59, 59), include_to=False)
     jobs = sut.read_job_runs(EntityRunCriteria(interval_criteria=ic))
     assert jobs.job_ids == ['j3']
 
-    ic = LifecycleCriterion(run_state=RunState.ENDED, from_dt=dt(2023, 4, 22, 23, 59, 59), to_dt=dt(2023, 4, 23))
+    ic = LifecycleCriterion(ended_from=dt(2023, 4, 22, 23, 59, 59), created_to=dt(2023, 4, 23))
     jobs = sut.read_job_runs(EntityRunCriteria(interval_criteria=ic))
     assert sorted(jobs.job_ids) == ['j1', 'j2']

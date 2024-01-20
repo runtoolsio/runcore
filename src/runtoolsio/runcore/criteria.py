@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import timezone, time, timedelta
 from typing import Dict, Any, Set, Optional, TypeVar, Generic
 
-from runtoolsio.runcore.run import Outcome, RunState, Lifecycle, TerminationInfo, EntityRun, InstanceMetadata
+from runtoolsio.runcore.run import Outcome, Lifecycle, TerminationInfo, EntityRun, InstanceMetadata
 from runtoolsio.runcore.util import MatchingStrategy, and_, or_, parse, single_day_range, days_range, \
     format_dt_iso, to_list
 
@@ -151,8 +151,6 @@ class LifecycleCriterion(MatchCriteria[Lifecycle]):
     on the timing of their first transition to the specified run state.
 
     Properties:
-        run_state (RunState):
-            The specific run state whose first occurrence in the lifecycle is to be checked. Default to CREATED state.
         from_dt (datetime, optional):
             The start date-time of the interval. Defaults to None.
         to_dt (datetime, optional):
@@ -161,34 +159,36 @@ class LifecycleCriterion(MatchCriteria[Lifecycle]):
             Whether to include the end date-time in the interval. Defaults to True.
     """
 
-    run_state: RunState = RunState.CREATED
-    from_dt: Optional[datetime] = None
-    to_dt: Optional[datetime] = None
+    created_from: Optional[datetime] = None
+    created_to: Optional[datetime] = None
+    ended_from: Optional[datetime] = None
+    ended_to: Optional[datetime] = None
     include_to: bool = True
 
     @classmethod
     def deserialize(cls, data):
-        rs = RunState[data['run_state']]
-        from_dt = data.get("from_dt", None)
-        to_dt = data.get("to_dt", '')
+        created_from = data.get("created_from", None)
+        created_to = data.get("created_to", '')
+        ended_from = data.get("ended_from", None)
+        ended_to = data.get("ended_to", '')
         include_to = data['include_to']
-        return cls(rs, from_dt, to_dt, include_to)
+        return cls(created_from, created_to, ended_from, ended_to, include_to)
 
     def serialize(self) -> Dict[str, Any]:
         return {
-            "run_state": str(self.run_state),
-            "from_dt": format_dt_iso(self.from_dt),
-            "to_dt": format_dt_iso(self.to_dt),
+            "created_from": format_dt_iso(self.created_from),
+            "created_to": format_dt_iso(self.created_to),
+            "ended_from": format_dt_iso(self.ended_from),
+            "ended_to": format_dt_iso(self.ended_to),
             "include_to": self.include_to,
         }
 
     @classmethod
-    def to_utc(cls, event, from_val, to_val):
+    def to_utc(cls, from_val, to_val):
         """
         Creates criteria with provided values converted to the UTC timezone.
 
         Args:
-            event (LifecycleEvent): The lifecycle event for which the interval is defined.
             from_val (str, datetime, date): The start date-time of the interval.
             to_val (str, datetime, date): The end date-time of the interval.
         """
@@ -218,37 +218,34 @@ class LifecycleCriterion(MatchCriteria[Lifecycle]):
                 to_dt = datetime.datetime.combine(to_val + timedelta(days=1), time.min).astimezone(timezone.utc)
                 include_to = False
 
-        return LifecycleCriterion(event, from_dt, to_dt, include_to=include_to)
+        return LifecycleCriterion(from_dt, to_dt, include_to)
 
     @classmethod
-    def single_day_period(cls, event, day_offset, *, to_utc=False):
+    def single_day_period(cls, day_offset, *, to_utc=False):
         """
         Creates criteria for a duration of one day.
 
         Args:
-            event (LifecycleEvent): The lifecycle event for which the interval is defined.
             day_offset (int): A day offset for which the period is created. 0 > today, -1 > yesterday, 1 > tomorrow...
             to_utc (bool): The interval is converted from local zone to UTC when set to true.
         """
         range_ = single_day_range(day_offset, to_utc=to_utc)
-        return cls(event, *range_, include_to=False)
+        return cls(*range_, None, None, include_to=False)
 
     @classmethod
-    def today(cls, event, *, to_utc=False):
-        return cls.single_day_period(event, 0, to_utc=to_utc)
+    def today(cls, *, to_utc=False):
+        return cls.single_day_period(0, to_utc=to_utc)
 
     @classmethod
-    def yesterday(cls, event, *, to_utc=False):
-        return cls.single_day_period(event, -1, to_utc=to_utc)
+    def yesterday(cls, *, to_utc=False):
+        return cls.single_day_period(-1, to_utc=to_utc)
 
     @classmethod
-    def days_interval(cls, event, days, *, to_utc=False):
+    def days_interval(cls, days, *, to_utc=False):
         """
         Creates criteria for an interval extending a specified number of days into the past or future from now.
 
         Args:
-            event (LifecycleEvent):
-                The lifecycle event for which the interval is defined.
             days (int):
                 Duration of the interval in days. Use a negative number for an interval extending into the past,
                 and a positive number for an interval extending into the future.
@@ -257,28 +254,37 @@ class LifecycleCriterion(MatchCriteria[Lifecycle]):
                 in the local time zone.
         """
         range_ = days_range(days, to_utc=to_utc)
-        return cls(event, *range_, include_to=False)
+        return cls(*range_, None, None, include_to=False)
 
     @classmethod
-    def week_back(cls, event, *, to_utc=False):
-        return cls.days_interval(event, -7, to_utc=to_utc)
+    def week_back(cls, *, to_utc=False):
+        return cls.days_interval(-7, to_utc=to_utc)
 
     def __call__(self, lifecycle):
         return self.matches(lifecycle)
 
     def matches(self, lifecycle):
-        checked_dt = lifecycle.state_first_at(self.run_state)
-        if not checked_dt:
+        # Check for created_at
+        if self.created_from and lifecycle.created_at < self.created_from:
             return False
-        if self.from_dt and checked_dt < self.from_dt:
-            return False
-        if self.to_dt:
+        if self.created_to:
             if self.include_to:
-                if checked_dt > self.to_dt:
+                if lifecycle.created_at > self.created_to:
                     return False
             else:
-                if checked_dt >= self.to_dt:
+                if lifecycle.created_at >= self.created_to:
                     return False
+
+        if lifecycle.ended_at is not None:
+            if self.ended_from and lifecycle.ended_at < self.ended_from:
+                return False
+            if self.ended_to:
+                if self.include_to:
+                    if lifecycle.ended_at > self.ended_to:
+                        return False
+                else:
+                    if lifecycle.ended_at >= self.ended_to:
+                        return False
 
         return True
 

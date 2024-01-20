@@ -50,12 +50,6 @@ class RunState(Enum, metaclass=RunStateMeta):
     EXECUTING = 6
     ENDED = 100
 
-    def __call__(self, lifecycle):
-        if self == RunState.ENDED:
-            return lifecycle.state_last_at(self)
-        else:
-            return lifecycle.state_first_at(self)
-
 
 class Outcome(Enum):
     NONE = range(-1, 1)  # Null value.
@@ -287,10 +281,10 @@ class Lifecycle:
 
         return self._current_run.started_at
 
-    def state_first_at(self, state: RunState) -> Optional[datetime.datetime]:
+    def state_first_transition_at(self, state: RunState) -> Optional[datetime.datetime]:
         return next((run.started_at for run in self._phase_runs.values() if run.run_state == state), None)
 
-    def state_last_at(self, state: RunState) -> Optional[datetime.datetime]:
+    def state_last_transition_at(self, state: RunState) -> Optional[datetime.datetime]:
         return next((run.started_at for run in reversed(self._phase_runs.values()) if run.run_state == state), None)
 
     def contains_state(self, state: RunState):
@@ -298,15 +292,15 @@ class Lifecycle:
 
     @property
     def created_at(self) -> Optional[datetime.datetime]:
-        return self.state_first_at(RunState.CREATED)
+        return self.state_first_transition_at(RunState.CREATED)
 
     @property
     def executed_at(self) -> Optional[datetime.datetime]:
-        return self.state_first_at(RunState.EXECUTING)
+        return self.state_first_transition_at(RunState.EXECUTING)
 
     @property
     def ended_at(self) -> Optional[datetime.datetime]:
-        return self.state_last_at(RunState.ENDED)
+        return self.state_last_transition_at(RunState.ENDED)
 
     @property
     def is_ended(self):

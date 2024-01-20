@@ -47,8 +47,8 @@ def test_transitions(sut):
 
 
 def test_states(sut):
-    assert sut.state_first_at(RunState.EXECUTING) == datetime.datetime(2023, 1, 1, 0, 20)
-    assert sut.state_last_at(RunState.ENDED) == datetime.datetime(2023, 1, 1, 0, 50)
+    assert sut.state_first_transition_at(RunState.EXECUTING) == datetime.datetime(2023, 1, 1, 0, 20)
+    assert sut.state_last_transition_at(RunState.ENDED) == datetime.datetime(2023, 1, 1, 0, 50)
     assert sut.contains_state(RunState.CREATED)
     assert not sut.contains_state(RunState.IN_QUEUE)
     assert sut.created_at == datetime.datetime(2023, 1, 1, 0, 0)
