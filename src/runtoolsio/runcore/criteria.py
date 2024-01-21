@@ -7,12 +7,11 @@ TODO: Remove immutable properties
 import datetime
 from abc import abstractmethod, ABC
 from dataclasses import dataclass
-from datetime import timezone, time, timedelta
 from typing import Dict, Any, Set, Optional, TypeVar, Generic
 
 from runtoolsio.runcore.run import Outcome, Lifecycle, TerminationInfo, EntityRun, InstanceMetadata
 from runtoolsio.runcore.util import MatchingStrategy, and_, or_, parse, single_day_range, days_range, \
-    format_dt_iso, to_list
+    format_dt_iso, to_list, DateTimeRange, parse_range_to_utc
 
 T = TypeVar('T')
 
@@ -159,28 +158,39 @@ class LifecycleCriterion(MatchCriteria[Lifecycle]):
             Whether to include the end date-time in the interval. Defaults to True.
     """
 
-    created_from: Optional[datetime] = None
-    created_to: Optional[datetime] = None
-    ended_from: Optional[datetime] = None
-    ended_to: Optional[datetime] = None
-    include_to: bool = True
+    created_range: DateTimeRange
+    ended_range: DateTimeRange
+
+    def __init__(self,
+                 created_from: Optional[datetime] = None,
+                 created_to: Optional[datetime] = None,
+                 created_to_included: bool = True,
+                 ended_from: Optional[datetime] = None,
+                 ended_to: Optional[datetime] = None,
+                 ended_to_included: bool = True):
+        self.created_range = DateTimeRange(created_from, created_to, created_to_included)
+        self.ended_range = DateTimeRange(ended_from, ended_to, ended_to_included)
 
     @classmethod
     def deserialize(cls, data):
-        created_from = data.get("created_from", None)
-        created_to = data.get("created_to", '')
-        ended_from = data.get("ended_from", None)
-        ended_to = data.get("ended_to", '')
-        include_to = data['include_to']
-        return cls(created_from, created_to, ended_from, ended_to, include_to)
+        created_from = parse(data.get("created_from", None))
+        created_to = parse(data.get("created_to", None))
+        created_to_included = data.get("created_to_included", True)
+
+        ended_from = parse(data.get("ended_from", None))
+        ended_to = parse(data.get("ended_to", None))
+        ended_to_included = data.get("ended_to_included", True)
+
+        return cls(created_from, created_to, created_to_included, ended_from, ended_to, ended_to_included)
 
     def serialize(self) -> Dict[str, Any]:
         return {
-            "created_from": format_dt_iso(self.created_from),
-            "created_to": format_dt_iso(self.created_to),
-            "ended_from": format_dt_iso(self.ended_from),
-            "ended_to": format_dt_iso(self.ended_to),
-            "include_to": self.include_to,
+            "created_from": format_dt_iso(self.created_range.start),
+            "created_to": format_dt_iso(self.created_range.end),
+            "created_to_included": self.created_range.end_included,
+            "ended_from": format_dt_iso(self.ended_range.start),
+            "ended_to": format_dt_iso(self.ended_range.end),
+            "ended_to_included": self.ended_range.end_included,
         }
 
     @classmethod
@@ -192,33 +202,7 @@ class LifecycleCriterion(MatchCriteria[Lifecycle]):
             from_val (str, datetime, date): The start date-time of the interval.
             to_val (str, datetime, date): The end date-time of the interval.
         """
-        if from_val is None and to_val is None:
-            raise ValueError('Both `from_val` and `to_val` parameters cannot be None')
-
-        include_to = True
-
-        if from_val is None:
-            from_dt = None
-        else:
-            if isinstance(from_val, str):
-                from_val = parse(from_val)
-            if isinstance(from_val, datetime.datetime):
-                from_dt = from_val.astimezone(timezone.utc)
-            else:  # Assuming it is datetime.date
-                from_dt = datetime.datetime.combine(from_val, time.min).astimezone(timezone.utc)
-
-        if to_val is None:
-            to_dt = None
-        else:
-            if isinstance(to_val, str):
-                to_val = parse(to_val)
-            if isinstance(to_val, datetime.datetime):
-                to_dt = to_val.astimezone(timezone.utc)
-            else:  # Assuming it is datetime.date
-                to_dt = datetime.datetime.combine(to_val + timedelta(days=1), time.min).astimezone(timezone.utc)
-                include_to = False
-
-        return LifecycleCriterion(from_dt, to_dt, include_to)
+        return LifecycleCriterion(*parse_range_to_utc(from_val, to_val))
 
     @classmethod
     def single_day_period(cls, day_offset, *, to_utc=False):
@@ -229,8 +213,7 @@ class LifecycleCriterion(MatchCriteria[Lifecycle]):
             day_offset (int): A day offset for which the period is created. 0 > today, -1 > yesterday, 1 > tomorrow...
             to_utc (bool): The interval is converted from local zone to UTC when set to true.
         """
-        range_ = single_day_range(day_offset, to_utc=to_utc)
-        return cls(*range_, None, None, include_to=False)
+        return cls(*single_day_range(day_offset, to_utc=to_utc))
 
     @classmethod
     def today(cls, *, to_utc=False):
@@ -253,8 +236,7 @@ class LifecycleCriterion(MatchCriteria[Lifecycle]):
                 If true, the interval is converted from the local time zone to UTC; otherwise, it remains
                 in the local time zone.
         """
-        range_ = days_range(days, to_utc=to_utc)
-        return cls(*range_, None, None, include_to=False)
+        return cls(*days_range(days, to_utc=to_utc))
 
     @classmethod
     def week_back(cls, *, to_utc=False):
@@ -264,29 +246,7 @@ class LifecycleCriterion(MatchCriteria[Lifecycle]):
         return self.matches(lifecycle)
 
     def matches(self, lifecycle):
-        # Check for created_at
-        if self.created_from and lifecycle.created_at < self.created_from:
-            return False
-        if self.created_to:
-            if self.include_to:
-                if lifecycle.created_at > self.created_to:
-                    return False
-            else:
-                if lifecycle.created_at >= self.created_to:
-                    return False
-
-        if lifecycle.ended_at is not None:
-            if self.ended_from and lifecycle.ended_at < self.ended_from:
-                return False
-            if self.ended_to:
-                if self.include_to:
-                    if lifecycle.ended_at > self.ended_to:
-                        return False
-                else:
-                    if lifecycle.ended_at >= self.ended_to:
-                        return False
-
-        return True
+        return self.created_range(lifecycle.created_at) and not self.ended_range or self.ended_range(lifecycle.ended_at)
 
 
 @dataclass

@@ -111,7 +111,7 @@ def test_interval(sut):
     jobs = sut.read_job_runs(EntityRunCriteria(interval_criteria=ic))
     assert sorted(jobs.job_ids) == ['j2', 'j3']
 
-    ic = LifecycleCriterion(ended_to=dt(2023, 4, 22, 23, 59, 59), include_to=False)
+    ic = LifecycleCriterion(ended_to=dt(2023, 4, 22, 23, 59, 59), ended_to_included=False)
     jobs = sut.read_job_runs(EntityRunCriteria(interval_criteria=ic))
     assert jobs.job_ids == ['j3']
 

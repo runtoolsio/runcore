@@ -1,7 +1,9 @@
 import re
 import secrets
+from dataclasses import dataclass
 from datetime import datetime, timezone, date, time, timedelta
 from enum import Enum
+from typing import Optional
 
 from dateutil.relativedelta import relativedelta
 
@@ -18,14 +20,83 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def single_day_range(day_offset=0, *, to_utc=False):
+@dataclass
+class DateTimeRange:
+    start: Optional[datetime] = None
+    end: Optional[datetime] = None
+    end_included: bool = True
+
+    def __iter__(self):
+        return iter((self.start, self.end, self.end_included))
+
+    def __bool__(self):
+        return bool(self.start) or bool(self.end)
+
+    def __call__(self, tested_dt):
+        return self.matches(tested_dt)
+
+    def matches(self, tested_dt):
+        if not tested_dt:
+            return not bool(self)
+
+        if self.start and tested_dt < self.start:
+            return False
+        if self.end:
+            if self.end_included:
+                if tested_dt > self.end:
+                    return False
+            else:
+                if tested_dt >= self.end:
+                    return False
+
+        return True
+
+
+def parse_range_to_utc(from_val, to_val):
+    """
+    Creates criteria with provided values converted to the UTC timezone.
+
+    Args:
+        from_val (str, datetime, date): The start date-time of the interval.
+        to_val (str, datetime, date): The end date-time of the interval.
+    """
+    if from_val is None and to_val is None:
+        raise ValueError('Both `from_val` and `to_val` parameters cannot be None')
+
+    include_to = True
+
+    if from_val is None:
+        from_dt = None
+    else:
+        if isinstance(from_val, str):
+            from_val = parse(from_val)
+        if isinstance(from_val, datetime):
+            from_dt = from_val.astimezone(timezone.utc)
+        else:  # Assuming it is datetime.date
+            from_dt = datetime.combine(from_val, time.min).astimezone(timezone.utc)
+
+    if to_val is None:
+        to_dt = None
+    else:
+        if isinstance(to_val, str):
+            to_val = parse(to_val)
+        if isinstance(to_val, datetime):
+            to_dt = to_val.astimezone(timezone.utc)
+        else:  # Assuming it is datetime.date
+            to_dt = datetime.combine(to_val + timedelta(days=1), time.min).astimezone(timezone.utc)
+            include_to = False
+
+    return DateTimeRange(from_dt, to_dt, include_to)
+
+
+def single_day_range(day_offset=0, *, to_utc=False) -> DateTimeRange:
     today = date.today()
     start_day = today + timedelta(days=day_offset)
     end_day = today + timedelta(days=day_offset + 1)
     start = datetime.combine(start_day, time.min)
     end = datetime.combine(end_day, time.min)
 
-    return (to_naive_utc(start), to_naive_utc(end)) if to_utc else (start, end)
+    return DateTimeRange(to_naive_utc(start), to_naive_utc(end), False) if to_utc else DateTimeRange(start, end, False)
 
 
 def days_range(days=0, *, to_utc=False):
@@ -35,7 +106,7 @@ def days_range(days=0, *, to_utc=False):
     if days > 0:
         start, end = end, start
 
-    return (to_naive_utc(start), to_naive_utc(end)) if to_utc else (start, end)
+    return DateTimeRange(to_naive_utc(start), to_naive_utc(end), False) if to_utc else DateTimeRange(start, end, False)
 
 
 def to_naive_utc(dt):

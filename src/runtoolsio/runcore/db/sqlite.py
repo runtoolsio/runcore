@@ -72,25 +72,25 @@ def _build_where_clause(run_match, alias=''):
 
     int_criteria = run_match.interval_criteria
     int_conditions = []
+
+    def dt_conditions(column, dt_range):
+        conditions_dt = []
+        if not dt_range:
+            return conditions_dt
+        if dt_range.start:
+            conditions_dt.append(f"{alias}{column} >= '{format_dt_sql(dt_range.start)}'")
+        if dt_range.end:
+            if dt_range.end_included:
+                conditions_dt.append(f"{alias}{column} <= '{format_dt_sql(dt_range.end)}'")
+            else:
+                conditions_dt.append(f"{alias}{column} < '{format_dt_sql(dt_range.end)}'")
+
+        return conditions_dt
+
     for c in int_criteria:
-        conditions = []
-        if c.created_from:
-            conditions.append(f"{alias}created >= '{format_dt_sql(c.created_from)}'")
-        if c.created_to:
-            if c.include_to:
-                conditions.append(f"{alias}created <= '{format_dt_sql(c.created_to)}'")
-            else:
-                conditions.append(f"{alias}created < '{format_dt_sql(c.created_to)}'")
-
-        if c.ended_from:
-            conditions.append(f"{alias}ended >= '{format_dt_sql(c.ended_from)}'")
-        if c.ended_to:
-            if c.include_to:
-                conditions.append(f"{alias}ended <= '{format_dt_sql(c.ended_to)}'")
-            else:
-                conditions.append(f"{alias}ended < '{format_dt_sql(c.ended_to)}'")
-
-        int_conditions.append("(" + " AND ".join(conditions) + ")")
+        conditions = dt_conditions('created', c.created_range) + dt_conditions('ended', c.ended_range)
+        if conditions:
+            int_conditions.append("(" + " AND ".join(conditions) + ")")
 
     term_conditions = []
     if run_match.termination_criteria:
