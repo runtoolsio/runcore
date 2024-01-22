@@ -176,14 +176,14 @@ def store_instances(*job_inst):
     clean_up_by_config()
 
 
-def remove_instances(instance_match):
+def remove_runs(run_match):
     """
     Removes job instances based on the specified match criteria from the configured persistence source.
 
     Args:
-        instance_match (InstanceMatchCriteria): Criteria to filter job instances for removal.
+        run_match (InstanceMatchCriteria): Criteria to filter job instances for removal.
     """
-    _instance().remove_instances(instance_match)
+    _instance().remove_runs(run_match)
 
 
 def clean_up_by_config():
@@ -251,7 +251,7 @@ class _NoPersistence:
     def store_instances(self, *jobs_inst):
         raise PersistenceDisabledError()
 
-    def remove_instances(self, instance_match):
+    def remove_runs(self, instance_match):
         raise PersistenceDisabledError()
 
     def clean_up(self, max_records, max_age):

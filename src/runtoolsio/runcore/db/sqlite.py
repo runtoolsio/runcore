@@ -241,7 +241,7 @@ class SQLite(InstanceTransitionObserver):
             average = datetime.timedelta(seconds=t[5]) if t[5] else None
             slowest = datetime.timedelta(seconds=t[6]) if t[6] else None
             last_time = datetime.timedelta(seconds=t[7]) if t[7] else None
-            last_term_status = TerminationStatus[t[8]] if t[8] else TerminationStatus.UNKNOWN
+            last_term_status = TerminationStatus.from_code(t[8]) if t[8] else TerminationStatus.UNKNOWN
             failed_count = t[9]
             warn_count = t[10]
 
@@ -280,8 +280,8 @@ class SQLite(InstanceTransitionObserver):
         )
         self._conn.commit()
 
-    def remove_instances(self, instance_match):
-        where_clause = _build_where_clause(instance_match)
+    def remove_runs(self, run_match):
+        where_clause = _build_where_clause(run_match)
         if not where_clause:
             raise ValueError("No rows to remove")
         self._conn.execute("DELETE FROM history" + where_clause)

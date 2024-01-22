@@ -281,7 +281,7 @@ class TerminationCriterion(MatchCriteria[TerminationInfo]):
 
 
 def parse_criteria(pattern: str, strategy: MatchingStrategy = MatchingStrategy.EXACT):
-    return EntityRunCriteria.parse_pattern(pattern, strategy)
+    return EntityRunCriteria.from_instance_pattern(pattern, strategy)
 
 
 class EntityRunCriteria(MatchCriteria[EntityRun]):
@@ -332,7 +332,7 @@ class EntityRunCriteria(MatchCriteria[EntityRun]):
         }
 
     @classmethod
-    def parse_pattern(cls, pattern: str, strategy: MatchingStrategy = MatchingStrategy.EXACT):
+    def from_instance_pattern(cls, pattern: str, strategy: MatchingStrategy = MatchingStrategy.EXACT):
         new = cls()
         new += InstanceMetadataCriterion.parse_pattern(pattern, strategy)
         return new
