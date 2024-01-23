@@ -135,7 +135,7 @@ class InstanceMetadataCriterion(MatchCriteria[InstanceMetadata]):
         return self.matches(entity_run.metadata)
 
 
-def compound_metadata_filter(metadata_criteria):
+def compound_instance_filter(metadata_criteria):
     def match(metadata):
         return not metadata_criteria or any(criteria(metadata) for criteria in metadata_criteria)
 
