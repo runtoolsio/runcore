@@ -73,15 +73,19 @@ class EventReceiver(SocketServer):
 
 class InstanceTransitionReceiver(EventReceiver):
 
-    def __init__(self, instance_match=None, phases=()):
+    def __init__(self, instance_match=None, phases=(), run_states=()):
         super().__init__(_listener_socket_name(TRANSITION_LISTENER_FILE_EXTENSION), instance_match)
         self.phases = phases
+        self.run_states = run_states
         self._notification = ObservableNotification[InstanceTransitionObserver]()
 
     def handle_event(self, _, instance_meta, event):
         new_phase = PhaseRun.deserialize(event["new_phase"])
 
         if self.phases and new_phase.phase_name not in self.phases:
+            return
+
+        if self.run_states and new_phase.run_state not in self.run_states:
             return
 
         job_run = JobRun.deserialize(event['job_run'])
