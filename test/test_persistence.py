@@ -1,5 +1,5 @@
-from runtoolsio.runcore import persistence
+from runtoolsio.runcore import db
 
 
 def test_load_sqlite():
-    assert persistence.load_persistence('sqlite')
+    assert db.load_database_module('sqlite')

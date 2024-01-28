@@ -27,75 +27,41 @@ This module consists of:
 
 """
 
-import importlib
-import pkgutil
 import sys
 from enum import Enum
 from typing import List
 
-from runtoolsio import runcore
 from runtoolsio.runcore import paths, db
-from runtoolsio.runcore import util, cfg
-from runtoolsio.runcore.common import TaroException
+from runtoolsio.runcore import util
 from runtoolsio.runcore.job import JobStats, JobRuns
 from runtoolsio.runcore.run import RunState
 
+CURRENT_DB = 'sqlite'
 
-def load_configured_persistence():
-    """
-    Loads the persistence specified in the `cfg.persistence_type` field and creates a new instance of it.
-    """
-    return load_persistence(cfg.persistence_type)
+_db_configs = {}
+_db_modules = {}
 
 
-def load_persistence(persistence_type):
+def add_database_config(db_type, db_conf):
     """
     Loads the persistence specified by the parameter and creates a new instance of it.
 
     Args:
-        persistence_type (str): Type of the persistence to be loaded
+        db_type (str): Type of the persistence to be loaded
     """
-    if not cfg.persistence_enabled:
-        return _NoPersistence()
+    _db_configs[db_type] = db_conf
 
-    for finder, name, is_pkg in pkgutil.iter_modules(runcore.db.__path__, runcore.db.__name__ + "."):
-        if name == runcore.db.__name__ + "." + persistence_type:
-            db_module = importlib.import_module(name)
-            return db_module.create_persistence()
-
-    raise PersistenceNotFoundError(runcore.db.__name__ + "." + persistence_type)
+    global CURRENT_DB
+    if not CURRENT_DB:
+        CURRENT_DB = db_type
 
 
-class _PersistenceHolder(dict):
+def _instance(db_type=None):
+    db_module = _db_modules.get(db_type)
+    if not db_module:
+        db_module[db_type] = db_module = db.load_database_module(db_type)
 
-    def __missing__(self, key):
-        self.close()
-
-        new_instance = load_persistence(key)
-        self[key] = new_instance
-        return new_instance
-
-    def close(self):
-        for instance in self.values():
-            instance.close()
-        self.clear()
-
-
-_persistence = _PersistenceHolder()
-
-
-def reset():
-    """
-    Resets the cached persistence implementation. An implementation will be re-loaded when the global persistence
-    is accessed again.
-    """
-    _persistence.close()
-
-
-def _instance():
-    if not cfg.persistence_enabled:
-        return _NoPersistence()
-    return _persistence[cfg.persistence_type]
+    return db_module.create_database(_db_configs.get(db_type))
 
 
 class SortCriteria(Enum):
@@ -191,12 +157,14 @@ def clean_up_by_config():
     Cleans up the job instances in the configured persistence source based on max records and max age
     as defined in the configuration. See `clean_up` function for more details.
     """
+    persistence_max_age = None  # TODO
+    persistence_max_records = None  # TODO
     try:
-        max_age = util.parse_iso8601_duration(cfg.persistence_max_age) if cfg.persistence_max_age else None
+        max_age = util.parse_iso8601_duration(persistence_max_age) if persistence_max_age else None
     except ValueError:
         sys.stderr.write("Invalid max_age in " + str(paths.lookup_config_file()) + "\n")
         return
-    _instance().clean_up(cfg.persistence_max_records, max_age)
+    _instance().clean_up(persistence_max_records, max_age)
 
 
 def clean_up(max_records=-1, max_age=None):
@@ -215,19 +183,9 @@ def clean_up(max_records=-1, max_age=None):
     _instance().clean_up(max_records, max_age)
 
 
-def close():
-    """
-    Closes the current persistence source.
-
-    This method should be called:
-        1. After finishing the use of the global persistence storage.
-        2. Before changing the global persistence type or any configuration which requires resetting the persistence.
-    """
-    _persistence.close()
-
-
 def _sort_key(sort: SortCriteria):
     """TODO To remove?"""
+
     def key(j):
         if sort == SortCriteria.CREATED:
             return j.lifecycle.state_first_transition_at(RunState.CREATED)
@@ -261,18 +219,7 @@ class _NoPersistence:
         pass
 
 
-class PersistenceError(TaroException):
-    pass
-
-
-class PersistenceNotFoundError(PersistenceError):
-
-    def __init__(self, module_):
-        super().__init__(f'Cannot find persistence module {module_}. Ensure this module is installed '
-                         f'or check that the provided persistence type value is correct.')
-
-
-class PersistenceDisabledError(PersistenceError):
+class PersistenceDisabledError(Exception):
     """
     Raised when attempting an operation while persistence is disabled.
     Any code using persistence should always catch this exception.

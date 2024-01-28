@@ -9,7 +9,6 @@ import sqlite3
 from datetime import timezone
 from typing import List
 
-from runtoolsio.runcore import cfg
 from runtoolsio.runcore import paths
 from runtoolsio.runcore.job import JobStats, JobRun, JobRuns, InstanceTransitionObserver
 from runtoolsio.runcore.persistence import SortCriteria
@@ -21,8 +20,9 @@ from runtoolsio.runcore.util import MatchingStrategy, format_dt_sql, parse_dt_sq
 log = logging.getLogger(__name__)
 
 
-def create_persistence():
-    db_con = sqlite3.connect(cfg.persistence_database or str(paths.sqlite_db_path(True)))
+def create_database(db_conf):
+    config = db_conf if db_conf else {}
+    db_con = sqlite3.connect(config.get('database') or str(paths.sqlite_db_path(True)))
     sqlite_ = SQLite(db_con)
     sqlite_.check_tables_exist()
     return sqlite_

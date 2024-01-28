@@ -3,22 +3,8 @@ from pathlib import Path
 
 import tomli_w
 
-from runtoolsio.runcore import cfg
 from runtoolsio.runcore import paths
 from runtoolsio.runcore.job import JobRun, InstanceTransitionObserver
-
-
-def reset_config():
-    cfg.log_mode = cfg.DEF_LOG
-    cfg.log_stdout_level = cfg.DEF_LOG_STDOUT_LEVEL
-    cfg.log_file_level = cfg.DEF_LOG_FILE_LEVEL
-    cfg.log_file_path = cfg.DEF_LOG_FILE_PATH
-
-    cfg.persistence_enabled = cfg.DEF_PERSISTENCE_ENABLED
-    cfg.persistence_type = cfg.DEF_PERSISTENCE_TYPE
-    cfg.persistence_database = cfg.DEF_PERSISTENCE_DATABASE
-
-    cfg.plugins_load = cfg.DEF_PLUGINS_LOAD
 
 
 def create_test_config(config):
