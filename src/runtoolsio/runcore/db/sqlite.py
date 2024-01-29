@@ -10,8 +10,8 @@ from datetime import timezone
 from typing import List
 
 from runtoolsio.runcore import paths
+from runtoolsio.runcore.db import SortCriteria
 from runtoolsio.runcore.job import JobStats, JobRun, JobRuns, InstanceTransitionObserver
-from runtoolsio.runcore.persistence import SortCriteria
 from runtoolsio.runcore.run import RunState, Lifecycle, PhaseMetadata, RunFailure, RunError, Run, TerminationInfo, \
     TerminationStatus, Outcome, JobInstanceMetadata
 from runtoolsio.runcore.track import TrackedTask
@@ -117,6 +117,13 @@ class SQLite(InstanceTransitionObserver):
     def __init__(self, connection):
         self._conn = connection
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        # TODO Handle exceptions if necessary, return False to propagate any exception, True to suppress
+
     def new_instance_phase(self, job_run: JobRun, previous_phase, new_phase, ordinal):
         if new_phase.run_state == RunState.ENDED:
             self.store_job_runs(job_run)
@@ -151,6 +158,28 @@ class SQLite(InstanceTransitionObserver):
 
     def read_job_runs(self, run_match=None, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=-1, last=False) \
             -> JobRuns:
+        """
+        Fetches ended job instances based on specified criteria.
+        Datasource: The database as defined by the configured persistence type.
+
+        Args:
+            run_match (InstanceMatchCriteria, optional):
+                Criteria to match specific job instances. None means fetch all. Defaults to None.
+            sort (SortCriteria):
+                Determines the field by which records are sorted. Defaults to `SortCriteria.ENDED`.
+            asc (bool, optional):
+                Determines if the sorting is in ascending order. Defaults to True.
+            limit (int, optional):
+                Maximum number of records to return. -1 means no limit. Defaults to -1.
+            offset (int, optional):
+                Number of records to skip before starting to return. -1 means no offset. Defaults to -1.
+            last (bool, optional):
+                If set to True, only the last record for each job is returned. Defaults to False.
+
+        Returns:
+            JobRuns: A collection of job instances that match the given criteria.
+        """
+
         def sort_exp():
             if sort == SortCriteria.CREATED:
                 return 'h.created'
@@ -186,6 +215,19 @@ class SQLite(InstanceTransitionObserver):
 
         return JobRuns((to_job_info(row) for row in c.fetchall()))
 
+    def count_instances(self, run_match):
+        """
+        Counts the total number of job instances based on the specified match criteria.
+        Datasource: The database as defined by the configured persistence type.
+
+        Args:
+            run_match (InstanceMatchCriteria): Criteria to filter job instances.
+
+        Returns:
+            int: Total count of job instances matching the specified criteria.
+        """
+        return sum(s.count for s in (self.read_stats(run_match)))
+
     def clean_up(self, max_records, max_age):
         if max_records >= 0:
             self._max_rows(max_records)
@@ -207,6 +249,15 @@ class SQLite(InstanceTransitionObserver):
         self._conn.commit()
 
     def read_stats(self, run_match=None) -> List[JobStats]:
+        """
+        Returns job statistics for each job based on specified criteria.
+        Datasource: The database as defined by the configured persistence type.
+
+        Args:
+            run_match (InstanceMatchCriteria, optional):
+                Criteria to match records used to calculate the statistics. None means fetch all. Defaults to None.
+        """
+
         where = _build_where_clause(run_match, alias='h')
         sql = f'''
             SELECT
@@ -253,6 +304,14 @@ class SQLite(InstanceTransitionObserver):
         return [to_job_stats(row) for row in c.fetchall()]
 
     def store_job_runs(self, *job_runs):
+        """
+        Stores the provided job instances to the configured persistence source.
+        After storing, it also initiates a cleanup based on configured criteria.
+
+        Args:
+            *job_runs (JobInst): Variable number of job instances to be stored.
+        """
+
         def to_tuple(r):
             lifecycle = r.run.lifecycle
             return (r.job_id,
@@ -281,6 +340,13 @@ class SQLite(InstanceTransitionObserver):
         self._conn.commit()
 
     def remove_runs(self, run_match):
+        """
+        Removes job instances based on the specified match criteria from the configured persistence source.
+
+        Args:
+            run_match (InstanceMatchCriteria): Criteria to filter job instances for removal.
+        """
+
         where_clause = _build_where_clause(run_match)
         if not where_clause:
             raise ValueError("No rows to remove")

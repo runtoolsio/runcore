@@ -1,8 +1,14 @@
-class TaroException(Exception):
+class RuntoolsException(Exception):
     pass
 
 
-class ConfigFileNotFoundError(TaroException, FileNotFoundError):
+class InvalidStateError(RuntoolsException):
+
+    def __init__(self, message: str):
+        super().__init__(message)
+
+
+class ConfigFileNotFoundError(RuntoolsException, FileNotFoundError):
 
     def __init__(self, file, search_path=()):
         self.file = file
@@ -13,10 +19,4 @@ class ConfigFileNotFoundError(TaroException, FileNotFoundError):
         else:
             message = f"Config file `{file}` not found"
 
-        super().__init__(message)
-
-
-class InvalidStateError(TaroException):
-
-    def __init__(self, message: str):
         super().__init__(message)
