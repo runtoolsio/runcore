@@ -1,4 +1,4 @@
-from runtoolsio.runcore.util import KVParser
+from runtools.runcore.util import KVParser
 
 
 def test_default():

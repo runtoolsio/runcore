@@ -16,8 +16,8 @@ from importlib.resources import path
 from pathlib import Path
 from typing import Generator, List
 
-from runtoolsio.runcore import util
-from runtoolsio.runcore.common import ConfigFileNotFoundError, RuntoolsException
+from runtools.runcore import util
+from runtools.runcore.common import ConfigFileNotFoundError, RuntoolsException
 
 CONFIG_DIR = 'runcore'
 CONFIG_FILE = 'runcore.toml'
@@ -31,7 +31,7 @@ def _is_root():
 
 
 def default_config_file_path() -> Path:
-    return package_config_path('runtoolsio.runcore.config', CONFIG_FILE)
+    return package_config_path('runtools.runcore.config', CONFIG_FILE)
 
 
 def package_config_path(package, filename) -> Path:

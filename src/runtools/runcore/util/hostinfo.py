@@ -11,7 +11,7 @@ from typing import Dict
 import urllib3
 from urllib3.exceptions import HTTPError
 
-from runtoolsio.runcore import paths
+from runtools.runcore import paths
 
 log = logging.getLogger(__name__)
 

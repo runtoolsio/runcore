@@ -2,8 +2,8 @@ from typing import Optional
 
 import test.plugins
 from plugins import test_plugin
-from runtoolsio.runcore import plugins
-from runtoolsio.runcore.plugins import Plugin
+from runtools.runcore import plugins
+from runtools.runcore.plugins import Plugin
 
 
 def test_plugin_discovered():

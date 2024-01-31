@@ -5,7 +5,7 @@ from typing import Dict, Any
 
 import tomli
 
-from runtoolsio.runcore.util import flatten_dict
+from runtools.runcore.util import flatten_dict
 
 
 def expand_user(file):

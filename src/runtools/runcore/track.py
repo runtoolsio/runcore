@@ -8,9 +8,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, Sequence
 
-from runtoolsio.runcore import util
-from runtoolsio.runcore.util import format_dt_iso, is_empty
-from runtoolsio.runcore.util.observer import ObservableNotification
+from runtools.runcore import util
+from runtools.runcore.util import format_dt_iso, is_empty
+from runtools.runcore.util.observer import ObservableNotification
 
 log = logging.getLogger(__name__)
 

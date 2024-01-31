@@ -1,6 +1,6 @@
 import datetime
 
-from runtoolsio.runcore.util import parse
+from runtools.runcore.util import parse
 
 
 def test_parse_full_tz():

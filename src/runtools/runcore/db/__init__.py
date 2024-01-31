@@ -3,8 +3,8 @@ import pkgutil
 from abc import ABC
 from enum import Enum
 
-from runtoolsio import runcore
-from runtoolsio.runcore.common import RuntoolsException
+from runtools import runcore
+from runtools.runcore.common import RuntoolsException
 
 _db_modules = {}
 

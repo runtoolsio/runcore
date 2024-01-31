@@ -3,12 +3,12 @@ from datetime import datetime as dt
 
 import pytest
 
-from runtoolsio.runcore.criteria import LifecycleCriterion, EntityRunCriteria, \
+from runtools.runcore.criteria import LifecycleCriterion, EntityRunCriteria, \
     parse_criteria
-from runtoolsio.runcore.db.sqlite import SQLite
-from runtoolsio.runcore.run import TerminationStatus
-from runtoolsio.runcore.test.job import ended_run as run
-from runtoolsio.runcore.util import parse_iso8601_duration, MatchingStrategy
+from runtools.runcore.db.sqlite import SQLite
+from runtools.runcore.run import TerminationStatus
+from runtools.runcore.test.job import ended_run as run
+from runtools.runcore.util import parse_iso8601_duration, MatchingStrategy
 
 
 @pytest.fixture

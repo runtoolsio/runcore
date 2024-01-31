@@ -18,8 +18,8 @@ from abc import ABC, abstractmethod
 
 import portalocker
 
-from runtoolsio.runcore import cfg
-from runtoolsio.runcore import paths
+from runtools.runcore import cfg
+from runtools.runcore import paths
 
 log = logging.getLogger(__name__)
 

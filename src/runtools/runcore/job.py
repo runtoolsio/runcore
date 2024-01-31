@@ -14,12 +14,12 @@ from datetime import timedelta
 from threading import Thread
 from typing import Dict, Any, List, Optional, Type
 
-from runtoolsio.runcore.output import Mode
-from runtoolsio.runcore.run import TerminationStatus, P, RunState, Run, PhaseRun, PhaseMetadata, InstanceMetadata, \
+from runtools.runcore.output import Mode
+from runtools.runcore.run import TerminationStatus, P, RunState, Run, PhaseRun, PhaseMetadata, InstanceMetadata, \
     EntityRun, JobInstanceMetadata
-from runtoolsio.runcore.track import TrackedTask
-from runtoolsio.runcore.util import MatchingStrategy, format_dt_iso
-from runtoolsio.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
+from runtools.runcore.track import TrackedTask
+from runtools.runcore.util import MatchingStrategy, format_dt_iso
+from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
 
 
 class Job:
@@ -233,7 +233,7 @@ class JobInstance(abc.ABC):
     def metadata(self):
         """
         Returns:
-            runtoolsio.runcore.run.InstanceMetadata: Descriptive information about this instance.
+            runtools.runcore.run.InstanceMetadata: Descriptive information about this instance.
         """
 
     @property

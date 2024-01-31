@@ -1,7 +1,7 @@
-from runtoolsio.runcore.criteria import LifecycleCriterion, TerminationCriterion
-from runtoolsio.runcore.run import TerminationStatus, TerminationInfo, Outcome
+from runtools.runcore.criteria import LifecycleCriterion, TerminationCriterion
+from runtools.runcore.run import TerminationStatus, TerminationInfo, Outcome
 
-from runtoolsio.runcore.util import utc_now
+from runtools.runcore.util import utc_now
 
 
 def test_interval_utc_conversion():

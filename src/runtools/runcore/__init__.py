@@ -6,9 +6,9 @@ __version__ = "0.1.1"
 
 from types import MappingProxyType
 
-from runtoolsio.runcore import db
-from runtoolsio.runcore.common import RuntoolsException
-from runtoolsio.runcore.db import Persistence
+from runtools.runcore import db
+from runtools.runcore.common import RuntoolsException
+from runtools.runcore.db import Persistence
 
 _current_persistence = 'sqlite'
 _persistence = {}

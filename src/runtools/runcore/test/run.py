@@ -1,11 +1,11 @@
 from threading import Condition
 from typing import Iterable, Optional, Callable
 
-from runtoolsio.runcore import util
-from runtoolsio.runcore.common import InvalidStateError
-from runtoolsio.runcore.run import Phase, PhaseRun, AbstractPhaser, TerminationInfo, Run, RunState, InitPhase, \
+from runtools.runcore import util
+from runtools.runcore.common import InvalidStateError
+from runtools.runcore.run import Phase, PhaseRun, AbstractPhaser, TerminationInfo, Run, RunState, InitPhase, \
     TerminalPhase, TerminationStatus
-from runtoolsio.runcore.util import utc_now
+from runtools.runcore.util import utc_now
 
 
 class FakePhaser(AbstractPhaser):

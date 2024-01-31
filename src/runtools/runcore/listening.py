@@ -4,11 +4,11 @@ import logging
 from abc import abstractmethod
 from json import JSONDecodeError
 
-from runtoolsio.runcore import util, paths
-from runtoolsio.runcore.job import JobRun, InstanceTransitionObserver, InstanceOutputObserver
-from runtoolsio.runcore.run import PhaseRun, PhaseMetadata, JobInstanceMetadata
-from runtoolsio.runcore.util.observer import ObservableNotification
-from runtoolsio.runcore.util.socket import SocketServer
+from runtools.runcore import util, paths
+from runtools.runcore.job import JobRun, InstanceTransitionObserver, InstanceOutputObserver
+from runtools.runcore.run import PhaseRun, PhaseMetadata, JobInstanceMetadata
+from runtools.runcore.util.observer import ObservableNotification
+from runtools.runcore.util.socket import SocketServer
 
 log = logging.getLogger(__name__)
 

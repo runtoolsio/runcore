@@ -5,8 +5,8 @@ Description: Jobs file repository tests
 
 import pytest
 
-from runtoolsio.runcore import paths, jobrepo
-from runtoolsio.runcore.test.testutil import create_custom_test_config, remove_custom_test_config
+from runtools.runcore import paths, jobrepo
+from runtools.runcore.test.testutil import create_custom_test_config, remove_custom_test_config
 
 
 @pytest.fixture(autouse=True)

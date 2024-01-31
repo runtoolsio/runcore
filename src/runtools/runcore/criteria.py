@@ -9,8 +9,8 @@ from abc import abstractmethod, ABC
 from dataclasses import dataclass
 from typing import Dict, Any, Set, Optional, TypeVar, Generic
 
-from runtoolsio.runcore.run import Outcome, Lifecycle, TerminationInfo, EntityRun, InstanceMetadata
-from runtoolsio.runcore.util import MatchingStrategy, and_, or_, parse, single_day_range, days_range, \
+from runtools.runcore.run import Outcome, Lifecycle, TerminationInfo, EntityRun, InstanceMetadata
+from runtools.runcore.util import MatchingStrategy, and_, or_, parse, single_day_range, days_range, \
     format_dt_iso, to_list, DateTimeRange, parse_range_to_utc
 
 T = TypeVar('T')

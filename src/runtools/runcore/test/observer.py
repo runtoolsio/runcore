@@ -11,8 +11,8 @@ from queue import Queue
 from threading import Condition
 from typing import Tuple, List, Callable
 
-from runtoolsio.runcore.job import JobRun, InstanceTransitionObserver, InstanceOutputObserver
-from runtoolsio.runcore.run import PhaseRun, RunState, PhaseMetadata
+from runtools.runcore.job import JobRun, InstanceTransitionObserver, InstanceOutputObserver
+from runtools.runcore.run import PhaseRun, RunState, PhaseMetadata
 
 log = logging.getLogger(__name__)
 

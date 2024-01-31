@@ -12,11 +12,11 @@ import os
 from abc import ABC, abstractmethod
 from typing import List, Optional
 
-from runtoolsio import runcore
-from runtoolsio.runcore import PersistenceDisabledError
-from runtoolsio.runcore import paths, persistence
-from runtoolsio.runcore import util, client
-from runtoolsio.runcore.job import Job
+from runtools import runcore
+from runtools.runcore import PersistenceDisabledError
+from runtools.runcore import paths
+from runtools.runcore import util, client
+from runtools.runcore.job import Job
 
 
 class JobRepository(ABC):

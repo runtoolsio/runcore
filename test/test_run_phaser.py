@@ -3,8 +3,8 @@ from typing import Optional
 
 import pytest
 
-from runtoolsio.runcore.common import InvalidStateError
-from runtoolsio.runcore.run import Phaser, PhaseNames, TerminationStatus, Phase, RunState, WaitWrapperPhase, \
+from runtools.runcore.common import InvalidStateError
+from runtools.runcore.run import Phaser, PhaseNames, TerminationStatus, Phase, RunState, WaitWrapperPhase, \
     FailedRun, RunError, TerminateRun
 
 

@@ -1,8 +1,8 @@
 import sqlite3
 from pathlib import Path
 
-from runtoolsio.runcore import cfg, persistence
-from runtoolsio.runcore.db.sqlite import SQLite
+from runtools.runcore import cfg, persistence
+from runtools.runcore.db.sqlite import SQLite
 
 
 class TestPersistence:

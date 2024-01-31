@@ -2,8 +2,8 @@
 from typing import List, Optional
 from weakref import ref
 
-from runtoolsio.runcore.job import JobInstance
-from runtoolsio.runcore.plugins import Plugin
+from runtools.runcore.job import JobInstance
+from runtools.runcore.plugins import Plugin
 
 
 class TestPlugin(Plugin):

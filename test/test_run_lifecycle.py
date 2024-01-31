@@ -2,8 +2,8 @@ import datetime
 
 import pytest
 
-from runtoolsio.runcore.run import PhaseRun, PhaseNames, RunState, Lifecycle
-from runtoolsio.runcore.util import utc_now
+from runtools.runcore.run import PhaseRun, PhaseNames, RunState, Lifecycle
+from runtools.runcore.util import utc_now
 
 PENDING = "PENDING"
 EXECUTING = "EXECUTING"

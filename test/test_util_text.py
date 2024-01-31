@@ -4,7 +4,7 @@ Description: Util module tests
 """
 import pytest
 
-from runtoolsio.runcore import util
+from runtools.runcore import util
 
 
 def test_truncate_with_suffix():

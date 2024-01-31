@@ -1,4 +1,4 @@
-from runtoolsio.runcore import db
+from runtools.runcore import db
 
 
 def test_load_sqlite():

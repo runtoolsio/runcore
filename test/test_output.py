@@ -1,4 +1,4 @@
-from runtoolsio.runcore.output import InMemoryOutput
+from runtools.runcore.output import InMemoryOutput
 
 
 def test_add_and_fetch_all():

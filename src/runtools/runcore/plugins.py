@@ -19,7 +19,7 @@ can assist in this process.
 
 Plugin Location:
 ----------------
-By default, the `load_modules` function locates modules in the `runtoolsio.plugins` namespace subpackage. More details
+By default, the `load_modules` function locates modules in the `runtools.plugins` namespace subpackage. More details
 are available in the official documentation:
 https://packaging.python.org/en/latest/guides/creating-and-discovering-plugins/#using-namespace-packages
 
@@ -46,8 +46,8 @@ from abc import abstractmethod
 from types import ModuleType
 from typing import Dict, Type
 
-import runtoolsio.plugins
-from runtoolsio.runcore.job import JobInstanceManager
+import runtools.plugins
+from runtools.runcore.job import JobInstanceManager
 
 log = logging.getLogger(__name__)
 
@@ -149,14 +149,14 @@ class PluginDisabledError(Exception):
         super().__init__(message)
 
 
-def load_modules(modules, *, package=runtoolsio.plugins) -> Dict[str, ModuleType]:
+def load_modules(modules, *, package=runtools.plugins) -> Dict[str, ModuleType]:
     """
     Utility function to ensure all plugins are registered before use.
     Users of the plugins API should call this before utilizing any plugin.
 
     Args:
         modules (List[str]): Modules where plugins are defined.
-        package (ModuleType, optional): Base package for plugins. Defaults to `runtoolsio.plugins` namespace sub-package.
+        package (ModuleType, optional): Base package for plugins. Defaults to `runtools.plugins` namespace sub-package.
     """
 
     if not modules:
