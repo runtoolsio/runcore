@@ -50,16 +50,16 @@ class SortCriteria(Enum):
 
 class Persistence(ABC):
 
-    def read_instances(self, instance_match=None, sort=SortCriteria.CREATED, *, asc, limit, offset, last=False):
+    def read_job_runs(self, run_match=None, sort=SortCriteria.CREATED, *, asc, limit, offset, last=False):
         pass
 
-    def read_stats(self, instance_match=None):
+    def read_job_stats(self, run_match=None):
         pass
 
-    def store_instances(self, *jobs_inst):
+    def store_job_runs(self, *job_runs):
         pass
 
-    def remove_runs(self, instance_match):
+    def remove_job_runs(self, run_match):
         pass
 
     def clean_up(self, max_records, max_age):

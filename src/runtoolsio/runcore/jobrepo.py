@@ -66,7 +66,7 @@ class JobRepositoryFile(JobRepository):
 
     def reset(self, overwrite: bool):
         # TODO Create `runcore config create --jobs` command for this
-        path = self.path or (paths.taro_config_file_search_path(exclude_cwd=True)[0] / paths.JOBS_FILE)
+        path = self.path or (paths.runtools_config_file_search_path(exclude_cwd=True)[0] / paths.JOBS_FILE)
         if not os.path.exists(path) or overwrite:
             pass
             # TODO Copy file from resources
@@ -92,7 +92,7 @@ class JobRepositoryHistory(JobRepository):
     def read_jobs(self) -> List[Job]:
         try:
             with runcore.persistence() as db:
-                return [Job(s.job_id) for s in db.read_stats()]
+                return [Job(s.job_id) for s in db.read_job_stats()]
         except PersistenceDisabledError:
             return []
 

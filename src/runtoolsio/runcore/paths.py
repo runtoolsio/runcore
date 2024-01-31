@@ -15,7 +15,8 @@ import re
 from pathlib import Path
 from typing import Generator, List
 
-from runtoolsio.runcore.common import ConfigFileNotFoundError
+from runtoolsio.runcore import util
+from runtoolsio.runcore.common import ConfigFileNotFoundError, RuntoolsException
 
 CONFIG_DIR = 'runcore'
 CONFIG_FILE = 'runcore.toml'
@@ -57,7 +58,7 @@ def lookup_file_in_config_path(file) -> Path:
     :return: config file path
     :raise FileNotFoundError: when config lookup failed
     """
-    search_path = taro_config_file_search_path()
+    search_path = runtools_config_file_search_path()
     for config_dir in search_path:
         config = config_dir / file
         if config.exists():
@@ -66,7 +67,7 @@ def lookup_file_in_config_path(file) -> Path:
     raise ConfigFileNotFoundError(file, search_path)
 
 
-def taro_config_file_search_path(*, exclude_cwd=False) -> List[Path]:
+def runtools_config_file_search_path(*, exclude_cwd=False) -> List[Path]:
     search_path = config_file_search_path(exclude_cwd=exclude_cwd)
 
     if exclude_cwd:
@@ -254,3 +255,19 @@ def sqlite_db_path(create: bool) -> Path:
         path.mkdir(parents=True, exist_ok=True)
 
     return path / 'jobs.db'
+
+
+def copy_default_config_to_search_path(filename, overwrite: bool):
+    cfg_to_copy = config_file_path(filename)
+    # Copy to first dir in search path
+    # TODO Specify where to copy the file - do not use XDG search path
+    copy_to = runtools_config_file_search_path(exclude_cwd=True)[0] / filename
+    try:
+        util.copy_resource(cfg_to_copy, copy_to, overwrite)
+        return copy_to
+    except FileExistsError as e:
+        raise ConfigFileAlreadyExists(str(e)) from e
+
+
+class ConfigFileAlreadyExists(RuntoolsException, FileExistsError):
+    pass

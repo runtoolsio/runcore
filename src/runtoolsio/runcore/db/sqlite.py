@@ -10,7 +10,7 @@ from datetime import timezone
 from typing import List
 
 from runtoolsio.runcore import paths
-from runtoolsio.runcore.db import SortCriteria
+from runtoolsio.runcore.db import SortCriteria, Persistence
 from runtoolsio.runcore.job import JobStats, JobRun, JobRuns, InstanceTransitionObserver
 from runtoolsio.runcore.run import RunState, Lifecycle, PhaseMetadata, RunFailure, RunError, Run, TerminationInfo, \
     TerminationStatus, Outcome, JobInstanceMetadata
@@ -112,7 +112,7 @@ def _build_where_clause(run_match, alias=''):
     return " WHERE {conditions}".format(conditions=" AND ".join(all_conditions_str))
 
 
-class SQLite(InstanceTransitionObserver):
+class SQLite(Persistence, InstanceTransitionObserver):
 
     def __init__(self, connection):
         self._conn = connection
@@ -226,7 +226,7 @@ class SQLite(InstanceTransitionObserver):
         Returns:
             int: Total count of job instances matching the specified criteria.
         """
-        return sum(s.count for s in (self.read_stats(run_match)))
+        return sum(s.count for s in (self.read_job_stats(run_match)))
 
     def clean_up(self, max_records, max_age):
         if max_records >= 0:
@@ -248,7 +248,7 @@ class SQLite(InstanceTransitionObserver):
                            ((datetime.datetime.now(tz=timezone.utc) - max_age),))
         self._conn.commit()
 
-    def read_stats(self, run_match=None) -> List[JobStats]:
+    def read_job_stats(self, run_match=None) -> List[JobStats]:
         """
         Returns job statistics for each job based on specified criteria.
         Datasource: The database as defined by the configured persistence type.
@@ -339,7 +339,7 @@ class SQLite(InstanceTransitionObserver):
         )
         self._conn.commit()
 
-    def remove_runs(self, run_match):
+    def remove_job_runs(self, run_match):
         """
         Removes job instances based on the specified match criteria from the configured persistence source.
 

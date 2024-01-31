@@ -5,19 +5,32 @@ from operator import eq
 from typing import Dict
 
 
-def split_params(params, kv_sep="=") -> Dict[str, str]:
-    f"""
-    Converts sequence of values in format "key{kv_sep}value" to dict[key, value]
+def split_params(params, kv_sep="=", subkey_sep="_") -> Dict:
     """
+    Converts a sequence of values in format "key{kv_sep}value" to a nested dict.
+    Nested keys are separated by {subkey_sep}.
+    """
+    def nested_dict_assign(dct, keys, val):
+        """
+        Assigns a value to a nested dictionary, creating intermediate dicts as needed.
+        """
+        for k in keys[:-1]:
+            dct = dct.setdefault(k, {})
+        dct[keys[-1]] = val
+
+    result = {}
     if not params:
-        return {}
+        return result
 
-    def split(s):
-        if len(s) < 3 or kv_sep not in s[1:-1]:
-            raise ValueError(f"Parameter must be in format: param{kv_sep}value")
-        return s.split(kv_sep)
+    for param in params:
+        if kv_sep not in param:
+            raise ValueError(f"Parameter must be in format: key{kv_sep}value")
 
-    return {k: v for k, v in (split(set_opt) for set_opt in params)}
+        key, value = param.split(kv_sep)
+        nested_keys = key.split(subkey_sep)
+        nested_dict_assign(result, nested_keys, value)
+
+    return result
 
 
 def truncate(text, max_len, truncated_suffix=''):

@@ -7,24 +7,29 @@ __version__ = "0.1.1"
 from types import MappingProxyType
 
 from runtoolsio.runcore import db
+from runtoolsio.runcore.db import Persistence
 
-_PERSISTENCE_TYPE = 'sqlite'
-_PERSISTENCE_CONFIG = MappingProxyType({})
+_current_persistence = 'sqlite'
+_persistence = {}
 
 
 def configure(**kwargs):
-    global _PERSISTENCE_TYPE
-    _PERSISTENCE_TYPE = kwargs.get('persistence_type', _PERSISTENCE_TYPE)
-
-    global _PERSISTENCE_CONFIG
-    _PERSISTENCE_CONFIG = kwargs.get('persistence_config', _PERSISTENCE_CONFIG)
+    persistence_obj = kwargs.get('persistence', {"type": _current_persistence})
+    configure_persistence(persistence_obj["type"], persistence_obj.get(_current_persistence, {}))
 
 
-def persistence():
-    if not _PERSISTENCE_TYPE:
+def configure_persistence(persistence_type, persistence_config=None):
+    global _current_persistence
+    _current_persistence = persistence_type
+    _persistence[_current_persistence] = MappingProxyType(persistence_config or {})
+
+
+def persistence(persistence_type=None) -> Persistence:
+    db_type = persistence_type or _current_persistence
+    if not db_type:
         raise PersistenceDisabledError
 
-    return db.load_database_module(_PERSISTENCE_TYPE).create_persistence(_PERSISTENCE_CONFIG)
+    return db.load_database_module(db_type).create_database(_persistence[db_type])
 
 
 class PersistenceDisabledError(Exception):
