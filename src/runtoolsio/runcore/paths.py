@@ -12,6 +12,7 @@ Discussion:
 import getpass
 import os
 import re
+from importlib.resources import path
 from pathlib import Path
 from typing import Generator, List
 
@@ -30,15 +31,18 @@ def _is_root():
 
 
 def default_config_file_path() -> Path:
-    return config_file_path(CONFIG_FILE)
+    return package_config_path('runtoolsio.runcore.config', CONFIG_FILE)
 
 
-def config_file_path(filename) -> Path:
-    base_path = Path(__file__).parent  # Will not work when installed into zip file - use importlib.resources from v3.7?
-    config_path = base_path / 'config' / filename
-    if not config_path.exists():
-        raise ConfigFileNotFoundError(filename + ' config file not found', [config_path])
-    return config_path
+def package_config_path(package, filename) -> Path:
+    """
+    Get the path to the config file using importlib.resources.
+    """
+    try:
+        with path(package, filename) as config_path:
+            return config_path
+    except FileNotFoundError:
+        raise ConfigFileNotFoundError(filename + ' config file not found')
 
 
 def lookup_config_file():
@@ -258,7 +262,7 @@ def sqlite_db_path(create: bool) -> Path:
 
 
 def copy_default_config_to_search_path(filename, overwrite: bool):
-    cfg_to_copy = config_file_path(filename)
+    cfg_to_copy = package_config_path(filename)
     # Copy to first dir in search path
     # TODO Specify where to copy the file - do not use XDG search path
     copy_to = runtools_config_file_search_path(exclude_cwd=True)[0] / filename

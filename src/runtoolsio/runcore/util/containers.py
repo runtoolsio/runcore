@@ -44,6 +44,22 @@ def flatten_dict(dictionary, parent_key='', separator='_'):
     return dict(items)
 
 
+def update_nested_dict(original, updates):
+    """
+    Recursively update a nested dictionary.
+
+    :param original: The original dictionary to be updated.
+    :param updates: The dictionary containing updates.
+    :return: Updated dictionary.
+    """
+    for key, value in updates.items():
+        if isinstance(value, dict) and key in original:
+            original[key] = update_nested_dict(original.get(key, {}), value)
+        else:
+            original[key] = value
+    return original
+
+
 def get_next_item(dct, key, default=None):
     keys = list(dct.keys())
     try:

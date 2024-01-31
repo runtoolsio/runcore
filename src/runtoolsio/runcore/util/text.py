@@ -5,7 +5,7 @@ from operator import eq
 from typing import Dict
 
 
-def split_params(params, kv_sep="=", subkey_sep="_") -> Dict:
+def split_params(params, kv_sep="=", subkey_sep=".") -> Dict:
     """
     Converts a sequence of values in format "key{kv_sep}value" to a nested dict.
     Nested keys are separated by {subkey_sep}.
