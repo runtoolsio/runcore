@@ -9,6 +9,7 @@ from types import MappingProxyType
 from runtools.runcore import db
 from runtools.runcore.common import RuntoolsException
 from runtools.runcore.db import Persistence
+from runtools.runcore.listening import InstanceTransitionReceiver
 
 _current_persistence = 'sqlite'
 _persistence = {}
@@ -33,6 +34,10 @@ def persistence(persistence_type=None) -> Persistence:
         raise PersistenceDisabledError
 
     return db.load_database_module(db_type).create_database(_persistence[db_type])
+
+
+def instance_transition_receiver(instance_match=None, phases=(), run_states=()):
+    return InstanceTransitionReceiver(instance_match, phases, run_states)
 
 
 class InvalidConfiguration(RuntoolsException):
