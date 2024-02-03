@@ -12,10 +12,11 @@ import os
 from abc import ABC, abstractmethod
 from typing import List, Optional
 
+import runtools.runcore
 from runtools import runcore
 from runtools.runcore import PersistenceDisabledError
 from runtools.runcore import paths
-from runtools.runcore import util, client
+from runtools.runcore import util
 from runtools.runcore.job import Job
 
 
@@ -80,7 +81,7 @@ class JobRepositoryActiveInstances(JobRepository):
         return 'active'
 
     def read_jobs(self) -> List[Job]:
-        return [*{Job(i.job_id) for i in client.get_active_runs().responses}]
+        return [*{Job(i.job_id) for i in runtools.runcore.get_active_runs().responses}]
 
 
 class JobRepositoryHistory(JobRepository):
