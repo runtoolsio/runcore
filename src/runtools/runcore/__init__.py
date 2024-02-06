@@ -21,7 +21,7 @@ _persistence = {}
 def configure(**kwargs):
     persistence_obj = kwargs.get('persistence', {"type": _current_persistence})
     if "type" not in persistence_obj:
-        raise InvalidConfiguration("Field `type` is mandatory for `persistence` configuration object")
+        raise InvalidConfiguration("Field `type` is mandatory in `persistence` configuration object")
     configure_persistence(persistence_obj["type"], persistence_obj.get(_current_persistence, {}))
 
 

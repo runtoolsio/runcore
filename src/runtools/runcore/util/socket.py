@@ -53,7 +53,7 @@ class SocketServer(abc.ABC):
             if self._allow_ping and req_body == 'ping':
                 resp_body = 'pong'
             else:
-                resp_body = self.handle(req_body)  # TODO catch exceptions?
+                resp_body = self.handle(req_body)  # TODO catch exceptions? TypeError: Object of type AggregatedResponse is not JSON serializable
 
             if resp_body:
                 if client_address:

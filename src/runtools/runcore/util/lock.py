@@ -18,7 +18,6 @@ from abc import ABC, abstractmethod
 
 import portalocker
 
-from runtools.runcore import cfg
 from runtools.runcore import paths
 
 log = logging.getLogger(__name__)
@@ -74,8 +73,8 @@ class PortalockerStateLocker(StateLocker):
 
     def __init__(self, lock_file, *, timeout=None, max_check_time=None):
         self.lock_file = lock_file
-        self.timeout = timeout or cfg.lock_timeout_sec
-        self.max_check_time = max_check_time or cfg.lock_max_check_time_sec
+        self.timeout = timeout
+        self.max_check_time = max_check_time
 
     def _check_interval(self):
         """
