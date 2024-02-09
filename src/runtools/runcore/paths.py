@@ -247,22 +247,22 @@ def sqlite_db_path(create: bool) -> Path:
     """
 
     if _is_root():
-        path = Path('/var/lib/runcore')
+        db_path = Path('/var/lib/runcore')
 
     elif os.environ.get('XDG_DATA_HOME'):
-        path = Path(os.environ['XDG_DATA_HOME']) / 'runcore'
+        db_path = Path(os.environ['XDG_DATA_HOME']) / 'runcore'
     else:
         home = Path.home()
-        path = home / '.local' / 'share' / 'runcore'
+        db_path = home / '.local' / 'share' / 'runcore'
 
     if create:
-        path.mkdir(parents=True, exist_ok=True)
+        db_path.mkdir(parents=True, exist_ok=True)
 
-    return path / 'jobs.db'
+    return db_path / 'jobs.db'
 
 
-def copy_default_config_to_search_path(filename, overwrite: bool):
-    cfg_to_copy = package_config_path(filename)
+def copy_config_to_search_path(package, filename, overwrite: bool):
+    cfg_to_copy = package_config_path(package, filename)
     # Copy to first dir in search path
     # TODO Specify where to copy the file - do not use XDG search path
     copy_to = runtools_config_file_search_path(exclude_cwd=True)[0] / filename
