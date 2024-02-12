@@ -748,6 +748,7 @@ class Phaser(AbstractPhaser):
         except FailedRun as e:
             return self._term_info(TerminationStatus.FAILED, failure=e.fault), None
         except Exception as e:
+            # TODO print exception
             run_error = RunError(e.__class__.__name__, str(e))
             return self._term_info(TerminationStatus.ERROR, error=run_error), e
         except KeyboardInterrupt as e:
