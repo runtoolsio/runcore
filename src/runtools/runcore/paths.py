@@ -14,7 +14,7 @@ import os
 import re
 from importlib.resources import path
 from pathlib import Path
-from typing import Generator, List
+from typing import Generator, List, Callable
 
 from runtools.runcore import util
 from runtools.runcore.common import ConfigFileNotFoundError, RuntoolsException
@@ -197,9 +197,17 @@ def socket_path(socket_name: str, create: bool) -> Path:
 
 def socket_files(file_extension: str) -> Generator[Path, None, None]:
     s_dir = socket_dir(False)
-    if not s_dir.exists():
-        return (_ for _ in ())
-    return (entry for entry in s_dir.iterdir() if entry.is_socket() and file_extension == entry.suffix)
+    if s_dir.exists():
+        for entry in s_dir.iterdir():
+            if entry.is_socket() and file_extension == entry.suffix:
+                yield entry
+
+
+def socket_files_provider(file_extension: str) -> Callable[[], Generator[Path, None, None]]:
+    def provider():
+        return socket_files(file_extension)
+
+    return provider
 
 
 def lock_dir(create: bool) -> Path:

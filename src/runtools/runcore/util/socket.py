@@ -120,8 +120,8 @@ class PingResult:
 
 class SocketClient:
 
-    def __init__(self, servers, bidirectional: bool, *, timeout=2):
-        self._servers = servers
+    def __init__(self, servers_provider, bidirectional: bool, *, timeout=2):
+        self._servers_provider = servers_provider
         self._bidirectional = bidirectional
         self._client = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         if bidirectional:
@@ -141,7 +141,7 @@ class SocketClient:
         req_body = '_'  # Dummy initialization to remove warnings
         resp = None
         skip = False
-        for server_file in self._servers:
+        for server_file in self._servers_provider():
             server_id = server_file.stem
             if (server_file in self.stale_sockets) or (include and server_id not in include):
                 continue
