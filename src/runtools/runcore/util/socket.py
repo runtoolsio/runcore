@@ -53,7 +53,8 @@ class SocketServer(abc.ABC):
             if self._allow_ping and req_body == 'ping':
                 resp_body = 'pong'
             else:
-                resp_body = self.handle(req_body)  # TODO catch exceptions? TypeError: Object of type AggregatedResponse is not JSON serializable
+                resp_body = self.handle(
+                    req_body)  # TODO catch exceptions? TypeError: Object of type AggregatedResponse is not JSON serializable
 
             if resp_body:
                 if client_address:
@@ -110,10 +111,17 @@ class ServerResponse(NamedTuple):
     error: Error = None
 
 
+@dataclass
+class PingResult:
+    active_servers: List[str]
+    timed_out_servers: List[str]
+    stale_sockets: List[Path]
+
+
 class SocketClient:
 
-    def __init__(self, servers_provider, bidirectional: bool, *, timeout=2):
-        self._servers_provider = servers_provider
+    def __init__(self, servers, bidirectional: bool, *, timeout=2):
+        self._servers = servers
         self._bidirectional = bidirectional
         self._client = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         if bidirectional:
@@ -133,7 +141,7 @@ class SocketClient:
         req_body = '_'  # Dummy initialization to remove warnings
         resp = None
         skip = False
-        for server_file in self._servers_provider():
+        for server_file in self._servers:
             server_id = server_file.stem
             if (server_file in self.stale_sockets) or (include and server_id not in include):
                 continue
@@ -177,6 +185,13 @@ class SocketClient:
                 break
         return responses
 
+    def ping(self):
+        responses = self.communicate('ping')
+        active = [resp.server_id for resp in responses]
+        timed_out = list(self.timed_out_servers)
+        stale = list(self.stale_sockets)
+        return PingResult(active, timed_out, stale)
+
     def close(self):
         self._client.shutdown(socket.SHUT_RDWR)
         self._client.close()
@@ -189,33 +204,3 @@ class PayloadTooLarge(Exception):
 
     def __init__(self, payload_size):
         super().__init__("Datagram payload is too large: " + str(payload_size))
-
-
-@dataclass
-class PingResult:
-    active_servers: List[str]
-    timed_out_servers: List[str]
-    stale_sockets: List[Path]
-
-
-def ping(file_extension) -> PingResult:
-    client = SocketClient(file_extension, True)
-    try:
-        responses = client.communicate('ping')
-        active = [resp.server_id for resp in responses]
-        timed_out = list(client.timed_out_servers)
-        stale = list(client.stale_sockets)
-        return PingResult(active, timed_out, stale)
-    finally:
-        client.close()
-
-
-def clean_stale_sockets(file_extension) -> List[str]:
-    cleaned = []
-
-    ping_result = ping(file_extension)
-    for stale_socket in ping_result.stale_sockets:
-        stale_socket.unlink(missing_ok=True)
-        cleaned.append(stale_socket.name)
-    
-    return cleaned
