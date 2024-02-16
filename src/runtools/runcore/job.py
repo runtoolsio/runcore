@@ -374,14 +374,14 @@ class JobRun(EntityRun[JobInstanceMetadata]):
         return cls(
             JobInstanceMetadata.deserialize(as_dict['metadata']),
             Run.deserialize(as_dict['run']),
-            TrackedTask.deserialize(as_dict['task']),
+            TrackedTask.deserialize(as_dict['task']) if as_dict.get('task') else None,
         )
 
     def serialize(self) -> Dict[str, Any]:
         return {
             "metadata": self.metadata.serialize(),
             "run": self.run.serialize(),
-            "task": self.task.serialize(),
+            "task": self.task.serialize() if self.task else None,
         }
 
     @property
