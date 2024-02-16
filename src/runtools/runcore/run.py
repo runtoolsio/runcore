@@ -21,7 +21,6 @@ from typing import Optional, List, Dict, Any, TypeVar, Type, Callable, Tuple, It
 
 from runtools.runcore import util
 from runtools.runcore.common import InvalidStateError
-from runtools.runcore.track import TaskTrackerMem
 from runtools.runcore.util import format_dt_iso, is_empty
 
 log = logging.getLogger(__name__)
@@ -695,7 +694,7 @@ class Phaser(AbstractPhaser):
         if not self._current_phase:
             raise InvalidStateError('Prime not executed before run')
 
-        task_tracker = task_tracker or TaskTrackerMem()
+        task_tracker = task_tracker
 
         class _RunContext(RunContext):
 

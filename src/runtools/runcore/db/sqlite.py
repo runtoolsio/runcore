@@ -320,8 +320,8 @@ class SQLite(Persistence, InstanceTransitionObserver):
                     json.dumps(r.metadata.user_params) if r.metadata.user_params else None,
                     format_dt_sql(lifecycle.created_at),
                     format_dt_sql(lifecycle.ended_at),
-                    round(lifecycle.total_executing_time.total_seconds(),
-                          3) if lifecycle.total_executing_time else None,
+                    round(lifecycle.total_executing_time.total_seconds(), 3) if lifecycle.total_executing_time
+                    else None,
                     json.dumps([p.serialize() for p in r.run.phases]),
                     json.dumps(lifecycle.serialize()),
                     r.run.termination.status.value,
