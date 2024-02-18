@@ -126,7 +126,7 @@ class TrackedOperation(Tracked):
     def _progress_str(self):
         val = f"{self.completed or '?'}"
         if self.total:
-            val += f"/{self.total}"
+            val += f" / {self.total}"
         if self.unit:
             val += f" {self.unit}"
         if pct_done := self.pct_done:
@@ -141,7 +141,7 @@ class TrackedOperation(Tracked):
         if self.has_progress:
             parts.append(self._progress_str())
 
-        return " ".join(parts)
+        return f"[{' '.join(parts)}]"
 
 
 class OperationTracker(ABC):
@@ -377,9 +377,9 @@ class TrackedTask(Tracked):
                 else:
                     event_str = self.current_event.text
                 statuses.append(event_str)
-            statuses += [op for op in self.operations if op.finished]
+            statuses += [op for op in self.operations if not op.finished]
             if statuses:
-                parts.append(" | ".join((str(s) for s in statuses)))
+                parts.append(" ".join((str(s) for s in statuses)))
 
         if self.subtasks:
             if parts:

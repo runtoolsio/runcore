@@ -7,7 +7,7 @@ def test_add_event():
     tracker.event('e1')
     tracker.event('e2')
 
-    assert tracker.tracked_task.current_event[0] == 'e2'
+    assert tracker.tracked_task.current_event.text == 'e2'
 
 
 def test_operation_updates():
@@ -50,17 +50,17 @@ def test_subtask():
 
     tracked_task = tracker.tracked_task
     assert tracked_task.current_event is None
-    assert tracked_task.subtasks[0].current_event[0] == 'e1'
+    assert tracked_task.subtasks[0].current_event.text == 'e1'
     assert tracked_task.subtasks[0].operations[0].name == '01'
-    assert tracked_task.subtasks[1].current_event[0] == 'e2'
+    assert tracked_task.subtasks[1].current_event.text == 'e2'
 
 
 def test_operation_str():
     empty_op = TrackedOperation('name', None, None)
-    assert str(empty_op) == 'name'
+    assert str(empty_op) == '[name]'
 
-    assert '25/100 files (25%)' == str(TrackedOperation(None, 25, 100, 'files', None, None, True))
-    assert 'Op 25/100 files (25%)' == str(TrackedOperation('Op', 25, 100, 'files', None, None, True))
+    assert '[25/100 files (25%)]' == str(TrackedOperation(None, 25, 100, 'files', None, None, True))
+    assert '[Op 25/100 files (25%)]' == str(TrackedOperation('Op', 25, 100, 'files', None, None, True))
 
 
 def test_progress_str():
