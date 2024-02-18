@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from abc import ABC, abstractmethod
-from collections import OrderedDict, namedtuple
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, Sequence
@@ -268,7 +268,27 @@ class OperationTrackerMem(Trackable, OperationTracker):
         self._finished = True
 
 
-Event = namedtuple('Event', ['text', 'timestamp'])
+@dataclass
+class Event:
+    text: str
+    timestamp: datetime
+
+    def __iter__(self):
+        yield self.text
+        yield self.timestamp
+
+    def serialize(self) -> dict:
+        return {
+            'text': self.text,
+            'timestamp': format_dt_iso(self.timestamp),
+        }
+
+    @classmethod
+    def deserialize(cls, data: dict):
+        return cls(
+            text=data.get('text', ''),
+            timestamp=util.parse_datetime(data['timestamp']),
+        )
 
 
 @dataclass(frozen=True)
@@ -287,7 +307,7 @@ class TrackedTask(Tracked):
     @classmethod
     def deserialize(cls, data):
         name = data.get("name")
-        current_event = Event(*data.get("current_event")) if data.get("current_event") else None
+        current_event = Event.deserialize(data.get("current_event")) if data.get("current_event") else None
         operations = [TrackedOperation.deserialize(op) for op in data.get("operations", ())]
         result = data.get("result")
         subtasks = [TrackedTask.deserialize(task) for task in data.get("subtasks", ())]
@@ -300,7 +320,7 @@ class TrackedTask(Tracked):
     def serialize(self, include_empty=True):
         d = {
             'name': self.name,
-            'current_event': tuple(self.current_event) if self.current_event else None,
+            'current_event': self.current_event.serialize() if self.current_event else None,
             'operations': [op.serialize() for op in self.operations],
             'result': self.result,
             'subtasks': [task.serialize() for task in self.subtasks],
@@ -351,11 +371,11 @@ class TrackedTask(Tracked):
 
             statuses = []
             if self.current_event:
-                if self.current_event[1] and False:  # TODO configurable
-                    ts = util.format_time_local_tz(self.current_event[1], include_ms=False)
-                    event_str = f"{ts} {self.current_event[0]}"
+                if self.current_event.timestamp and False:  # TODO configurable
+                    ts = util.format_time_local_tz(self.current_event.timestamp, include_ms=False)
+                    event_str = f"{ts} {self.current_event.text}"
                 else:
-                    event_str = self.current_event[0]
+                    event_str = self.current_event.text
                 statuses.append(event_str)
             statuses += [op for op in self.operations if op.finished]
             if statuses:
@@ -428,7 +448,7 @@ class TaskTrackerMem(Trackable, TaskTracker):
 
     @Trackable._update
     def event(self, name: str, *, timestamp=None):
-        self._current_event = (name, timestamp or self._timestamp_gen())
+        self._current_event = Event(name, timestamp or self._timestamp_gen())
 
     def operation(self, name, *, timestamp=None):
         op = self._operations.get(name)

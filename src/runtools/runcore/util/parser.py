@@ -113,6 +113,7 @@ class KVParser:
                     key = key.strip(self.trim_key)
                 if self.trim_value:
                     value = value.strip(self.trim_value)
+                key = key.lower()  # Let's keep all keys lower case for easy lookup
                 if self.aliases:
                     key = self.aliases.get(key, key)
                 kv[self.prefix + key] = value
