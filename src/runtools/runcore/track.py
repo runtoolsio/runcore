@@ -311,7 +311,7 @@ class TrackedTask(Tracked):
         operations = [TrackedOperation.deserialize(op) for op in data.get("operations", ())]
         result = data.get("result")
         subtasks = [TrackedTask.deserialize(task) for task in data.get("subtasks", ())]
-        warnings = [Event(*warn) for warn in data.get("warnings", ())]
+        warnings = [Event.deserialize(warn) for warn in data.get("warnings", ())]
         created_at = util.parse_datetime(data.get("created_at", None))
         updated_at = util.parse_datetime(data.get("updated_at", None))
         finished = data.get("finished")
@@ -324,7 +324,7 @@ class TrackedTask(Tracked):
             'operations': [op.serialize() for op in self.operations],
             'result': self.result,
             'subtasks': [task.serialize() for task in self.subtasks],
-            'warnings': [tuple(warn) for warn in self.warnings],
+            'warnings': [warn.serialize() for warn in self.warnings],
             'created_at': format_dt_iso(self.created_at),
             'updated_at': format_dt_iso(self.updated_at),
             'finished': self.finished,
