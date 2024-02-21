@@ -89,16 +89,16 @@ def get_active_runs(run_match=None) -> AggregatedResponse[JobRun]:
         return c.get_active_runs(run_match)
 
 
-def approve_pending_instances(phase_name, instance_match=None) -> AggregatedResponse[ApprovalResponse]:
+def approve_pending_instances(run_match, phase_name=None) -> AggregatedResponse[ApprovalResponse]:
     """
     This function releases job instances that are pending in the provided group
     and optionally match the provided criteria.
 
     Args:
-        phase_name (str, mandatory):
-            Name of the approval phase.
-        instance_match (InstanceMatchCriteria, optional):
+        run_match (InstanceMatchCriteria, mandatory):
             The operation will affect only instances matching these criteria or all instances if not provided.
+        phase_name (str, optional):
+            Name of the approval phase.
 
     Returns:
         A container holding :class:`ReleaseResponse` objects, each representing the result of the release operation
@@ -107,7 +107,7 @@ def approve_pending_instances(phase_name, instance_match=None) -> AggregatedResp
     """
 
     with api_client() as c:
-        return c.approve_pending_instances(phase_name, instance_match)
+        return c.approve_pending_instances(run_match, phase_name)
 
 
 def stop_instances(run_match) -> AggregatedResponse[StopResponse]:

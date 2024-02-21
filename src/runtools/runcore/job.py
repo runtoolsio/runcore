@@ -257,6 +257,15 @@ class JobInstance(abc.ABC):
     def task_tracker(self):
         """TODO: Task tracking information ..."""
 
+    @property
+    @abc.abstractmethod
+    def current_phase(self):
+        """
+        Returns:
+            Optional[Phase]: Current phase of the instance
+        """
+
+    @property
     @abc.abstractmethod
     def phases(self):
         """

@@ -73,6 +73,10 @@ class FakeJobInstance(JobInstance):
         return self._task_tracker
 
     @property
+    def current_phase(self):
+        return self.phaser.current_phase
+
+    @property
     def phases(self):
         return self.phaser.phases
 

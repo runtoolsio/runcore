@@ -47,6 +47,10 @@ class InstanceMetadataCriterion(MatchCriteria[InstanceMetadata]):
     strategy: MatchingStrategy = MatchingStrategy.EXACT
 
     @classmethod
+    def all_match(cls):
+        return cls('', '', False, MatchingStrategy.ALWAYS_TRUE)
+
+    @classmethod
     def none_match(cls):
         return cls('', '', True, MatchingStrategy.ALWAYS_FALSE)
 
@@ -312,6 +316,10 @@ class EntityRunCriteria(MatchCriteria[EntityRun]):
         self.metadata_criteria = to_list(metadata_criteria) or []
         self.interval_criteria = to_list(interval_criteria) or []
         self.termination_criteria = to_list(termination_criteria) or []
+
+    @classmethod
+    def all(cls):
+        return cls(metadata_criteria=InstanceMetadataCriterion.all_match())
 
     @classmethod
     def deserialize(cls, as_dict):

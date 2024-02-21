@@ -606,6 +606,9 @@ class InstanceMetadata(ABC):
     def contains_system_parameters(self, *params):
         return all(param in self.system_parameters for param in params)
 
+    def __repr__(self) -> str:
+        return f"{self.entity_id}@{self.run_id}:{self.instance_id}"
+
 
 class JobInstanceMetadata(InstanceMetadata):
 
@@ -676,6 +679,10 @@ class Phaser(AbstractPhaser):
         self._abort = False
         self._termination: Optional[TerminationInfo] = None
         # ----------------------- #
+
+    @property
+    def current_phase(self):
+        return self._current_phase
 
     def _term_info(self, termination_status, failure=None, error=None):
         return TerminationInfo(termination_status, self._timestamp_generator(), failure, error)
