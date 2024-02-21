@@ -59,13 +59,13 @@ def test_operation_str():
     empty_op = TrackedOperation('name', None, None)
     assert str(empty_op) == '[name]'
 
-    assert '[25/100 files (25%)]' == str(TrackedOperation(None, 25, 100, 'files', None, None, True))
-    assert '[Op 25/100 files (25%)]' == str(TrackedOperation('Op', 25, 100, 'files', None, None, True))
+    assert '[25 / 100 files (25%)]' == str(TrackedOperation(None, 25, 100, 'files', None, None, True))
+    assert '[Op 25 / 100 files (25%)]' == str(TrackedOperation('Op', 25, 100, 'files', None, None, True))
 
 
 def test_progress_str():
     progress = TrackedOperation(None, 25, 100, 'files')
-    assert str(progress) == '25/100 files (25%)'
+    assert str(progress) == '[25 / 100 files (25%)]'
 
     progress = TrackedOperation(None, None, 100, 'files')
     assert str(progress) == '?/100 files'
