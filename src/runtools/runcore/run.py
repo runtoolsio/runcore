@@ -376,6 +376,23 @@ class RunContext(ABC):
     def new_output(self, output, is_err=False):
         pass
 
+    def create_logging_handler(self):
+        """
+        Creates and returns a logging.Handler instance that forwards log records
+        to this OutputToTask instance.
+        """
+        class InternalHandler(logging.Handler):
+            def __init__(self, outer_instance):
+                super().__init__()
+                self.outer_instance = outer_instance
+
+            def emit(self, record):
+                output = self.format(record)  # Convert log record to a string
+                is_error = record.levelno >= logging.ERROR
+                self.outer_instance.new_output(output, is_error)
+
+        return InternalHandler(self)
+
 
 class Phase(ABC):
     """

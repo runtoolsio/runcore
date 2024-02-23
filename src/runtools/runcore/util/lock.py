@@ -161,3 +161,10 @@ class NullStateLocker(StateLocker, StateLock):
 
 def default_queue_locker():
     return PortalockerStateLocker(paths.lock_path('state0.lock', True))
+
+
+def default_locker_factory(*, timeout=10, max_check_time=0.05):
+    def factory(lock_file):
+        return PortalockerStateLocker(lock_file, timeout=timeout, max_check_time=max_check_time)
+
+    return factory
