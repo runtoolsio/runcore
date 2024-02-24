@@ -13,6 +13,6 @@ def test_termination_criteria():
     matching = TerminationCriterion(outcome=Outcome.REJECTED)
     not_matching = TerminationCriterion(outcome=Outcome.ABORTED)
 
-    tested_info = TerminationInfo(TerminationStatus.INVALID_OVERLAP, utc_now())
+    tested_info = TerminationInfo(TerminationStatus.OVERLAP, utc_now())
     assert matching(tested_info)
     assert not not_matching(tested_info)
