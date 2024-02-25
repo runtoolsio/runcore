@@ -7,7 +7,7 @@ TODO: Remove immutable properties
 import datetime
 from abc import abstractmethod, ABC
 from dataclasses import dataclass
-from typing import Dict, Any, Set, Optional, TypeVar, Generic
+from typing import Dict, Any, Set, Optional, TypeVar, Generic, Iterable
 
 from runtools.runcore.run import Outcome, Lifecycle, TerminationInfo, EntityRun, InstanceMetadata
 from runtools.runcore.util import MatchingStrategy, and_, or_, parse, single_day_range, days_range, \
@@ -93,6 +93,10 @@ class InstanceMetadataCriterion(MatchCriteria[InstanceMetadata]):
             match_both = False
         return cls(entity_id, instance_id, match_both, strategy)
 
+    @staticmethod
+    def parse_patterns(patterns: Iterable[str], strategy=MatchingStrategy.EXACT):
+        return [InstanceMetadataCriterion.parse_pattern(pattern, strategy) for pattern in patterns]
+
     @classmethod
     def deserialize(cls, as_dict):
         return cls(as_dict['entity_id'], as_dict['run_id'], as_dict['match_both_ids'],
@@ -137,6 +141,11 @@ class InstanceMetadataCriterion(MatchCriteria[InstanceMetadata]):
             bool: Whether the provided job instance matches this criteria
         """
         return self.matches(entity_run.metadata)
+
+    def __str__(self):
+        op = "+" if self.match_both_ids else "|"
+        ids = f"{self.entity_id}{op}{self.run_id}"
+        return f"{ids} {self.strategy.name}"
 
 
 def compound_instance_filter(metadata_criteria):
