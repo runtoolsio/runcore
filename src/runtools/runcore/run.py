@@ -356,6 +356,9 @@ class PhaseMetadata:
             d["params"] = self.parameters
         return d
 
+    def params_match(self, *key_values):
+        return all(self.parameters.get(k) == v for k, v in key_values)
+
 
 class TerminateRun(Exception):
     def __init__(self, term_status: TerminationStatus):
@@ -381,6 +384,7 @@ class RunContext(ABC):
         Creates and returns a logging.Handler instance that forwards log records
         to this OutputToTask instance.
         """
+
         class InternalHandler(logging.Handler):
             def __init__(self, outer_instance):
                 super().__init__()
@@ -560,6 +564,23 @@ class Run:
             "lifecycle": self.lifecycle.serialize(),
             "termination": self.termination.serialize() if self.termination else None,
         }
+
+    def in_protected_phase(self, protection_type, protection_id):
+        protected_phase_start = None
+        protected_phase_end = None
+
+        for idx, phase_meta in enumerate(self.phases):
+            if phase_meta.params_match(('protection_phase', protection_type), ('protection_id', protection_id)):
+                if (idx + 1) < len(self.phases):
+                    protected_phase_start = self.phases[idx + 1].phase_name
+                    protected_phase_end = phase_meta.parameters.get('protect_until') or protected_phase_start
+                break
+
+        if not protected_phase_start:
+            return False
+
+        protected_phases = self.lifecycle.phases_between(protected_phase_start, protected_phase_end)
+        return self.lifecycle.current_phase_name in protected_phases
 
 
 def unique_phases_to_dict(phases) -> Dict[str, Phase]:
