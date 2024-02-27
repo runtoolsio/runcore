@@ -6,10 +6,11 @@ TODO: Remove immutable properties
 
 import datetime
 from abc import abstractmethod, ABC
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, Any, Set, Optional, TypeVar, Generic, Iterable
 
-from runtools.runcore.run import Outcome, Lifecycle, TerminationInfo, EntityRun, InstanceMetadata
+from runtools.runcore.run import Outcome, Lifecycle, TerminationInfo, EntityRun, InstanceMetadata, RunState, \
+    PhaseMetadata
 from runtools.runcore.util import MatchingStrategy, and_, or_, parse, single_day_range, days_range, \
     format_dt_iso, to_list, DateTimeRange, parse_range_to_utc
 
@@ -258,8 +259,55 @@ class LifecycleCriterion(MatchCriteria[Lifecycle]):
     def __call__(self, lifecycle):
         return self.matches(lifecycle)
 
+    def __bool__(self):
+        return self.created_range or self.ended_range
+
     def matches(self, lifecycle):
         return self.created_range(lifecycle.created_at) and not self.ended_range or self.ended_range(lifecycle.ended_at)
+
+
+@dataclass
+class PhaseCriterion(MatchCriteria[PhaseMetadata]):
+
+    phase_name: Optional[str] = None
+    run_state: Optional[RunState] = None
+    parameters: Dict[str, str] = field(default_factory=dict)
+
+    @classmethod
+    def deserialize(cls, data: Dict[str, Any]) -> 'PhaseCriterion':
+        phase_name = data.get('phase_name')
+        run_state = RunState[data['run_state']]
+        parameters = data.get('parameters', {})
+        return cls(phase_name, run_state, parameters)
+
+    def serialize(self) -> Dict[str, Any]:
+        return {
+            'phase_name': self.phase_name,
+            'run_state': self.run_state.value if self.run_state else RunState.NONE.value,
+            'parameters': self.parameters
+        }
+
+    def matches(self, phase_metadata: PhaseMetadata) -> bool:
+        # Match phase name if phase_name is specified and does not match the phase's name
+        if self.phase_name and phase_metadata.phase_name != self.phase_name:
+            return False
+
+        # Match run state if run_state is specified and does not match the phase's run state
+        if self.run_state and phase_metadata.run_state != self.run_state:
+            return False
+
+        # Match parameters
+        for key, value in self.parameters.items():
+            if phase_metadata.parameters.get(key) != value:
+                return False
+
+        return True
+
+    def __call__(self, phase_metadata: PhaseMetadata) -> bool:
+        return self.matches(phase_metadata)
+
+    def __bool__(self):
+        return self.phase_name or self.run_state or self.parameters
 
 
 @dataclass
@@ -320,11 +368,17 @@ class EntityRunCriteria(MatchCriteria[EntityRun]):
     serialize and deserialize the criteria, and parse criteria from a pattern.
     """
 
-    def __init__(self, *, jobs=None, metadata_criteria=None, interval_criteria=None, termination_criteria=None):
+    def __init__(self, *,
+                 jobs=None,
+                 metadata_criteria=None,
+                 interval_criteria=None,
+                 phase_criteria=None,
+                 termination_criteria=None):
         self.jobs = to_list(jobs) or []
-        self.metadata_criteria = to_list(metadata_criteria) or []
-        self.interval_criteria = to_list(interval_criteria) or []
-        self.termination_criteria = to_list(termination_criteria) or []
+        self.metadata_criteria = to_list(metadata_criteria)
+        self.interval_criteria = to_list(interval_criteria)
+        self.phase_criteria = to_list(phase_criteria)
+        self.termination_criteria = to_list(termination_criteria)
 
     @classmethod
     def all(cls):
@@ -336,6 +390,7 @@ class EntityRunCriteria(MatchCriteria[EntityRun]):
         new.jobs = as_dict.get('jobs', [])
         new.metadata_criteria = [InstanceMetadataCriterion.deserialize(c) for c in as_dict.get('metadata_criteria', ())]
         new.interval_criteria = [LifecycleCriterion.deserialize(c) for c in as_dict.get('interval_criteria', ())]
+        new.phase_criteria = [PhaseCriterion.deserialize(c) for c in as_dict.get('phase_criteria', ())]
         new.termination_criteria = [TerminationCriterion.deserialize(c) for c in
                                     as_dict.get('termination_criteria', ())]
         return new
@@ -345,6 +400,7 @@ class EntityRunCriteria(MatchCriteria[EntityRun]):
             'jobs': self.jobs,
             'metadata_criteria': [c.serialize() for c in self.metadata_criteria],
             'interval_criteria': [c.serialize() for c in self.interval_criteria],
+            'phase_criteria': [c.serialize() for c in self.phase_criteria],
             'state_criteria': [c.serialize() for c in self.termination_criteria],
         }
 
@@ -365,6 +421,8 @@ class EntityRunCriteria(MatchCriteria[EntityRun]):
                 self.metadata_criteria.append(criterion)
             case LifecycleCriterion():
                 self.interval_criteria.append(criterion)
+            case PhaseCriterion():
+                self.phase_criteria.append(criterion)
             case TerminationCriterion():
                 self.termination_criteria.append(criterion)
             case _:
@@ -377,6 +435,9 @@ class EntityRunCriteria(MatchCriteria[EntityRun]):
 
     def matches_interval(self, entity_run):
         return not self.interval_criteria or any(c(entity_run.run.lifecycle) for c in self.interval_criteria)
+
+    def match_phases(self, entity_run):
+        return not self.phase_criteria or any(c(p) for c in self.phase_criteria for p in entity_run.run.phases)
 
     def matches_termination(self, entity_run):
         return not self.termination_criteria or any(c(entity_run.run.termination) for c in self.termination_criteria)
@@ -396,12 +457,14 @@ class EntityRunCriteria(MatchCriteria[EntityRun]):
         """
         return self.matches_metadata(entity_run) \
             and self.matches_interval(entity_run) \
+            and self.match_phases(entity_run) \
             and self.matches_termination(entity_run) \
             and self.matches_jobs(entity_run)
 
     def __bool__(self):
         return (bool(self.metadata_criteria)
                 or bool(self.interval_criteria)
+                or bool(self.phase_criteria)
                 or bool(self.termination_criteria)
                 or bool(self.jobs))
 
@@ -409,5 +472,6 @@ class EntityRunCriteria(MatchCriteria[EntityRun]):
         return (f"{self.__class__.__name__}("
                 f"{self.metadata_criteria=}, "
                 f"{self.interval_criteria=}, "
+                f"{self.phase_criteria=}, "
                 f"{self.termination_criteria=}, "
                 f"{self.jobs=})")
