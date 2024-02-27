@@ -422,8 +422,8 @@ class JobRuns(list):
     def job_ids(self) -> List[str]:
         return [r.job_id for r in self]
 
-    def in_phase(self, phase):
-        return [run for run in self if run.lifecycle.phase is phase]
+    def in_phase(self, phase) -> 'JobRuns':
+        return JobRuns([run for run in self if run.lifecycle.phase is phase])
 
     def in_state(self, state):
         return [run for run in self if run.lifecycle.run_state is state]

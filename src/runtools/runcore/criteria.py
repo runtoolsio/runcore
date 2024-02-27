@@ -57,6 +57,7 @@ class InstanceMetadataCriterion(MatchCriteria[InstanceMetadata]):
 
     @staticmethod
     def for_run(entity_run):
+        # TODO Use identity ID
         """
         Creates a MetadataCriterion object that matches the provided entity run.
 
