@@ -266,7 +266,7 @@ class Lifecycle:
 
         return []
 
-    def phases_between(self, phase_from, phase_to):
+    def phases_between(self, phase_from, phase_to) -> List[str]:
         return [run.phase_name for run in self.runs_between(phase_from, phase_to)]
 
     def phase_started_at(self, phase_name: str) -> Optional[datetime.datetime]:
@@ -565,7 +565,10 @@ class Run:
             "termination": self.termination.serialize() if self.termination else None,
         }
 
-    def in_protected_phase(self, protection_type, protection_id):
+    def in_protected_phase(self, protection_type, protection_id) -> bool:
+        return self.lifecycle.current_phase_name in self.protected_phases(protection_type, protection_id)
+
+    def protected_phases(self, protection_type, protection_id) -> List[str]:
         protected_phase_start = None
         protected_phase_end = None
 
@@ -573,14 +576,13 @@ class Run:
             if phase_meta.params_match(('protection_phase', protection_type), ('protection_id', protection_id)):
                 if (idx + 1) < len(self.phases):
                     protected_phase_start = self.phases[idx + 1].phase_name
-                    protected_phase_end = phase_meta.parameters.get('protect_until') or protected_phase_start
+                    protected_phase_end = phase_meta.parameters.get('protected_until') or protected_phase_start
                 break
 
         if not protected_phase_start:
-            return False
+            return []
 
-        protected_phases = self.lifecycle.phases_between(protected_phase_start, protected_phase_end)
-        return self.lifecycle.current_phase_name in protected_phases
+        return self.lifecycle.phases_between(protected_phase_start, protected_phase_end)
 
 
 def unique_phases_to_dict(phases) -> Dict[str, Phase]:

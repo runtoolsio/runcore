@@ -8,7 +8,7 @@ from types import MappingProxyType
 
 from runtools.runcore import db
 from runtools.runcore.client import AggregatedResponse, APIClient, ApprovalResponse, StopResponse, OutputResponse, \
-    SignalProceedResponse
+    SignalDispatchResponse
 from runtools.runcore.common import RuntoolsException
 from runtools.runcore.db import Persistence, SortCriteria
 from runtools.runcore.job import JobRun
@@ -149,7 +149,7 @@ def fetch_output(run_match=None) -> AggregatedResponse[OutputResponse]:
         return c.fetch_output(run_match)
 
 
-def signal_dispatch(instance_match) -> AggregatedResponse[SignalProceedResponse]:
+def signal_dispatch(instance_match) -> AggregatedResponse[SignalDispatchResponse]:
     with api_client() as c:
         return c.signal_dispatch(instance_match)
 

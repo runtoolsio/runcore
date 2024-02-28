@@ -147,9 +147,8 @@ class OutputResponse(JobInstanceResponse):
 
 
 @dataclass
-class SignalProceedResponse(JobInstanceResponse):
-    waiter_found: bool
-    executed: bool
+class SignalDispatchResponse(JobInstanceResponse):
+    dispatched: bool
 
 
 def _no_resp_mapper(api_instance_response: InstanceResponse) -> InstanceResponse:
@@ -273,10 +272,9 @@ class APIClient(SocketClient):
 
         return self.send_request('/instances/output', instance_match, resp_mapper=resp_mapper)
 
-    def signal_dispatch(self, instance_match) -> AggregatedResponse[SignalProceedResponse]:
-        def resp_mapper(inst_resp: InstanceResponse) -> SignalProceedResponse:
-            return SignalProceedResponse(
-                inst_resp.instance_meta, inst_resp.body["waiter_found"], inst_resp.body["executed"])
+    def signal_dispatch(self, instance_match) -> AggregatedResponse[SignalDispatchResponse]:
+        def resp_mapper(inst_resp: InstanceResponse) -> SignalDispatchResponse:
+            return SignalDispatchResponse(inst_resp.instance_meta, inst_resp.body["dispatched"])
 
         return self.send_request('/instances/_signal/dispatch', instance_match, resp_mapper=resp_mapper)
 
