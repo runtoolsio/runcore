@@ -11,11 +11,12 @@ import datetime
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import timedelta
+from enum import Enum
 from threading import Thread
-from typing import Dict, Any, List, Optional, Type
+from typing import Dict, Any, List, Optional
 
 from runtools.runcore.output import Mode
-from runtools.runcore.run import TerminationStatus, P, RunState, Run, PhaseRun, PhaseInfo, InstanceMetadata, \
+from runtools.runcore.run import TerminationStatus, RunState, Run, PhaseRun, PhaseInfo, InstanceMetadata, \
     EntityRun, JobInstanceMetadata
 from runtools.runcore.track import TrackedTask
 from runtools.runcore.util import MatchingStrategy, format_dt_iso
@@ -275,7 +276,7 @@ class JobInstance(abc.ABC):
         """
 
     @abc.abstractmethod
-    def get_typed_phase(self, phase_type: Type[P], phase_name: str) -> Optional[P]:
+    def get_phase(self, phase_type: str | Enum, phase_name: str):
         """pass"""
 
     @abc.abstractmethod

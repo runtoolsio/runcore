@@ -198,7 +198,7 @@ class APIClient(SocketClient):
 
         return self.send_request('/instances', run_match, resp_mapper=resp_mapper)
 
-    def approve_pending_instances(self, run_match, phase_name=None) -> AggregatedResponse[ApprovalResponse]:
+    def approve_pending_instances(self, run_match, phase_id=None) -> AggregatedResponse[ApprovalResponse]:
         """
         This function releases job instances that are pending in the provided group
         and optionally match the provided criteria.
@@ -206,8 +206,8 @@ class APIClient(SocketClient):
         Args:
             run_match (InstanceMatchCriteria, optional):
                 The operation will affect only instances matching these criteria or all instances if not provided.
-            phase_name (str, mandatory):
-                Name of the approval phase.
+            phase_id (str, mandatory):
+                ID of the approval phase.
         Returns:
             A container holding :class:`ReleaseResponse` objects, each representing the result of the release operation
             for a respective job instance.
@@ -224,7 +224,7 @@ class APIClient(SocketClient):
                 release_res = ApprovalResult.UNKNOWN
             return ApprovalResponse(inst_resp.instance_meta, release_res)
 
-        req_body = {"phase": phase_name}
+        req_body = {"phase_id": phase_id}
         return self.send_request('/instances/approve', run_match, req_body, approve_resp_mapper)
 
     def stop_instances(self, instance_match) -> AggregatedResponse[StopResponse]:

@@ -85,7 +85,7 @@ class FakeJobInstance(JobInstance):
     def phases(self):
         return self.phaser.phases
 
-    def get_typed_phase(self, phase_type: Type[P], phase_name: str) -> Optional[P]:
+    def get_phase(self, phase_type: Type[P], phase_name: str) -> Optional[P]:
         return self.phaser.get_phase(phase_type, phase_name)
 
     def job_run_info(self) -> JobRun:

@@ -445,8 +445,10 @@ class Phase(ABC):
     TODO repr
     """
 
-    def __init__(self, phase_type: str, phase_id: str, run_state: RunState,
+    def __init__(self, phase_type: str | Enum, phase_id: str, run_state: RunState,
                  *, protection_id=None, last_protected_phase=None):
+        if isinstance(phase_type, Enum):
+            phase_type = phase_type.value
         self._phase_type = phase_type
         self._phase_id = phase_id
         self._run_state = run_state
@@ -469,7 +471,7 @@ class Phase(ABC):
     def run_state(self):
         return self._run_state
 
-    def info(self):
+    def info(self) -> PhaseInfo:
         return PhaseInfo(
             self._phase_type, self._phase_id, self._run_state, self._protection_id, self._last_protected_phase)
 
@@ -749,7 +751,9 @@ class AbstractPhaser:
         self.transition_hook: Optional[Callable[[PhaseRun, PhaseRun, int], None]] = None
         self.output_hook: Optional[Callable[[PhaseInfo, str, bool], None]] = None
 
-    def get_phase(self, phase_type, phase_id):
+    def get_phase(self, phase_type: str | Enum, phase_id):
+        if isinstance(phase_type, Enum):
+            phase_type = phase_type.value
         return self._key_to_phase.get(PhaseKey(phase_type, phase_id))
 
     @property

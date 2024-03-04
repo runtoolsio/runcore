@@ -19,7 +19,8 @@ class FakePhaser(AbstractPhaser):
         self._condition = Condition()
 
     def run_info(self) -> Run:
-        return Run(self._phase_keys, self.lifecycle, self.termination)
+        phases = tuple(p.info() for p in self._key_to_phase.values())
+        return Run(phases, self.lifecycle, self.termination)
 
     def prime(self):
         if self._current_phase_index != -1:
@@ -38,7 +39,7 @@ class FakePhaser(AbstractPhaser):
         """
         Impl note: The execution must be guarded by the phase lock (except terminal phase)
         """
-        self.lifecycle.add_phase_run(PhaseRun(phase.name, phase.metadata.run_state, self._timestamp_generator()))
+        self.lifecycle.add_phase_run(PhaseRun(phase.key, phase.run_state, self._timestamp_generator()))
         if self.transition_hook:
             self.execute_transition_hook_safely(self.transition_hook)
         with self._condition:
