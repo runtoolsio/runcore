@@ -5,17 +5,22 @@ from runtools.runcore import util
 from runtools.runcore.job import JobInstance, JobRun, InstanceTransitionObserver, \
     InstanceOutputObserver
 from runtools.runcore.output import InMemoryOutput, Mode
-from runtools.runcore.run import PhaseRun, TerminationInfo, Lifecycle, RunState, PhaseMetadata, Run, PhaseNames, \
-    TerminationStatus, RunFailure, Phase, P, JobInstanceMetadata
+from runtools.runcore.run import PhaseRun, TerminationInfo, Lifecycle, RunState, PhaseInfo, Run, \
+    TerminationStatus, RunFailure, Phase, P, JobInstanceMetadata, PhaseKey
 from runtools.runcore.test.run import FakePhaser
 from runtools.runcore.track import TaskTrackerMem
 from runtools.runcore.util.observer import ObservableNotification, DEFAULT_OBSERVER_PRIORITY
 
+INIT = PhaseKey('init', 'id')
+APPROVAL = PhaseKey('approval', 'id')
+PROGRAM = PhaseKey('program', 'id')
+TERM = PhaseKey('term', 'id')
+
 
 class FakePhase(Phase):
 
-    def __init__(self, phase_name, run_state):
-        super().__init__(phase_name, run_state)
+    def __init__(self, phase_key, run_state):
+        super().__init__(phase_key.type, phase_key.id, run_state)
         self.approved = False
         self.ran = False
         self.stopped = False
@@ -81,7 +86,7 @@ class FakeJobInstance(JobInstance):
         return self.phaser.phases
 
     def get_typed_phase(self, phase_type: Type[P], phase_name: str) -> Optional[P]:
-        return self.phaser.get_typed_phase(phase_type, phase_name)
+        return self.phaser.get_phase(phase_type, phase_name)
 
     def job_run_info(self) -> JobRun:
         return JobRun(self.metadata, self.phaser.run_info(), self._task_tracker.tracked_task)
@@ -138,8 +143,8 @@ class FakeJobInstanceBuilder(AbstractBuilder):
         super().__init__(job_id, run_id, system_params, user_params)
         self.phases = []
 
-    def add_phase(self, name, run_state):
-        self.phases.append(FakePhase(name, run_state))
+    def add_phase(self, key, run_state):
+        self.phases.append(FakePhase(key, run_state))
         return self
 
     def build(self) -> FakeJobInstance:
@@ -156,16 +161,15 @@ class TestJobRunBuilder(AbstractBuilder):
         self.phases = []
         self.tracker = TaskTrackerMem()
 
-    def add_phase(self, name, state, start=None, end=None):
+    def add_phase(self, key, state, start=None, end=None):
         if not start:
             start = super().current_ts
             end = start + timedelta(minutes=1)
 
-        if name != PhaseNames.INIT and not self.phases:
-            self.add_phase(
-                PhaseNames.INIT, RunState.CREATED, start - timedelta(minutes=2), start - timedelta(minutes=1))
+        if key != INIT and not self.phases:
+            self.add_phase(INIT, RunState.CREATED, start - timedelta(minutes=2), start - timedelta(minutes=1))
 
-        phase_run = PhaseRun(name, state, start, end)
+        phase_run = PhaseRun(key, state, start, end)
         self.phases.append(phase_run)
         return self
 
@@ -174,7 +178,7 @@ class TestJobRunBuilder(AbstractBuilder):
         return self
 
     def build(self):
-        meta = (PhaseMetadata('p1', RunState.EXECUTING, {'p': 'v'}),)
+        meta = (PhaseInfo('exec', 'p1', RunState.EXECUTING),)
         lifecycle = Lifecycle(*self.phases)
         run = Run(meta, lifecycle, self.termination_info)
         return JobRun(self.metadata, run, self.tracker.tracked_task)
@@ -186,13 +190,13 @@ def ended_run(job_id, run_id='r1', *, offset_min=0, term_status=TerminationStatu
 
     builder = TestJobRunBuilder(job_id, run_id, user_params={'name': 'value'})
 
-    builder.add_phase(PhaseNames.INIT, RunState.CREATED, created or start_time,
+    builder.add_phase(INIT, RunState.CREATED, created or start_time,
                       start_time + timedelta(minutes=1))
-    builder.add_phase(PhaseNames.APPROVAL, RunState.EXECUTING, start_time + timedelta(minutes=1),
+    builder.add_phase(APPROVAL, RunState.EXECUTING, start_time + timedelta(minutes=1),
                       start_time + timedelta(minutes=2))
-    builder.add_phase(PhaseNames.PROGRAM, RunState.EXECUTING, start_time + timedelta(minutes=2),
+    builder.add_phase(PROGRAM, RunState.EXECUTING, start_time + timedelta(minutes=2),
                       start_time + timedelta(minutes=3))
-    builder.add_phase(PhaseNames.TERMINAL, RunState.ENDED, completed or start_time + timedelta(minutes=3), None)
+    builder.add_phase(TERM, RunState.ENDED, completed or start_time + timedelta(minutes=3), None)
 
     failure = RunFailure('err1', 'reason') if term_status == TerminationStatus.FAILED else None
     builder.with_termination_info(term_status, start_time + timedelta(minutes=3), failure)

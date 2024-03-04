@@ -19,7 +19,7 @@ class FakePhaser(AbstractPhaser):
         self._condition = Condition()
 
     def run_info(self) -> Run:
-        return Run(self._phase_meta, self.lifecycle, self.termination)
+        return Run(self._phase_keys, self.lifecycle, self.termination)
 
     def prime(self):
         if self._current_phase_index != -1:
@@ -51,7 +51,7 @@ class FakePhaser(AbstractPhaser):
         with self._condition:
             while True:
                 for run in self.lifecycle.phase_runs:
-                    if run.phase_name == phase_name or run.run_state == run_state:
+                    if run.id == phase_name or run.run_state == run_state:
                         return True
 
                 if not self._condition.wait(timeout):

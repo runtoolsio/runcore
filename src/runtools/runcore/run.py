@@ -17,7 +17,7 @@ from copy import copy
 from dataclasses import dataclass
 from enum import Enum, EnumMeta
 from threading import Event, Condition
-from typing import Optional, List, Dict, Any, TypeVar, Type, Callable, Tuple, Iterable, Generic
+from typing import Optional, List, Dict, Any, TypeVar, Callable, Tuple, Iterable, Generic, NamedTuple
 
 from runtools.runcore import util
 from runtools.runcore.common import InvalidStateError
@@ -92,18 +92,21 @@ class TerminationStatus(Enum):
         return self != TerminationStatus.NONE
 
 
-class PhaseNames:
-    INIT = 'INIT'
-    APPROVAL = 'APPROVAL'
-    EXEC = 'EXEC'
-    PROGRAM = 'PROGRAM'
-    PROCESS = 'PROCESS'
-    TERMINAL = 'TERMINAL'
+class PhaseKey(NamedTuple):
+    type: str
+    id: str
+
+    def serialize(self) -> dict:
+        return {"type": self.type, "id": self.id}
+
+    @classmethod
+    def deserialize(cls, data: dict) -> 'PhaseKey':
+        return cls(data["type"], data["id"])
 
 
 @dataclass
 class PhaseRun:
-    phase_name: str
+    phase_key: PhaseKey
     run_state: RunState
     started_at: Optional[datetime.datetime]
     ended_at: Optional[datetime.datetime] = None
@@ -111,7 +114,7 @@ class PhaseRun:
     @classmethod
     def deserialize(cls, d):
         return cls(
-            d['phase_name'],
+            PhaseKey.deserialize(d['phase_key']),
             RunState[d['run_state']],
             util.parse_datetime(d['started_at']),
             util.parse_datetime(d['ended_at'])
@@ -119,7 +122,7 @@ class PhaseRun:
 
     def serialize(self):
         return {
-            'phase_name': self.phase_name,
+            'phase_key': self.phase_key,
             'run_state': self.run_state.name,
             'started_at': format_dt_iso(self.started_at),
             'ended_at': format_dt_iso(self.ended_at),
@@ -132,13 +135,13 @@ class PhaseRun:
         return None
 
     def __bool__(self):
-        return bool(self.phase_name) and self.run_state != RunState.NONE
+        return bool(self.phase_key) and self.run_state != RunState.NONE
 
     def __copy__(self):
-        return PhaseRun(self.phase_name, self.run_state, self.started_at, self.ended_at)
+        return PhaseRun(self.phase_key, self.run_state, self.started_at, self.ended_at)
 
 
-NONE_PHASE_RUN = PhaseRun('', RunState.NONE, None, None)
+NONE_PHASE_RUN = PhaseRun(PhaseKey('', ''), RunState.NONE, None, None)
 
 
 class Lifecycle:
@@ -148,7 +151,7 @@ class Lifecycle:
     """
 
     def __init__(self, *phase_runs: PhaseRun):
-        self._phase_runs: OrderedDict[str, PhaseRun] = OrderedDict()
+        self._phase_runs: OrderedDict[PhaseKey, PhaseRun] = OrderedDict()
         self._current_run: Optional[PhaseRun] = None
         self._previous_run: Optional[PhaseRun] = None
         for run in phase_runs:
@@ -158,21 +161,21 @@ class Lifecycle:
         """
         Adds a new phase run to the lifecycle.
         """
-        if phase_run.phase_name in self._phase_runs:
-            raise ValueError(f"Phase {phase_run.phase_name} already in this lifecycle: {self.phases}")
+        if phase_run.phase_key in self._phase_runs:
+            raise ValueError(f"Phase {phase_run.phase_key} already in this lifecycle: {self.phases}")
 
         if self.current_run:
             self._previous_run = self._current_run
             self._previous_run.ended_at = phase_run.started_at
 
         self._current_run = phase_run
-        self._phase_runs[phase_run.phase_name] = phase_run
+        self._phase_runs[phase_run.phase_key] = phase_run
 
     @classmethod
     def deserialize(cls, as_dict):
         phase_runs = []
         for transition in as_dict['transitions']:
-            phase_name = transition['phase']
+            phase_key = PhaseKey.deserialize(transition['phase'])
             run_state = RunState[transition['state']]
             started_at = util.parse_datetime(transition['ts'])
 
@@ -181,14 +184,17 @@ class Lifecycle:
             if phase_runs:
                 phase_runs[-1].ended_at = started_at
 
-            phase_runs.append(PhaseRun(phase_name, run_state, started_at, None))
+            phase_runs.append(PhaseRun(phase_key, run_state, started_at, None))
 
         return cls(*phase_runs)
 
     def serialize(self) -> Dict[str, Any]:
         return {
-            "transitions": [{'phase': run.phase_name, 'state': run.run_state.value, 'ts': format_dt_iso(run.started_at)}
-                            for run in self._phase_runs.values()]}
+            "transitions": [
+                {'phase': run.phase_key.serialize(), 'state': run.run_state.value, 'ts': format_dt_iso(run.started_at)}
+                for run in self._phase_runs.values()
+            ]
+        }
 
     def to_dto(self, include_empty=True) -> Dict[str, Any]:
         d = {
@@ -211,8 +217,8 @@ class Lifecycle:
         return self._current_run or NONE_PHASE_RUN
 
     @property
-    def current_phase_name(self) -> Optional[str]:
-        return self._current_run.phase_name if self._current_run else None
+    def current_phase(self) -> Optional[PhaseKey]:
+        return self._current_run.phase_key if self._current_run else None
 
     @property
     def previous_run(self) -> Optional[PhaseRun]:
@@ -220,7 +226,7 @@ class Lifecycle:
 
     @property
     def previous_phase_name(self) -> Optional[str]:
-        return self._previous_run.phase_name if self._previous_run else None
+        return self._previous_run.phase_key if self._previous_run else None
 
     @property
     def run_state(self):
@@ -233,27 +239,27 @@ class Lifecycle:
     def phase_count(self):
         return len(self._phase_runs)
 
-    def get_ordinal(self, phase_name: str) -> int:
+    def get_ordinal(self, phase_key) -> int:
         for index, current_phase in enumerate(self._phase_runs.keys()):
-            if current_phase == phase_name:
+            if current_phase == phase_key:
                 return index + 1
-        raise ValueError(f"Phase {phase_name} not found in lifecycle")
+        raise ValueError(f"Phase {phase_key} not found in lifecycle")
 
     @property
-    def phases(self) -> List[str]:
+    def phases(self) -> List[PhaseKey]:
         return list(self._phase_runs.keys())
 
     @property
     def phase_runs(self) -> List[PhaseRun]:
         return list(self._phase_runs.values())
 
-    def phase_run(self, phase_name: str) -> Optional[PhaseRun]:
-        return self._phase_runs.get(phase_name) or NONE_PHASE_RUN
+    def phase_run(self, phase_key) -> Optional[PhaseRun]:
+        return self._phase_runs.get(phase_key) or NONE_PHASE_RUN
 
     def runs_between(self, phase_from, phase_to) -> List[PhaseRun]:
         runs = []
         for run in self._phase_runs.values():
-            if run.phase_name == phase_to:
+            if run.phase_key == phase_to:
                 if not runs:
                     if phase_from == phase_to:
                         return [run]
@@ -261,16 +267,16 @@ class Lifecycle:
                         return []
                 runs.append(run)
                 return runs
-            elif run.phase_name == phase_from or runs:
+            elif run.phase_key == phase_from or runs:
                 runs.append(run)
 
         return []
 
-    def phases_between(self, phase_from, phase_to) -> List[str]:
-        return [run.phase_name for run in self.runs_between(phase_from, phase_to)]
+    def phases_between(self, phase_from, phase_to) -> List[PhaseKey]:
+        return [run.phase_key for run in self.runs_between(phase_from, phase_to)]
 
-    def phase_started_at(self, phase_name: str) -> Optional[datetime.datetime]:
-        phase_run = self._phase_runs.get(phase_name)
+    def phase_started_at(self, phase_key) -> Optional[datetime.datetime]:
+        phase_run = self._phase_runs.get(phase_key)
         return phase_run.started_at if phase_run else None
 
     @property
@@ -340,24 +346,55 @@ class Lifecycle:
         return f"{self.__class__.__name__}({phase_runs_repr})"
 
 
+PHASE_INFO_REGISTRY = {}
+
+
+def register_phase_info(phase_type):
+    def decorator(cls):
+        PHASE_INFO_REGISTRY[phase_type] = cls
+        return cls
+
+    return decorator
+
+
 @dataclass(frozen=True)
-class PhaseMetadata:
-    phase_name: str
+class PhaseInfo:
+    phase_type: str
+    phase_id: str
     run_state: RunState
-    parameters: Dict[str, str]
+    protection_id: Optional[str] = None
+    last_protected_phase: Optional[PhaseKey] = None
 
     @classmethod
-    def deserialize(cls, as_dict) -> 'PhaseMetadata':
-        return cls(as_dict["phase"], RunState[as_dict["state"]], as_dict.get("params") or {})
+    def deserialize(cls, as_dict) -> 'PhaseInfo':
+        info_cls = PHASE_INFO_REGISTRY.get(as_dict["phase_type"])
+        if info_cls:
+            return info_cls.deserialize()
 
-    def serialize(self):
-        d = {"phase": self.phase_name, "state": self.run_state.value}
-        if self.parameters:
-            d["params"] = self.parameters
+        return cls(
+            as_dict["phase_type"],
+            as_dict["phase_id"],
+            RunState[as_dict["state"]],
+            as_dict.get("protection_id"),
+            PhaseKey.deserialize(as_dict["protection_id"]) if "protection_id" in as_dict else None,
+        )
+
+    def serialize(self) -> Dict:
+        d = {
+            "phase_type": self.phase_type,
+            "phase_id": self.phase_id,
+            "state": self.run_state.value,
+        }
+        if self.protection_id:
+            d["protection_id"] = self.protection_id
+        if self.last_protected_phase:
+            d["last_protected_phase"] = self.last_protected_phase.serialize()
+
         return d
 
-    def params_match(self, *key_values):
-        return all(self.parameters.get(k) == v for k, v in key_values)
+    @property
+    def key(self):
+        return PhaseKey(self.phase_type, self.phase_id)
 
 
 class TerminateRun(Exception):
@@ -398,21 +435,43 @@ class RunContext(ABC):
         return InternalHandler(self)
 
 
+class PhaseKeys:
+    INIT = PhaseKey('INIT', 'init')
+    TERMINAL = PhaseKey('TERMINAL', 'term')
+
+
 class Phase(ABC):
     """
     TODO repr
     """
 
-    def __init__(self, phase_name: str, run_state: RunState, parameters: Optional[Dict[str, str]] = None):
-        self._metadata = PhaseMetadata(phase_name, run_state, parameters or {})
+    def __init__(self, phase_type: str, phase_id: str, run_state: RunState,
+                 *, protection_id=None, last_protected_phase=None):
+        self._phase_type = phase_type
+        self._phase_id = phase_id
+        self._run_state = run_state
+        self._protection_id = protection_id
+        self._last_protected_phase = last_protected_phase
 
     @property
-    def name(self):
-        return self._metadata.phase_name
+    def key(self):
+        return PhaseKey(self._phase_type, self._phase_id)
 
     @property
-    def metadata(self):
-        return self._metadata
+    def type(self):
+        return self._phase_type
+
+    @property
+    def id(self):
+        return self._phase_id
+
+    @property
+    def run_state(self):
+        return self._run_state
+
+    def info(self):
+        return PhaseInfo(
+            self._phase_type, self._phase_id, self._run_state, self._protection_id, self._last_protected_phase)
 
     @property
     @abstractmethod
@@ -430,8 +489,8 @@ class Phase(ABC):
 
 class NoOpsPhase(Phase):
 
-    def __init__(self, phase_name, run_state, stop_status):
-        super().__init__(phase_name, run_state)
+    def __init__(self, phase_type, phase_id, run_state, stop_status):
+        super().__init__(phase_type, phase_id, run_state)
         self._stop_status = stop_status
 
     @property
@@ -450,19 +509,19 @@ class NoOpsPhase(Phase):
 class InitPhase(NoOpsPhase):
 
     def __init__(self):
-        super().__init__(PhaseNames.INIT, RunState.CREATED, TerminationStatus.STOPPED)
+        super().__init__(PhaseKeys.INIT.type, PhaseKeys.INIT.id, RunState.CREATED, TerminationStatus.STOPPED)
 
 
 class TerminalPhase(NoOpsPhase):
 
     def __init__(self):
-        super().__init__(PhaseNames.TERMINAL, RunState.ENDED, TerminationStatus.NONE)
+        super().__init__(PhaseKeys.TERMINAL.type, PhaseKeys.TERMINAL.id, RunState.ENDED, TerminationStatus.NONE)
 
 
 class WaitWrapperPhase(Phase):
 
     def __init__(self, wrapped_phase):
-        super().__init__(wrapped_phase.name, wrapped_phase.metadata.run_state, wrapped_phase.metadata.parameters)
+        super().__init__(wrapped_phase.type, wrapped_phase.id, wrapped_phase.run_state)
         self.wrapped_phase = wrapped_phase
         self._run_event = Event()
 
@@ -546,14 +605,14 @@ class TerminationInfo:
 
 @dataclass(frozen=True)
 class Run:
-    phases: Tuple[PhaseMetadata]
+    phases: Tuple[PhaseInfo]
     lifecycle: Lifecycle
     termination: Optional[TerminationInfo]
 
     @classmethod
     def deserialize(cls, as_dict: Dict[str, Any]):
         return cls(
-            phases=tuple(PhaseMetadata.deserialize(phase) for phase in as_dict['phases']),
+            phases=tuple(PhaseInfo.deserialize(phase) for phase in as_dict['phases']),
             lifecycle=Lifecycle.deserialize(as_dict['lifecycle']),
             termination=TerminationInfo.deserialize(as_dict['termination']) if as_dict.get('termination') else None,
         )
@@ -565,33 +624,33 @@ class Run:
             "termination": self.termination.serialize() if self.termination else None,
         }
 
-    def in_protected_phase(self, protection_type, protection_id) -> bool:
-        return self.lifecycle.current_phase_name in self.protected_phases(protection_type, protection_id)
+    def in_protected_phase(self, protection_phase_type, protection_id) -> bool:
+        return self.lifecycle.current_phase in self.protected_phases(protection_phase_type, protection_id)
 
-    def protected_phases(self, protection_type, protection_id) -> List[str]:
+    def protected_phases(self, protection_phase_type, protection_id) -> List[PhaseKey]:
         protected_phase_start = None
         protected_phase_end = None
 
-        for idx, phase_meta in enumerate(self.phases):
-            if phase_meta.params_match(('protection_phase', protection_type), ('protection_id', protection_id)):
+        for idx, phase_info in enumerate(self.phases):
+            if phase_info.phase_type == protection_phase_type and phase_info.protection_id == protection_id:
                 if (idx + 1) < len(self.phases):
-                    protected_phase_start = self.phases[idx + 1].phase_name
-                    protected_phase_end = phase_meta.parameters.get('protected_until') or protected_phase_start
+                    protected_phase_start = self.phases[idx + 1].key
+                    protected_phase_end = phase_info.last_protected_phase
                 break
 
         if not protected_phase_start:
             return []
 
-        return self.lifecycle.phases_between(protected_phase_start, protected_phase_end)
+        return self.lifecycle.phases_between(protected_phase_start, protected_phase_end or protected_phase_start)
 
 
-def unique_phases_to_dict(phases) -> Dict[str, Phase]:
-    name_to_phase = {}
+def unique_phases_to_dict(phases) -> Dict[PhaseKey, Phase]:
+    key_to_phase = {}
     for phase in phases:
-        if phase.name in name_to_phase:
-            raise ValueError(f"Duplicate phase found: {phase.name}")
-        name_to_phase[phase.name] = phase
-    return name_to_phase
+        if phase.key in key_to_phase:
+            raise ValueError(f"Duplicate phase found: {phase.key}")
+        key_to_phase[phase.key] = phase
+    return key_to_phase
 
 
 class CommonEntities(Enum):
@@ -684,26 +743,18 @@ P = TypeVar('P')
 class AbstractPhaser:
 
     def __init__(self, phases: Iterable[Phase], *, timestamp_generator=util.utc_now):
-        self._name_to_phase: Dict[str, Phase] = unique_phases_to_dict(phases)
-        self._phase_meta: Tuple[PhaseMetadata] = tuple(phase.metadata for phase in phases)
+        self._key_to_phase: Dict[PhaseKey, Phase] = unique_phases_to_dict(phases)
         self._timestamp_generator = timestamp_generator
 
         self.transition_hook: Optional[Callable[[PhaseRun, PhaseRun, int], None]] = None
-        self.output_hook: Optional[Callable[[PhaseMetadata, str, bool], None]] = None
+        self.output_hook: Optional[Callable[[PhaseInfo, str, bool], None]] = None
 
-    def get_typed_phase(self, phase_type: Type[P], phase_name: str) -> Optional[P]:
-        phase = self._name_to_phase.get(phase_name)
-        if phase is None:
-            return None
-
-        if not isinstance(phase, phase_type):
-            raise TypeError(f"Expected phase of type {phase_type}, but got {type(phase)} for phase '{phase_name}'")
-
-        return phase
+    def get_phase(self, phase_type, phase_id):
+        return self._key_to_phase.get(PhaseKey(phase_type, phase_id))
 
     @property
-    def phases(self) -> Dict[str, Phase]:
-        return self._name_to_phase.copy()
+    def phases(self) -> Dict[PhaseKey, Phase]:
+        return self._key_to_phase.copy()
 
 
 class Phaser(AbstractPhaser):
@@ -729,7 +780,8 @@ class Phaser(AbstractPhaser):
 
     def run_info(self) -> Run:
         with self._transition_lock:
-            return Run(self._phase_meta, copy(self._lifecycle), self._termination)
+            phases = tuple(p.info() for p in self._key_to_phase.values())
+            return Run(phases, copy(self._lifecycle), self._termination)
 
     def prime(self):
         with self._transition_lock:
@@ -757,7 +809,7 @@ class Phaser(AbstractPhaser):
             def new_output(self, output, is_err=False):
                 self._phaser.output_hook(self._ctx_phase.metadata, output, is_err)
 
-        for phase in self._name_to_phase.values():
+        for phase in self._key_to_phase.values():
             with self._transition_lock:
                 if self._abort:
                     return
@@ -813,7 +865,7 @@ class Phaser(AbstractPhaser):
         assert self._current_phase != phase
 
         self._current_phase = phase
-        self._lifecycle.add_phase_run(PhaseRun(phase.name, phase.metadata.run_state, self._timestamp_generator()))
+        self._lifecycle.add_phase_run(PhaseRun(phase.key, phase.run_state, self._timestamp_generator()))
         if self.transition_hook:
             self.execute_transition_hook_safely(self.transition_hook)
         with self._transition_lock:
@@ -830,7 +882,7 @@ class Phaser(AbstractPhaser):
                 return
 
             self._stop_status = self._current_phase.stop_status if self._current_phase else TerminationStatus.STOPPED
-            if not self._current_phase or (self._current_phase.name == PhaseNames.INIT):
+            if not self._current_phase or (self._current_phase.key == PhaseKeys.INIT):
                 # Not started yet
                 self._abort = True  # Prevent phase transition...
                 self._termination = self._term_info(self._stop_status)
@@ -842,7 +894,7 @@ class Phaser(AbstractPhaser):
         with self._transition_lock:
             while True:
                 for run in self._lifecycle.phase_runs:
-                    if run.phase_name == phase_name or run.run_state == run_state:
+                    if run.phase_key == phase_name or run.run_state == run_state:
                         return True
 
                 if not self._transition_lock.wait(timeout):

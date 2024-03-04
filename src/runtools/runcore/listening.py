@@ -6,7 +6,7 @@ from json import JSONDecodeError
 
 from runtools.runcore import util, paths
 from runtools.runcore.job import JobRun, InstanceTransitionObserver, InstanceOutputObserver
-from runtools.runcore.run import PhaseRun, PhaseMetadata, JobInstanceMetadata
+from runtools.runcore.run import PhaseRun, PhaseInfo, JobInstanceMetadata
 from runtools.runcore.util.observer import ObservableNotification
 from runtools.runcore.util.socket import SocketServer
 
@@ -82,7 +82,7 @@ class InstanceTransitionReceiver(EventReceiver):
     def handle_event(self, _, instance_meta, event):
         new_phase = PhaseRun.deserialize(event["new_phase"])
 
-        if self.phases and new_phase.phase_name not in self.phases:
+        if self.phases and new_phase.id not in self.phases:
             return
 
         if self.run_states and new_phase.run_state not in self.run_states:
@@ -108,7 +108,7 @@ class InstanceOutputReceiver(EventReceiver):
         self._notification = ObservableNotification[InstanceOutputObserver]()
 
     def handle_event(self, _, instance_meta, event):
-        phase = PhaseMetadata.deserialize(event['phase'])
+        phase = PhaseInfo.deserialize(event['phase'])
         output = event['output']
         is_error = event['is_error']
         self._notification.observer_proxy.new_instance_output(instance_meta, phase, output, is_error)

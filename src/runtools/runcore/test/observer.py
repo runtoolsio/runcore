@@ -12,7 +12,7 @@ from threading import Condition
 from typing import Tuple, List, Callable
 
 from runtools.runcore.job import JobRun, InstanceTransitionObserver, InstanceOutputObserver
-from runtools.runcore.run import PhaseRun, RunState, PhaseMetadata
+from runtools.runcore.run import PhaseRun, RunState, PhaseInfo
 
 log = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ class TestTransitionObserver(InstanceTransitionObserver):
 
     @property
     def phases(self) -> List[Tuple[str, str]]:
-        return [(e[1].phase_name, e[2].phase_name) for e in self.events]
+        return [(e[1].phase_key, e[2].phase_key) for e in self.events]
 
     @property
     def run_states(self) -> List[RunState]:
@@ -106,7 +106,7 @@ class TestOutputObserver(InstanceOutputObserver):
     def __init__(self):
         self.outputs = []
 
-    def new_instance_output(self, job_run: JobRun, phase_meta: PhaseMetadata, output: str, is_error: bool):
+    def new_instance_output(self, job_run: JobRun, phase_meta: PhaseInfo, output: str, is_error: bool):
         self.outputs.append((job_run, phase_meta, output, is_error))
 
     @property

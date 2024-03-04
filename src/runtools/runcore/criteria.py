@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Any, Set, Optional, TypeVar, Generic, Iterable
 
 from runtools.runcore.run import Outcome, Lifecycle, TerminationInfo, EntityRun, InstanceMetadata, RunState, \
-    PhaseMetadata
+    PhaseInfo
 from runtools.runcore.util import MatchingStrategy, and_, or_, parse, single_day_range, days_range, \
     format_dt_iso, to_list, DateTimeRange, parse_range_to_utc
 
@@ -268,7 +268,7 @@ class LifecycleCriterion(MatchCriteria[Lifecycle]):
 
 
 @dataclass
-class PhaseCriterion(MatchCriteria[PhaseMetadata]):
+class PhaseCriterion(MatchCriteria[PhaseInfo]):
 
     phase_name: Optional[str] = None
     run_state: Optional[RunState] = None
@@ -288,9 +288,9 @@ class PhaseCriterion(MatchCriteria[PhaseMetadata]):
             'parameters': self.parameters
         }
 
-    def matches(self, phase_metadata: PhaseMetadata) -> bool:
+    def matches(self, phase_metadata: PhaseInfo) -> bool:
         # Match phase name if phase_name is specified and does not match the phase's name
-        if self.phase_name and phase_metadata.phase_name != self.phase_name:
+        if self.phase_name and phase_metadata.phase_id != self.phase_name:
             return False
 
         # Match run state if run_state is specified and does not match the phase's run state
@@ -304,7 +304,7 @@ class PhaseCriterion(MatchCriteria[PhaseMetadata]):
 
         return True
 
-    def __call__(self, phase_metadata: PhaseMetadata) -> bool:
+    def __call__(self, phase_metadata: PhaseInfo) -> bool:
         return self.matches(phase_metadata)
 
     def __bool__(self):

@@ -2,43 +2,45 @@ import datetime
 
 import pytest
 
-from runtools.runcore.run import PhaseRun, PhaseNames, RunState, Lifecycle
+from runtools.runcore.run import PhaseRun, RunState, Lifecycle, PhaseKey
 from runtools.runcore.util import utc_now
 
-PENDING = "PENDING"
-EXECUTING = "EXECUTING"
+INIT = PhaseKey('init', 'id')
+APPROVAL = PhaseKey('approval', 'id')
+EXECUTING = PhaseKey('exec', 'id')
+TERM = PhaseKey('term', 'id')
 
 
 @pytest.fixture
 def sut() -> Lifecycle:
     # Initial transition
     base = datetime.datetime(2023, 1, 1)
-    init_transition = PhaseRun(PhaseNames.INIT, RunState.CREATED, base)
+    init_transition = PhaseRun(INIT, RunState.CREATED, base)
     lifecycle = Lifecycle(init_transition)
 
-    # 10 minutes after initialization, it goes to PENDING state
-    lifecycle.add_phase_run(PhaseRun(PENDING, RunState.PENDING, base + datetime.timedelta(minutes=10)))
+    # 10 minutes after initialization, it goes to APPROVAL state
+    lifecycle.add_phase_run(PhaseRun(APPROVAL, RunState.PENDING, base + datetime.timedelta(minutes=10)))
     # 20 minutes after initialization, it goes to EXECUTING state
     lifecycle.add_phase_run(PhaseRun(EXECUTING, RunState.EXECUTING, base + datetime.timedelta(minutes=20)))
     # 50 minutes after initialization, it terminates
-    lifecycle.add_phase_run(PhaseRun(PhaseNames.TERMINAL, RunState.ENDED, base + datetime.timedelta(minutes=50)))
+    lifecycle.add_phase_run(PhaseRun(TERM, RunState.ENDED, base + datetime.timedelta(minutes=50)))
 
     return lifecycle
 
 
 def test_phases(sut):
     assert sut.phases == [
-        PhaseNames.INIT,
-        PENDING,
+        INIT,
+        APPROVAL,
         EXECUTING,
-        PhaseNames.TERMINAL
+        TERM
     ]
-    assert sut.current_phase_name == PhaseNames.TERMINAL
+    assert sut.current_phase == TERM
     assert sut.phase_count == 4
 
 
 def test_ordinal(sut):
-    assert sut.get_ordinal(PENDING) == 2
+    assert sut.get_ordinal(APPROVAL) == 2
 
 
 def test_transitions(sut):
@@ -57,12 +59,12 @@ def test_states(sut):
 
 
 def test_current_and_previous_phase(sut):
-    assert sut.current_phase_name == PhaseNames.TERMINAL
+    assert sut.current_phase == TERM
     assert sut.previous_phase_name == EXECUTING
 
 
 def test_phase_run(sut):
-    init_phase_run = sut.phase_run(PhaseNames.INIT)
+    init_phase_run = sut.phase_run(INIT)
     assert init_phase_run.started_at == datetime.datetime(2023, 1, 1)
     assert init_phase_run.ended_at == datetime.datetime(2023, 1, 1, 0, 10)
     assert init_phase_run.run_time == datetime.timedelta(minutes=10)
@@ -70,7 +72,7 @@ def test_phase_run(sut):
 
 def test_termination(sut):
     assert sut.is_ended
-    assert not Lifecycle(PhaseRun(PhaseNames.INIT, RunState.CREATED, utc_now())).is_ended
+    assert not Lifecycle(PhaseRun(INIT, RunState.CREATED, utc_now())).is_ended
 
 
 def test_run_time(sut):
@@ -79,10 +81,10 @@ def test_run_time(sut):
 
 
 def test_phases_between(sut):
-    assert sut.phases_between(PENDING, EXECUTING) == [PENDING, EXECUTING]
-    assert (sut.phases_between(PENDING, PhaseNames.TERMINAL)
-            == [PENDING, EXECUTING, PhaseNames.TERMINAL])
-    assert sut.phases_between(PENDING, PENDING) == [PENDING]
-    assert sut.phases_between(EXECUTING, PENDING) == []
-    assert sut.phases_between(PENDING, 'Not contained') == []
-    assert sut.phases_between('Not contained', PENDING) == []
+    assert sut.phases_between(APPROVAL, EXECUTING) == [APPROVAL, EXECUTING]
+    assert (sut.phases_between(APPROVAL, TERM)
+            == [APPROVAL, EXECUTING, TERM])
+    assert sut.phases_between(APPROVAL, APPROVAL) == [APPROVAL]
+    assert sut.phases_between(EXECUTING, APPROVAL) == []
+    assert sut.phases_between(APPROVAL, 'Not contained') == []
+    assert sut.phases_between('Not contained', APPROVAL) == []

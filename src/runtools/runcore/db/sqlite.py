@@ -12,7 +12,7 @@ from typing import List
 from runtools.runcore import paths
 from runtools.runcore.db import SortCriteria, Persistence
 from runtools.runcore.job import JobStats, JobRun, JobRuns, InstanceTransitionObserver
-from runtools.runcore.run import RunState, Lifecycle, PhaseMetadata, RunFailure, RunError, Run, TerminationInfo, \
+from runtools.runcore.run import RunState, Lifecycle, PhaseInfo, RunFailure, RunError, Run, TerminationInfo, \
     TerminationStatus, Outcome, JobInstanceMetadata
 from runtools.runcore.track import TrackedTask
 from runtools.runcore.util import MatchingStrategy, format_dt_sql, parse_dt_sql
@@ -203,7 +203,7 @@ class SQLite(Persistence, InstanceTransitionObserver):
         def to_job_info(t):
             metadata = JobInstanceMetadata(t[0], t[1], t[2], {}, json.loads(t[3]) if t[3] else dict())
             ended_at = parse_dt_sql(t[5])
-            phases = tuple(PhaseMetadata.deserialize(p) for p in json.loads(t[7]))
+            phases = tuple(PhaseInfo.deserialize(p) for p in json.loads(t[7]))
             lifecycle = Lifecycle.deserialize(json.loads(t[8]))
             term_status = TerminationStatus.from_code(t[9])
             failure = RunFailure.deserialize(json.loads(t[10])) if t[10] else None

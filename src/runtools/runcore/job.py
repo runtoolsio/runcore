@@ -15,7 +15,7 @@ from threading import Thread
 from typing import Dict, Any, List, Optional, Type
 
 from runtools.runcore.output import Mode
-from runtools.runcore.run import TerminationStatus, P, RunState, Run, PhaseRun, PhaseMetadata, InstanceMetadata, \
+from runtools.runcore.run import TerminationStatus, P, RunState, Run, PhaseRun, PhaseInfo, InstanceMetadata, \
     EntityRun, JobInstanceMetadata
 from runtools.runcore.track import TrackedTask
 from runtools.runcore.util import MatchingStrategy, format_dt_iso
@@ -476,7 +476,7 @@ class InstanceTransitionObserver(abc.ABC):
 class InstanceOutputObserver(abc.ABC):
 
     @abc.abstractmethod
-    def new_instance_output(self, instance_meta: InstanceMetadata, phase: PhaseMetadata, output: str, is_err: bool):
+    def new_instance_output(self, instance_meta: InstanceMetadata, phase: PhaseInfo, output: str, is_err: bool):
         """TODO"""
 
 
