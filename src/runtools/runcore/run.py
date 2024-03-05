@@ -122,7 +122,7 @@ class PhaseRun:
 
     def serialize(self):
         return {
-            'phase_key': self.phase_key,
+            'phase_key': self.phase_key.serialize(),
             'run_state': self.run_state.name,
             'started_at': format_dt_iso(self.started_at),
             'ended_at': format_dt_iso(self.ended_at),
@@ -811,7 +811,7 @@ class Phaser(AbstractPhaser):
                 return self._task_tracker
 
             def new_output(self, output, is_err=False):
-                self._phaser.output_hook(self._ctx_phase.metadata, output, is_err)
+                self._phaser.output_hook(self._ctx_phase.info(), output, is_err)
 
         for phase in self._key_to_phase.values():
             with self._transition_lock:

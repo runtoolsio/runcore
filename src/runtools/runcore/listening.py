@@ -82,7 +82,7 @@ class InstanceTransitionReceiver(EventReceiver):
     def handle_event(self, _, instance_meta, event):
         new_phase = PhaseRun.deserialize(event["new_phase"])
 
-        if self.phases and new_phase.id not in self.phases:
+        if self.phases and new_phase.phase_key not in self.phases:
             return
 
         if self.run_states and new_phase.run_state not in self.run_states:
