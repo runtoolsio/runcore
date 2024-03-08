@@ -372,7 +372,7 @@ class PhaseInfo:
     @classmethod
     def deserialize(cls, as_dict) -> 'PhaseInfo':
         info_cls = PHASE_INFO_REGISTRY.get(as_dict["phase_type"])
-        if info_cls:
+        if info_cls and info_cls != PhaseInfo and 'deserialize' in info_cls.__dict__:
             return info_cls.deserialize(as_dict)
 
         return cls(

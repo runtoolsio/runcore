@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Generator, List, Callable
 
 from runtools.runcore import util
-from runtools.runcore.common import ConfigFileNotFoundError, RuntoolsException
+from runtools.runcore.common import RuntoolsException
 
 CONFIG_DIR = 'runcore'
 CONFIG_FILE = 'runcore.toml'
@@ -283,3 +283,17 @@ def copy_config_to_search_path(package, filename, overwrite: bool):
 
 class ConfigFileAlreadyExists(RuntoolsException, FileExistsError):
     pass
+
+
+class ConfigFileNotFoundError(RuntoolsException, FileNotFoundError):
+
+    def __init__(self, file, search_path=()):
+        self.file = file
+        self.search_path = search_path
+
+        if search_path:
+            message = f"Config file `{file}` not found in the search path: {', '.join([str(dir_) for dir_ in search_path])}"
+        else:
+            message = f"Config file `{file}` not found"
+
+        super().__init__(message)

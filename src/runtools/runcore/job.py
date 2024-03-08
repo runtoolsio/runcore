@@ -424,10 +424,10 @@ class JobRuns(list):
         return [r.job_id for r in self]
 
     def in_phase(self, phase) -> 'JobRuns':
-        return JobRuns([run for run in self if run.lifecycle.phase is phase])
+        return JobRuns([job_run for job_run in self if job_run.run.lifecycle.current_phase is phase])
 
     def in_protected_phase(self, protection_type, protection_id):
-        return JobRuns([run for run in self if run.in_protected_phase(protection_type, protection_id)])
+        return JobRuns([job_run for job_run in self if job_run.run.in_protected_phase(protection_type, protection_id)])
 
     def in_state(self, state):
         return [run for run in self if run.lifecycle.run_state is state]
