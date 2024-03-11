@@ -272,11 +272,12 @@ class APIClient(SocketClient):
 
         return self.send_request('/instances/output', instance_match, resp_mapper=resp_mapper)
 
-    def signal_dispatch(self, instance_match) -> AggregatedResponse[SignalDispatchResponse]:
+    def signal_dispatch(self, instance_match, queue_id) -> AggregatedResponse[SignalDispatchResponse]:
         def resp_mapper(inst_resp: InstanceResponse) -> SignalDispatchResponse:
             return SignalDispatchResponse(inst_resp.instance_meta, inst_resp.body["dispatched"])
 
-        return self.send_request('/instances/_signal/dispatch', instance_match, resp_mapper=resp_mapper)
+        req_body = {"queue_id": queue_id}
+        return self.send_request('/instances/_signal/dispatch', instance_match, req_body, resp_mapper=resp_mapper)
 
 
 def _process_responses(server_responses: List[ServerResponse], resp_mapper: Callable[[InstanceResponse], T]) \

@@ -149,9 +149,9 @@ def fetch_output(run_match=None) -> AggregatedResponse[OutputResponse]:
         return c.fetch_output(run_match)
 
 
-def signal_dispatch(instance_match) -> AggregatedResponse[SignalDispatchResponse]:
+def signal_dispatch(instance_match, queue_id) -> AggregatedResponse[SignalDispatchResponse]:
     with api_client() as c:
-        return c.signal_dispatch(instance_match)
+        return c.signal_dispatch(instance_match, queue_id)
 
 
 def instance_transition_receiver(instance_match=None, phases=(), run_states=()):

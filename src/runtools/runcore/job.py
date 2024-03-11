@@ -430,7 +430,7 @@ class JobRuns(list):
         return JobRuns([job_run for job_run in self if job_run.run.in_protected_phase(protection_type, protection_id)])
 
     def in_state(self, state):
-        return [run for run in self if run.lifecycle.run_state is state]
+        return [job_run for job_run in self if job_run.run.lifecycle.run_state is state]
 
     @property
     def scheduled(self):
@@ -438,19 +438,19 @@ class JobRuns(list):
 
     @property
     def pending(self):
-        return self.in_phase(RunState.PENDING)
+        return self.in_state(RunState.PENDING)
 
     @property
     def queued(self):
-        return self.in_phase(RunState.IN_QUEUE)
+        return self.in_state(RunState.IN_QUEUE)
 
     @property
     def executing(self):
-        return self.in_phase(RunState.EXECUTING)
+        return self.in_state(RunState.EXECUTING)
 
     @property
     def terminal(self):
-        return self.in_phase(RunState.ENDED)
+        return self.in_state(RunState.ENDED)
 
     def to_dict(self, include_empty=True) -> Dict[str, Any]:
         return {"runs": [run.serialize(include_empty=include_empty) for run in self]}

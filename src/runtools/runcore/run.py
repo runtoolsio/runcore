@@ -388,7 +388,7 @@ class PhaseInfo:
         d = {
             "phase_type": self.phase_type,
             "phase_id": self.phase_id,
-            "run_state": self.run_state.value,
+            "run_state": self.run_state.name,
         }
         if self.phase_name:
             d["phase_name"] = self.phase_name
@@ -878,7 +878,7 @@ class Phaser(AbstractPhaser):
             return self._term_info(TerminationStatus.ERROR, error=run_error), e
         except KeyboardInterrupt as e:
             log.warning('keyboard_interruption')
-            # Assuming child processes received SIGINT, TODO different state on other platforms?
+            phase.stop()
             return self._term_info(TerminationStatus.INTERRUPTED), e
         except SystemExit as e:
             # Consider UNKNOWN (or new state DETACHED?) if there is possibility the execution is not completed
