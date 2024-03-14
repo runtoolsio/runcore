@@ -103,6 +103,9 @@ class PhaseKey(NamedTuple):
     def deserialize(cls, data: dict) -> 'PhaseKey':
         return cls(data["type"], data["id"])
 
+    def __str__(self) -> str:
+        return f"{self.type}-{self.id}"
+
 
 @dataclass
 class PhaseRun:
