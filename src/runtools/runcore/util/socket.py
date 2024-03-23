@@ -5,7 +5,7 @@ import socket
 from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
-from threading import Thread
+from threading import Thread, RLock
 from types import coroutine
 from typing import List, NamedTuple, Optional
 
@@ -15,37 +15,64 @@ RECV_BUFFER_LENGTH = 65536  # Can be increased to 163840?
 log = logging.getLogger(__name__)
 
 
+class SocketServerException(Exception):
+    pass
+
+
+class SocketCreationException(SocketServerException):
+
+    def __init__(self, socket_path):
+        self.socket_path = socket_path
+        super().__init__(f"Unable to create socket: {socket_path}")
+
+
+class SocketServerStoppedAlready(SocketServerException):
+    pass
+
+
 class SocketServer(abc.ABC):
 
     def __init__(self, socket_path_provider, *, allow_ping=False):
         self._socket_path_provider = socket_path_provider
         self._allow_ping = allow_ping
         self._server: socket = None
-        self._serving_thread = Thread(target=self.serve, name='Thread-ApiServer')
+        self._serving_thread = Thread(target=self._serve, name='Thread-ApiServer')
+        self._lock = RLock()
         self._stopped = False
 
-    def start(self) -> bool:
+    def _bind_socket(self):
         if self._stopped:
-            return False
+            raise SocketServerStoppedAlready
+
         try:
             socket_path = self._socket_path_provider()
         except FileNotFoundError as e:
-            log.error("event=[unable_create_socket_dir] socket_dir=[%s] message=[%s]", e.filename, e)
-            return False
+            raise SocketCreationException(e.filename) from e
 
         self._server = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         try:
             self._server.bind(str(socket_path))
-            self._serving_thread.start()
-            return True
         except PermissionError as e:
-            log.error("event=[unable_create_socket] socket=[%s] message=[%s]", socket_path, e)
-            return False
+            raise SocketCreationException(socket_path) from e
+
+    def start(self):
+        with self._lock:
+            self._bind_socket()
+            self._serving_thread.start()
+
+    def wait(self):
+        self._serving_thread.join()
 
     def serve(self):
+        with self._lock:
+            self._bind_socket()
+        self._serve()
+
+    def _serve(self):
         log.debug('event=[server_started]')
+        server = self._server  # This prevents None access error when the server is closed
         while not self._stopped:
-            datagram, client_address = self._server.recvfrom(RECV_BUFFER_LENGTH)
+            datagram, client_address = server.recvfrom(RECV_BUFFER_LENGTH)
             if not datagram:
                 break
 
@@ -53,14 +80,14 @@ class SocketServer(abc.ABC):
             if self._allow_ping and req_body == 'ping':
                 resp_body = 'pong'
             else:
-                resp_body = self.handle(
-                    req_body)  # TODO catch exceptions? TypeError: Object of type AggregatedResponse is not JSON serializable
+                # TODO catch exceptions? TypeError: Object of type AggregatedResponse is not JSON serializable
+                resp_body = self.handle(req_body)
 
             if resp_body:
                 if client_address:
                     encoded = resp_body.encode()
                     try:
-                        self._server.sendto(encoded, client_address)
+                        server.sendto(encoded, client_address)
                     except OSError as e:
                         if e.errno == 90:
                             log.error(f"event=[server_response_payload_too_large] length=[{len(encoded)}]")
@@ -77,24 +104,23 @@ class SocketServer(abc.ABC):
         """
 
     def stop(self):
-        self._stopped = True
+        self.close()
 
     def close(self):
-        self.stop()
+        with self._lock:
+            self._stopped = True
 
-        if self._server is None:
-            return
+            if self._server is None:
+                return
 
-        socket_name = self._server.getsockname()
-        try:
-            self._server.shutdown(socket.SHUT_RD)
-            self._server.close()
-        finally:
-            if os.path.exists(socket_name):
-                os.remove(socket_name)
-
-    def wait(self):
-        self._serving_thread.join()
+            socket_name = self._server.getsockname()  # This must be executed before the socket is closed
+            try:
+                self._server.shutdown(socket.SHUT_RD)
+                self._server.close()
+            finally:
+                self._server = None
+                if os.path.exists(socket_name):
+                    os.remove(socket_name)
 
     def close_and_wait(self):
         self.close()
