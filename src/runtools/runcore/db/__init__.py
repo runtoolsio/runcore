@@ -50,10 +50,10 @@ class SortCriteria(Enum):
 
 class Persistence(ABC):
 
-    def read_job_runs(self, run_match=None, sort=SortCriteria.CREATED, *, asc, limit, offset, last=False):
+    def read_history_runs(self, run_match=None, sort=SortCriteria.CREATED, *, asc, limit, offset, last=False):
         pass
 
-    def read_job_stats(self, run_match=None):
+    def read_history_stats(self, run_match=None):
         pass
 
     def store_job_runs(self, *job_runs):

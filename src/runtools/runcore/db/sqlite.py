@@ -156,7 +156,7 @@ class SQLite(Persistence, InstanceTransitionObserver):
             log.debug('event=[table_created] table=[history]')
             self._conn.commit()
 
-    def read_job_runs(self, run_match=None, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=-1, last=False) \
+    def read_history_runs(self, run_match=None, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=-1, last=False) \
             -> JobRuns:
         """
         Fetches ended job instances based on specified criteria.
@@ -226,7 +226,7 @@ class SQLite(Persistence, InstanceTransitionObserver):
         Returns:
             int: Total count of job instances matching the specified criteria.
         """
-        return sum(s.count for s in (self.read_job_stats(run_match)))
+        return sum(s.count for s in (self.read_history_stats(run_match)))
 
     def clean_up(self, max_records, max_age):
         if max_records >= 0:
@@ -248,7 +248,7 @@ class SQLite(Persistence, InstanceTransitionObserver):
                            ((datetime.datetime.now(tz=timezone.utc) - max_age),))
         self._conn.commit()
 
-    def read_job_stats(self, run_match=None) -> List[JobStats]:
+    def read_history_stats(self, run_match=None) -> List[JobStats]:
         """
         Returns job statistics for each job based on specified criteria.
         Datasource: The database as defined by the configured persistence type.

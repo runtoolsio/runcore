@@ -81,7 +81,7 @@ class JobRepositoryActiveInstances(JobRepository):
         return 'active'
 
     def read_jobs(self) -> List[Job]:
-        return [*{Job(i.job_id) for i in runtools.runcore.get_active_runs().responses}]
+        return [*{Job(i.job_id) for i in runtools.runcore.get_active_runs().successful}]
 
 
 class JobRepositoryHistory(JobRepository):
@@ -93,7 +93,7 @@ class JobRepositoryHistory(JobRepository):
     def read_jobs(self) -> List[Job]:
         try:
             with runcore.persistence() as db:
-                return [Job(s.job_id) for s in db.read_job_stats()]
+                return [Job(s.job_id) for s in db.read_history_stats()]
         except PersistenceDisabledError:
             return []
 

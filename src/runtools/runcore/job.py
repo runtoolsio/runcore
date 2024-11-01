@@ -456,6 +456,7 @@ class JobRuns(list):
         return {"runs": [run.serialize(include_empty=include_empty) for run in self]}
 
 
+# PhaseTransitionObserver
 class InstanceTransitionObserver(abc.ABC):
 
     @abc.abstractmethod

@@ -390,6 +390,7 @@ def parse_criteria(pattern: str, strategy: MatchingStrategy = MatchingStrategy.E
 
 class EntityRunCriteria(MatchCriteria[EntityRun]):
     """
+    TODO Rename to RunCriteria ?
     This object aggregates various criteria for querying and matching job instances.
     An instance must meet all the provided criteria to be considered a match.
 

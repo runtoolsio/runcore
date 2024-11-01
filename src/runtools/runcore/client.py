@@ -92,26 +92,26 @@ T = TypeVar('T')
 
 
 @dataclass
-class AggregatedResponse(Generic[T]):
+class CollectedResponses(Generic[T]):
     """
-    Represents a collection of responses and errors from multiple APIs.
+    Represents responses and errors collected from multiple API endpoints.
 
-    This class is useful for handling API calls to several endpoints in a unified way, aggregating the responses
-    and any potential errors into two distinct lists.
+    This class handles responses from multiple API calls by collecting both
+    successful responses and any errors into separate lists.
 
     Attributes:
-        responses: A list of successful responses of type T.
+        successful: A list of responses of type T that completed without error.
         errors: A list of APIError instances representing errors that occurred during the API calls.
 
-    Note: In the case of the Instances API, each API response may contain multiple instance responses.
-          This means that the number of responses can exceed the number of contacted APIs.
+    Note: For the Instances API, a single endpoint's response may contain multiple instance responses.
+          This means the number of collected responses can exceed the number of contacted API endpoints.
     """
 
-    responses: List[T]
+    successful: List[T]
     errors: List[APIError]
 
     def __iter__(self):
-        return iter((self.responses, self.errors))
+        return iter((self.successful, self.errors))
 
 
 @dataclass
@@ -167,7 +167,7 @@ class APIClient(SocketClient):
         self.close()
 
     def send_request(self, api: str, run_match=None, req_body=None,
-                     resp_mapper: Callable[[InstanceResponse], T] = _no_resp_mapper) -> AggregatedResponse[T]:
+                     resp_mapper: Callable[[InstanceResponse], T] = _no_resp_mapper) -> CollectedResponses[T]:
         if not req_body:
             req_body = {}
         req_body["request_metadata"] = {"api": api}
@@ -177,7 +177,7 @@ class APIClient(SocketClient):
         server_responses: List[ServerResponse] = self.communicate(json.dumps(req_body))
         return _process_responses(server_responses, resp_mapper)
 
-    def get_active_runs(self, run_match=None) -> AggregatedResponse[JobRun]:
+    def get_active_runs(self, run_match=None) -> CollectedResponses[JobRun]:
         """
         Retrieves instance information for all active job instances for the current user.
 
@@ -198,7 +198,7 @@ class APIClient(SocketClient):
 
         return self.send_request('/instances', run_match, resp_mapper=resp_mapper)
 
-    def approve_pending_instances(self, run_match, phase_id=None) -> AggregatedResponse[ApprovalResponse]:
+    def approve_pending_instances(self, run_match, phase_id=None) -> CollectedResponses[ApprovalResponse]:
         """
         This function releases job instances that are pending in the provided group
         and optionally match the provided criteria.
@@ -227,7 +227,7 @@ class APIClient(SocketClient):
         req_body = {"phase_id": phase_id}
         return self.send_request('/instances/approve', run_match, req_body, approve_resp_mapper)
 
-    def stop_instances(self, instance_match) -> AggregatedResponse[StopResponse]:
+    def stop_instances(self, instance_match) -> CollectedResponses[StopResponse]:
         """
         This function stops job instances that match the provided criteria.
 
@@ -252,7 +252,7 @@ class APIClient(SocketClient):
 
         return self.send_request('/instances/stop', instance_match, resp_mapper=resp_mapper)
 
-    def fetch_output(self, instance_match=None) -> AggregatedResponse[OutputResponse]:
+    def fetch_output(self, instance_match=None) -> CollectedResponses[OutputResponse]:
         """
         This function requests the last lines of the output from job instances
         that optionally match the provided criteria.
@@ -272,7 +272,7 @@ class APIClient(SocketClient):
 
         return self.send_request('/instances/output', instance_match, resp_mapper=resp_mapper)
 
-    def signal_dispatch(self, instance_match, queue_id) -> AggregatedResponse[SignalDispatchResponse]:
+    def signal_dispatch(self, instance_match, queue_id) -> CollectedResponses[SignalDispatchResponse]:
         def resp_mapper(inst_resp: InstanceResponse) -> SignalDispatchResponse:
             return SignalDispatchResponse(inst_resp.instance_meta, inst_resp.body["dispatched"])
 
@@ -281,7 +281,7 @@ class APIClient(SocketClient):
 
 
 def _process_responses(server_responses: List[ServerResponse], resp_mapper: Callable[[InstanceResponse], T]) \
-        -> AggregatedResponse[T]:
+        -> CollectedResponses[T]:
     responses: List[T] = []
     errors: List[APIError] = []
 
@@ -334,4 +334,4 @@ def _process_responses(server_responses: List[ServerResponse], resp_mapper: Call
                 break
             responses.append(resp)
 
-    return AggregatedResponse(responses, errors)
+    return CollectedResponses(responses, errors)

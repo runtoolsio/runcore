@@ -7,7 +7,7 @@ __version__ = "0.1.1"
 from types import MappingProxyType
 
 from runtools.runcore import db
-from runtools.runcore.client import AggregatedResponse, APIClient, ApprovalResponse, StopResponse, OutputResponse, \
+from runtools.runcore.client import CollectedResponses, APIClient, ApprovalResponse, StopResponse, OutputResponse, \
     SignalDispatchResponse
 from runtools.runcore.common import RuntoolsException
 from runtools.runcore.db import Persistence, SortCriteria
@@ -45,14 +45,14 @@ def persistence(persistence_type=None) -> Persistence:
     return db.load_database_module(db_type).create_database(_persistence[db_type])
 
 
-def read_job_runs(run_match, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+def read_history_runs(run_match, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
     with persistence() as p:
-        return p.read_job_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+        return p.read_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
 
 
-def read_job_stats(run_match=None):
+def read_history_stats(run_match=None):
     with persistence() as p:
-        return p.read_job_stats(run_match)
+        return p.read_history_stats(run_match)
 
 
 class PersistenceDisabledError(Exception):
@@ -69,7 +69,7 @@ def api_client():
     return APIClient()
 
 
-def get_active_runs(run_match=None) -> AggregatedResponse[JobRun]:
+def get_active_runs(run_match=None) -> CollectedResponses[JobRun]:
     """
     Retrieves instance information for all active job instances for the current user.
 
@@ -89,7 +89,7 @@ def get_active_runs(run_match=None) -> AggregatedResponse[JobRun]:
         return c.get_active_runs(run_match)
 
 
-def approve_pending_instances(run_match, phase_id=None) -> AggregatedResponse[ApprovalResponse]:
+def approve_pending_instances(run_match, phase_id=None) -> CollectedResponses[ApprovalResponse]:
     """
     This function releases job instances that are pending in the provided group
     and optionally match the provided criteria.
@@ -110,7 +110,7 @@ def approve_pending_instances(run_match, phase_id=None) -> AggregatedResponse[Ap
         return c.approve_pending_instances(run_match, phase_id)
 
 
-def stop_instances(run_match) -> AggregatedResponse[StopResponse]:
+def stop_instances(run_match) -> CollectedResponses[StopResponse]:
     """
     This function stops job instances that match the provided criteria.
 
@@ -131,7 +131,7 @@ def stop_instances(run_match) -> AggregatedResponse[StopResponse]:
         return c.stop_instances(run_match)
 
 
-def fetch_output(run_match=None) -> AggregatedResponse[OutputResponse]:
+def fetch_output(run_match=None) -> CollectedResponses[OutputResponse]:
     """
     This function requests the last lines of the output from job instances that optionally match the provided criteria.
 
@@ -149,7 +149,7 @@ def fetch_output(run_match=None) -> AggregatedResponse[OutputResponse]:
         return c.fetch_output(run_match)
 
 
-def signal_dispatch(instance_match, queue_id) -> AggregatedResponse[SignalDispatchResponse]:
+def signal_dispatch(instance_match, queue_id) -> CollectedResponses[SignalDispatchResponse]:
     with api_client() as c:
         return c.signal_dispatch(instance_match, queue_id)
 
