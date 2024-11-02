@@ -57,18 +57,18 @@ class InstanceMetadataCriterion(MatchCriteria[InstanceMetadata]):
         return cls('', '', True, MatchingStrategy.ALWAYS_FALSE)
 
     @staticmethod
-    def for_run(entity_run):
+    def for_run(job_run):
         # TODO Use identity ID
         """
         Creates a MetadataCriterion object that matches the provided entity run.
 
         Args:
-            entity_run: The specific entity run to create a match for.
+            job_run: The specific entity run to create a match for.
 
         Returns:
             InstanceMetadataCriterion: A criteria object that will match the given job instance.
         """
-        return InstanceMetadataCriterion(entity_id=entity_run.metadata.entity_id, run_id=entity_run.metadata.run_id)
+        return InstanceMetadataCriterion(entity_id=job_run.metadata.entity_id, run_id=job_run.metadata.run_id)
 
     @classmethod
     def parse_pattern(cls, pattern: str, strategy=MatchingStrategy.EXACT):
@@ -135,15 +135,15 @@ class InstanceMetadataCriterion(MatchCriteria[InstanceMetadata]):
         return op(not self.entity_id or self.strategy(entity_id, self.entity_id),
                   not self.run_id or self.strategy(run_id, self.run_id))
 
-    def matches_run(self, entity_run):
+    def matches_run(self, job_run):
         """
         Args:
-            entity_run: Job instance to be matched
+            job_run: Job instance to be matched
 
         Returns:
             bool: Whether the provided job instance matches this criteria
         """
-        return self.matches(entity_run.metadata)
+        return self.matches(job_run.metadata)
 
     def __str__(self):
         op = "+" if self.match_both_ids else "|"
@@ -474,36 +474,36 @@ class EntityRunCriteria(MatchCriteria[EntityRun]):
 
         return self
 
-    def matches_metadata(self, entity_run):
-        return not self.metadata_criteria or any(c(entity_run.metadata) for c in self.metadata_criteria)
+    def matches_metadata(self, job_run):
+        return not self.metadata_criteria or any(c(job_run.metadata) for c in self.metadata_criteria)
 
-    def matches_interval(self, entity_run):
-        return not self.interval_criteria or any(c(entity_run.lifecycle) for c in self.interval_criteria)
+    def matches_interval(self, job_run):
+        return not self.interval_criteria or any(c(job_run.lifecycle) for c in self.interval_criteria)
 
-    def match_phases(self, entity_run):
-        return not self.phase_criteria or any(c(p) for c in self.phase_criteria for p in entity_run.phases)
+    def match_phases(self, job_run):
+        return not self.phase_criteria or any(c(p) for c in self.phase_criteria for p in job_run.phases)
 
-    def matches_termination(self, entity_run):
-        return not self.termination_criteria or any(c(entity_run.termination) for c in self.termination_criteria)
+    def matches_termination(self, job_run):
+        return not self.termination_criteria or any(c(job_run.termination) for c in self.termination_criteria)
 
     def matches_jobs(self, job_run):
         return not self.jobs or job_run.entity_id in self.jobs
 
-    def __call__(self, entity_run):
-        return self.matches(entity_run)
+    def __call__(self, job_run):
+        return self.matches(job_run)
 
-    def matches(self, entity_run):
+    def matches(self, job_run):
         """
         Args:
-            entity_run (JobInstance): Job instance to match.
+            job_run (JobInstance): Job instance to match.
         Returns:
             bool: Whether the provided job instance matches all criteria.
         """
-        return self.matches_metadata(entity_run) \
-            and self.matches_interval(entity_run) \
-            and self.match_phases(entity_run) \
-            and self.matches_termination(entity_run) \
-            and self.matches_jobs(entity_run)
+        return self.matches_metadata(job_run) \
+            and self.matches_interval(job_run) \
+            and self.match_phases(job_run) \
+            and self.matches_termination(job_run) \
+            and self.matches_jobs(job_run)
 
     def __bool__(self):
         return (bool(self.metadata_criteria)
