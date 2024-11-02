@@ -313,20 +313,19 @@ class SQLite(Persistence, InstanceTransitionObserver):
         """
 
         def to_tuple(r):
-            lifecycle = r.run.lifecycle
             return (r.job_id,
                     r.run_id,
                     r.metadata.instance_id,
                     json.dumps(r.metadata.user_params) if r.metadata.user_params else None,
-                    format_dt_sql(lifecycle.created_at),
-                    format_dt_sql(lifecycle.ended_at),
-                    round(lifecycle.total_executing_time.total_seconds(), 3) if lifecycle.total_executing_time
+                    format_dt_sql(r.lifecycle.created_at),
+                    format_dt_sql(r.lifecycle.ended_at),
+                    round(r.lifecycle.total_executing_time.total_seconds(), 3) if r.lifecycle.total_executing_time
                     else None,
-                    json.dumps([p.serialize() for p in r.run.phases]),
-                    json.dumps(lifecycle.serialize()),
-                    r.run.termination.status.value,
-                    json.dumps(r.run.termination.failure.serialize()) if r.run.termination.failure else None,
-                    json.dumps(r.run.termination.error.serialize()) if r.run.termination.error else None,
+                    json.dumps([p.serialize() for p in r.phases]),
+                    json.dumps(r.lifecycle.serialize()),
+                    r.termination.status.value,
+                    json.dumps(r.termination.failure.serialize()) if r.termination.failure else None,
+                    json.dumps(r.termination.error.serialize()) if r.termination.error else None,
                     json.dumps(r.task.serialize()) if r.task else None,
                     None,  # TODO Warnings as a separate column?
                     None

@@ -11,16 +11,21 @@ import datetime
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import timedelta
-from enum import Enum
+from enum import Enum, auto
 from threading import Thread
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 
 from runtools.runcore.output import Mode
 from runtools.runcore.run import TerminationStatus, RunState, Run, PhaseRun, PhaseInfo, InstanceMetadata, \
-    EntityRun, JobInstanceMetadata
+    EntityRun, JobInstanceMetadata, Lifecycle, TerminationInfo, PhaseKey
 from runtools.runcore.track import TrackedTask
 from runtools.runcore.util import MatchingStrategy, format_dt_iso
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
+
+
+class JobType(Enum):
+    BATCH = auto()
+    LONG_RUNNING = auto()
 
 
 class Job:
@@ -35,7 +40,7 @@ class Job:
         _properties (Dict[str, str]): Additional properties or metadata associated with the job.
     """
 
-    def __init__(self, job_id: str, properties: Dict[str, str] = None):
+    def __init__(self, job_id: str, job_type: JobType, properties: Dict[str, str] = None):
         """
         Initialize a new Job object.
 
@@ -44,6 +49,7 @@ class Job:
             properties (Dict[str, str], optional): Additional properties or metadata. Defaults to an empty dictionary.
         """
         self._id = job_id
+        self._type = job_type
         self._properties = properties or {}
 
     @property
@@ -55,6 +61,16 @@ class Job:
             str: The job's unique identifier.
         """
         return self._id
+
+    @property
+    def type(self) -> JobType:
+        """
+        Returns the type of the job.
+
+        Returns:
+            str: The job's type.
+        """
+        return self._type
 
     @property
     def properties(self) -> Dict[str, str]:
@@ -70,11 +86,11 @@ class Job:
         """Checks if two Job objects are equal based on their unique ID and properties."""
         if not isinstance(other, Job):
             return False
-        return self._id == other._id and self._properties == other._properties
+        return self._id == other._id and self._type == other._type and self._properties == other._properties
 
     def __hash__(self) -> int:
         """Returns the hash based on the job's unique ID and properties."""
-        return hash((self._id, frozenset(self._properties.items())))
+        return hash((self._id, self._type, frozenset(self._properties.items())))
 
 
 class JobMatchingCriteria:
@@ -280,7 +296,7 @@ class JobInstance(abc.ABC):
         """pass"""
 
     @abc.abstractmethod
-    def job_run_info(self):
+    def job_run(self):
         """
         Creates a consistent, thread-safe snapshot of the job instance's current state.
 
@@ -371,26 +387,27 @@ class JobInstance(abc.ABC):
 
 
 @dataclass(frozen=True)
-class JobRun(EntityRun[JobInstanceMetadata]):
+class JobRun:
     """
     Immutable snapshot of job instance
     """
-
+    metadata: JobInstanceMetadata
+    _run: Run  # private field
     """Detailed information about the run in the form of the tracked task"""
-    task: TrackedTask
+    task: Optional[TrackedTask] = None
 
     @classmethod
-    def deserialize(cls, as_dict):
+    def deserialize(cls, as_dict: Dict[str, Any]):
         return cls(
-            JobInstanceMetadata.deserialize(as_dict['metadata']),
-            Run.deserialize(as_dict['run']),
-            TrackedTask.deserialize(as_dict['task']) if as_dict.get('task') else None,
+            metadata=JobInstanceMetadata.deserialize(as_dict['metadata']),
+            _run=Run.deserialize(as_dict['run']),
+            task=TrackedTask.deserialize(as_dict['task']) if as_dict.get('task') else None,
         )
 
     def serialize(self) -> Dict[str, Any]:
         return {
             "metadata": self.metadata.serialize(),
-            "run": self.run.serialize(),
+            "run": self._run.serialize(),
             "task": self.task.serialize() if self.task else None,
         }
 
@@ -410,6 +427,28 @@ class JobRun(EntityRun[JobInstanceMetadata]):
         """
         return self.metadata.run_id
 
+    @property
+    def phases(self) -> Tuple[PhaseInfo]:
+        return self._run.phases
+
+    @property
+    def current_phase(self) -> Optional[PhaseInfo]:
+        return self._run.current_phase
+
+    @property
+    def lifecycle(self) -> Lifecycle:
+        return self._run.lifecycle
+
+    @property
+    def termination(self) -> Optional[TerminationInfo]:
+        return self._run.termination
+
+    def in_protected_phase(self, protection_phase_type: str | Enum, protection_id: str) -> bool:
+        return self._run.in_protected_phase(protection_phase_type, protection_id)
+
+    def protected_phases(self, protection_phase_type: str | Enum, protection_id: str) -> List[PhaseKey]:
+        return self._run.protected_phases(protection_phase_type, protection_id)
+
 
 class JobRuns(list):
     """
@@ -424,13 +463,13 @@ class JobRuns(list):
         return [r.job_id for r in self]
 
     def in_phase(self, phase) -> 'JobRuns':
-        return JobRuns([job_run for job_run in self if job_run.run.lifecycle.current_phase is phase])
+        return JobRuns([job_run for job_run in self if job_run.lifecycle.current_phase is phase])
 
     def in_protected_phase(self, protection_type, protection_id):
-        return JobRuns([job_run for job_run in self if job_run.run.in_protected_phase(protection_type, protection_id)])
+        return JobRuns([job_run for job_run in self if job_run.in_protected_phase(protection_type, protection_id)])
 
     def in_state(self, state):
-        return [job_run for job_run in self if job_run.run.lifecycle.run_state is state]
+        return [job_run for job_run in self if job_run.lifecycle.run_state is state]
 
     @property
     def scheduled(self):
@@ -456,7 +495,7 @@ class JobRuns(list):
         return {"runs": [run.serialize(include_empty=include_empty) for run in self]}
 
 
-# PhaseTransitionObserver
+# TODO PhaseTransitionObserver
 class InstanceTransitionObserver(abc.ABC):
 
     @abc.abstractmethod

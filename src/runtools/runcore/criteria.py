@@ -478,13 +478,13 @@ class EntityRunCriteria(MatchCriteria[EntityRun]):
         return not self.metadata_criteria or any(c(entity_run.metadata) for c in self.metadata_criteria)
 
     def matches_interval(self, entity_run):
-        return not self.interval_criteria or any(c(entity_run.run.lifecycle) for c in self.interval_criteria)
+        return not self.interval_criteria or any(c(entity_run.lifecycle) for c in self.interval_criteria)
 
     def match_phases(self, entity_run):
-        return not self.phase_criteria or any(c(p) for c in self.phase_criteria for p in entity_run.run.phases)
+        return not self.phase_criteria or any(c(p) for c in self.phase_criteria for p in entity_run.phases)
 
     def matches_termination(self, entity_run):
-        return not self.termination_criteria or any(c(entity_run.run.termination) for c in self.termination_criteria)
+        return not self.termination_criteria or any(c(entity_run.termination) for c in self.termination_criteria)
 
     def matches_jobs(self, job_run):
         return not self.jobs or job_run.entity_id in self.jobs

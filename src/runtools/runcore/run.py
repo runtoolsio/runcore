@@ -637,6 +637,7 @@ class Run:
             "termination": self.termination.serialize() if self.termination else None,
         }
 
+    @property
     def current_phase(self):
         current_phase_key = self.lifecycle.current_phase
         if not current_phase_key:
