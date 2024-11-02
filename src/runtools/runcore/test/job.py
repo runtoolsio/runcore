@@ -150,7 +150,7 @@ class FakeJobInstanceBuilder(AbstractBuilder):
     def build(self) -> FakeJobInstance:
         lifecycle = Lifecycle()
         phaser = FakePhaser(self.phases, lifecycle)
-        return FakeJobInstance(self.metadata.entity_id, phaser, lifecycle, run_id=self.metadata.run_id,
+        return FakeJobInstance(self.metadata.job_id, phaser, lifecycle, run_id=self.metadata.run_id,
                                **self.metadata.user_params)
 
 

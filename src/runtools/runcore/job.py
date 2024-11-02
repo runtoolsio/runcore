@@ -17,7 +17,7 @@ from typing import Dict, Any, List, Optional, Tuple
 
 from runtools.runcore.output import Mode
 from runtools.runcore.run import TerminationStatus, RunState, Run, PhaseRun, PhaseInfo, InstanceMetadata, \
-    EntityRun, JobInstanceMetadata, Lifecycle, TerminationInfo, PhaseKey
+    JobInstanceMetadata, Lifecycle, TerminationInfo, PhaseKey
 from runtools.runcore.track import TrackedTask
 from runtools.runcore.util import MatchingStrategy, format_dt_iso
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
@@ -259,7 +259,7 @@ class JobInstance(abc.ABC):
         Returns:
             str: Job part of the instance identifier.
         """
-        return self.metadata.entity_id
+        return self.metadata.job_id
 
     @property
     def run_id(self):
@@ -267,7 +267,7 @@ class JobInstance(abc.ABC):
         Returns:
             str: Run part of the instance identifier.
         """
-        return self.metadata.entity_id
+        return self.metadata.job_id
 
     @property
     @abc.abstractmethod
@@ -417,7 +417,7 @@ class JobRun:
         Returns:
             str: Job part of the instance identifier.
         """
-        return self.metadata.entity_id
+        return self.metadata.job_id
 
     @property
     def run_id(self) -> str:

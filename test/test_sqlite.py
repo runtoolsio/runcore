@@ -3,7 +3,7 @@ from datetime import datetime as dt
 
 import pytest
 
-from runtools.runcore.criteria import LifecycleCriterion, EntityRunCriteria, \
+from runtools.runcore.criteria import LifecycleCriterion, JobRunCriteria, \
     parse_criteria
 from runtools.runcore.db.sqlite import SQLite
 from runtools.runcore.run import TerminationStatus
@@ -104,17 +104,17 @@ def test_interval(sut):
     sut.store_job_runs(run('j3', created=dt(2023, 4, 22), completed=dt(2023, 4, 22, 23, 59, 58)))
 
     ic = LifecycleCriterion(ended_from=dt(2023, 4, 23))
-    jobs = sut.read_history_runs(EntityRunCriteria(interval_criteria=ic))
+    jobs = sut.read_history_runs(JobRunCriteria(interval_criteria=ic))
     assert jobs.job_ids == ['j1']
 
     ic = LifecycleCriterion(ended_to=dt(2023, 4, 22, 23, 59, 59))
-    jobs = sut.read_history_runs(EntityRunCriteria(interval_criteria=ic))
+    jobs = sut.read_history_runs(JobRunCriteria(interval_criteria=ic))
     assert sorted(jobs.job_ids) == ['j2', 'j3']
 
     ic = LifecycleCriterion(ended_to=dt(2023, 4, 22, 23, 59, 59), ended_to_included=False)
-    jobs = sut.read_history_runs(EntityRunCriteria(interval_criteria=ic))
+    jobs = sut.read_history_runs(JobRunCriteria(interval_criteria=ic))
     assert jobs.job_ids == ['j3']
 
     ic = LifecycleCriterion(ended_from=dt(2023, 4, 22, 23, 59, 59), created_to=dt(2023, 4, 23))
-    jobs = sut.read_history_runs(EntityRunCriteria(interval_criteria=ic))
+    jobs = sut.read_history_runs(JobRunCriteria(interval_criteria=ic))
     assert sorted(jobs.job_ids) == ['j1', 'j2']

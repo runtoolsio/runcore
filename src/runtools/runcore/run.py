@@ -682,21 +682,17 @@ def unique_phases_to_dict(phases) -> Dict[PhaseKey, Phase]:
     return key_to_phase
 
 
-class CommonEntities(Enum):
-    JOB = 'job'
-    SERVICE = 'service'
-
-
 @dataclass
-class InstanceMetadata(ABC):
+class JobInstanceMetadata(ABC):
     """
     A dataclass that contains metadata information related to a specific job run. This object is designed
     to represent essential information about a job run in a compact and serializable format. By using this object
     instead of a full `JobRun` snapshot, you can reduce the amount of data transmitted when sending information
     across a network or between different parts of a system.
+    TODO Add job_type
 
     Attributes:
-        entity_id (str):
+        job_id (str):
             The unique identifier of the job associated with the instance.
         run_id (str):
             The unique identifier of the job instance run.
@@ -710,7 +706,7 @@ class InstanceMetadata(ABC):
             A dictionary containing user-defined parameters associated with the instance.
             These are arbitrary parameters set by the user, and they do not affect the functionality.
     """
-    entity_id: str
+    job_id: str
     run_id: str
     instance_id: str
     system_parameters: Dict[str, Any]
@@ -718,52 +714,28 @@ class InstanceMetadata(ABC):
 
     def serialize(self) -> Dict[str, Any]:
         return {
-            "entity_id": self.entity_id,
-            "entity_type": self.entity_type,
+            "job_id": self.job_id,
             "run_id": self.run_id,
             "instance_id": self.instance_id,
             "system_parameters": self.system_parameters,
             "user_params": self.user_params,
         }
 
-    @property
-    @abstractmethod
-    def entity_type(self):
-        pass
-
-    def contains_system_parameters(self, *params):
-        return all(param in self.system_parameters for param in params)
-
-    def __repr__(self) -> str:
-        return f"{self.entity_id}@{self.run_id}:{self.instance_id}"
-
-
-class JobInstanceMetadata(InstanceMetadata):
-
     @classmethod
     def deserialize(cls, as_dict):
         return cls(
-            as_dict['entity_id'],
+            as_dict['job_id'],
             as_dict['run_id'],
             as_dict['instance_id'],
             as_dict['system_parameters'],
             as_dict['user_params'],
         )
 
-    @property
-    def entity_type(self):
-        return CommonEntities.JOB.value
+    def contains_system_parameters(self, *params):
+        return all(param in self.system_parameters for param in params)
 
-
-M = TypeVar('M', bound=InstanceMetadata)
-
-
-@dataclass(frozen=True)
-class EntityRun(Generic[M]):
-    """Descriptive information about this run"""
-    metadata: M
-    """The snapshot of the run represented by this instance"""
-    run: Run
+    def __repr__(self) -> str:
+        return f"{self.job_id}@{self.run_id}:{self.instance_id}"
 
 
 P = TypeVar('P')

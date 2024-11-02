@@ -49,13 +49,13 @@ def _build_where_clause(run_match, alias=''):
 
         conditions = []
         op = ' AND ' if c.match_both_ids else ' OR '
-        if c.entity_id:
+        if c.job_id:
             if c.strategy == MatchingStrategy.PARTIAL:
-                conditions.append(f'{alias}job_id GLOB "*{c.entity_id}*"')
+                conditions.append(f'{alias}job_id GLOB "*{c.job_id}*"')
             elif c.strategy == MatchingStrategy.FN_MATCH:
-                conditions.append(f'{alias}job_id GLOB "{c.entity_id}"')
+                conditions.append(f'{alias}job_id GLOB "{c.job_id}"')
             elif c.strategy == MatchingStrategy.EXACT:
-                conditions.append(f'{alias}job_id = "{c.entity_id}"')
+                conditions.append(f'{alias}job_id = "{c.job_id}"')
             else:
                 raise ValueError(f"Matching strategy {c.strategy} is not supported")
         if c.run_id:

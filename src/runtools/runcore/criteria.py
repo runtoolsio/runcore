@@ -10,7 +10,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, Any, Set, Optional, TypeVar, Generic, Iterable
 
-from runtools.runcore.run import Outcome, Lifecycle, TerminationInfo, EntityRun, InstanceMetadata, RunState, \
+from runtools.runcore import JobRun
+from runtools.runcore.run import Outcome, Lifecycle, TerminationInfo, InstanceMetadata, RunState, \
     PhaseInfo, PhaseKey
 from runtools.runcore.util import MatchingStrategy, and_, or_, parse, single_day_range, days_range, \
     format_dt_iso, to_list, DateTimeRange, parse_range_to_utc
@@ -38,12 +39,12 @@ class InstanceMetadataCriterion(MatchCriteria[InstanceMetadata]):
     If all fields are empty, the matching strategy defaults to `MatchingStrategy.ALWAYS_TRUE`.
 
     Attributes:
-        entity_id (str): The pattern for job ID matching. If empty, the field is ignored.
+        job_id (str): The pattern for job ID matching. If empty, the field is ignored.
         run_id (str): The pattern for run ID matching. If empty, the field is ignored.
         match_both_ids (bool): If False, a match with either job_id or instance_id is sufficient. Default is True.
         strategy (MatchingStrategy): The strategy to use for matching. Default is `MatchingStrategy.EXACT`.
     """
-    entity_id: str
+    job_id: str
     run_id: str = ''
     match_both_ids: bool = True
     strategy: MatchingStrategy = MatchingStrategy.EXACT
@@ -60,25 +61,25 @@ class InstanceMetadataCriterion(MatchCriteria[InstanceMetadata]):
     def for_run(job_run):
         # TODO Use identity ID
         """
-        Creates a MetadataCriterion object that matches the provided entity run.
+        Creates a MetadataCriterion object that matches the provided job run.
 
         Args:
-            job_run: The specific entity run to create a match for.
+            job_run: The specific job run to create a match for.
 
         Returns:
             InstanceMetadataCriterion: A criteria object that will match the given job instance.
         """
-        return InstanceMetadataCriterion(entity_id=job_run.metadata.entity_id, run_id=job_run.metadata.run_id)
+        return InstanceMetadataCriterion(job_id=job_run.metadata.job_id, run_id=job_run.metadata.run_id)
 
     @classmethod
     def parse_pattern(cls, pattern: str, strategy=MatchingStrategy.EXACT):
         """
         Parses the provided pattern and returns the corresponding JobRunIdMatchCriteria object.
-        The pattern can contain the `@` token to denote `entity_id` and `instance_id` parts in this format:
-        `{entity_id}@{instance_id}`. If the token is not included, then the pattern is matched against both IDs,
+        The pattern can contain the `@` token to denote `job_id` and `instance_id` parts in this format:
+        `{job_id}@{instance_id}`. If the token is not included, then the pattern is matched against both IDs,
         and a match on any fields results in a positive match.
 
-        For matching only `entity_id`, use the format: `{entity_id}@`
+        For matching only `job_id`, use the format: `{job_id}@`
         For matching only `instance_id`, use the format: `@{instance_id}`
 
         Args:
@@ -86,15 +87,15 @@ class InstanceMetadataCriterion(MatchCriteria[InstanceMetadata]):
             strategy (MatchingStrategy, optional): The strategy to use for matching. Default is `MatchingStrategy.EXACT`
 
         Returns:
-            InstanceMetadataCriterion: A new IDMatchCriteria object with the parsed entity_id, instance_id, and strategy.
+            InstanceMetadataCriterion: A new IDMatchCriteria object with the parsed job_id, instance_id, and strategy.
         """
         if "@" in pattern:
-            entity_id, instance_id = pattern.split("@")
+            job_id, instance_id = pattern.split("@")
             match_both = True
         else:
-            entity_id = instance_id = pattern
+            job_id = instance_id = pattern
             match_both = False
-        return cls(entity_id, instance_id, match_both, strategy)
+        return cls(job_id, instance_id, match_both, strategy)
 
     @staticmethod
     def parse_patterns(patterns: Iterable[str], strategy=MatchingStrategy.EXACT):
@@ -102,12 +103,12 @@ class InstanceMetadataCriterion(MatchCriteria[InstanceMetadata]):
 
     @classmethod
     def deserialize(cls, as_dict):
-        return cls(as_dict['entity_id'], as_dict['run_id'], as_dict['match_both_ids'],
+        return cls(as_dict['job_id'], as_dict['run_id'], as_dict['match_both_ids'],
                    MatchingStrategy[as_dict['strategy'].upper()])
 
     def serialize(self):
         return {
-            'entity_id': self.entity_id,
+            'job_id': self.job_id,
             'run_id': self.run_id,
             'match_both_ids': self.match_both_ids,
             'strategy': self.strategy.name.lower(),
@@ -130,9 +131,9 @@ class InstanceMetadataCriterion(MatchCriteria[InstanceMetadata]):
             bool: Whether the provided metadata matches this criteria
         """
         op = self._op()
-        entity_id = metadata.entity_id
+        job_id = metadata.job_id
         run_id = metadata.run_id
-        return op(not self.entity_id or self.strategy(entity_id, self.entity_id),
+        return op(not self.job_id or self.strategy(job_id, self.job_id),
                   not self.run_id or self.strategy(run_id, self.run_id))
 
     def matches_run(self, job_run):
@@ -147,7 +148,7 @@ class InstanceMetadataCriterion(MatchCriteria[InstanceMetadata]):
 
     def __str__(self):
         op = "+" if self.match_both_ids else "|"
-        ids = f"{self.entity_id}{op}{self.run_id}"
+        ids = f"{self.job_id}{op}{self.run_id}"
         return f"{ids} {self.strategy.name}"
 
 
@@ -385,10 +386,10 @@ class TerminationCriterion(MatchCriteria[TerminationInfo]):
 
 
 def parse_criteria(pattern: str, strategy: MatchingStrategy = MatchingStrategy.EXACT):
-    return EntityRunCriteria.from_instance_pattern(pattern, strategy)
+    return JobRunCriteria.from_instance_pattern(pattern, strategy)
 
 
-class EntityRunCriteria(MatchCriteria[EntityRun]):
+class JobRunCriteria(MatchCriteria[JobRun]):
     """
     TODO Rename to RunCriteria ?
     This object aggregates various criteria for querying and matching job instances.
@@ -398,7 +399,7 @@ class EntityRunCriteria(MatchCriteria[EntityRun]):
         jobs (List[Job]):
             A list of specific job IDs for matching.
             An instance matches if its job ID is in this list.
-        job_run_id_criteria (List[EntityRunIdCriterion]):
+        job_run_id_criteria (List[JobRunIdCriterion]):
             A list of criteria for matching based on job run IDs.
             An instance matches if it meets any of the criteria in this list.
         interval_criteria (List[IntervalCriterion]):
@@ -487,7 +488,7 @@ class EntityRunCriteria(MatchCriteria[EntityRun]):
         return not self.termination_criteria or any(c(job_run.termination) for c in self.termination_criteria)
 
     def matches_jobs(self, job_run):
-        return not self.jobs or job_run.entity_id in self.jobs
+        return not self.jobs or job_run.job_id in self.jobs
 
     def __call__(self, job_run):
         return self.matches(job_run)
