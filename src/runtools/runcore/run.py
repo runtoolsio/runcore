@@ -17,7 +17,7 @@ from copy import copy
 from dataclasses import dataclass
 from enum import Enum, EnumMeta
 from threading import Event, Condition
-from typing import Optional, List, Dict, Any, TypeVar, Callable, Tuple, Iterable, Generic, NamedTuple
+from typing import Optional, List, Dict, Any, TypeVar, Callable, Tuple, Iterable, NamedTuple
 
 from runtools.runcore import util
 from runtools.runcore.common import InvalidStateError
@@ -680,62 +680,6 @@ def unique_phases_to_dict(phases) -> Dict[PhaseKey, Phase]:
             raise ValueError(f"Duplicate phase found: {phase.key}")
         key_to_phase[phase.key] = phase
     return key_to_phase
-
-
-@dataclass
-class JobInstanceMetadata(ABC):
-    """
-    A dataclass that contains metadata information related to a specific job run. This object is designed
-    to represent essential information about a job run in a compact and serializable format. By using this object
-    instead of a full `JobRun` snapshot, you can reduce the amount of data transmitted when sending information
-    across a network or between different parts of a system.
-    TODO Add job_type
-
-    Attributes:
-        job_id (str):
-            The unique identifier of the job associated with the instance.
-        run_id (str):
-            The unique identifier of the job instance run.
-        instance_id (str):
-            The reference identifier of the job instance.
-        system_parameters (Dict[str, Any]):
-            A dictionary containing system parameters for the job instance.
-            These parameters are implementation-specific and contain information needed by the system to
-            perform certain tasks or enable specific features.
-        user_params (Dict[str, Any]):
-            A dictionary containing user-defined parameters associated with the instance.
-            These are arbitrary parameters set by the user, and they do not affect the functionality.
-    """
-    job_id: str
-    run_id: str
-    instance_id: str
-    system_parameters: Dict[str, Any]
-    user_params: Dict[str, Any]
-
-    def serialize(self) -> Dict[str, Any]:
-        return {
-            "job_id": self.job_id,
-            "run_id": self.run_id,
-            "instance_id": self.instance_id,
-            "system_parameters": self.system_parameters,
-            "user_params": self.user_params,
-        }
-
-    @classmethod
-    def deserialize(cls, as_dict):
-        return cls(
-            as_dict['job_id'],
-            as_dict['run_id'],
-            as_dict['instance_id'],
-            as_dict['system_parameters'],
-            as_dict['user_params'],
-        )
-
-    def contains_system_parameters(self, *params):
-        return all(param in self.system_parameters for param in params)
-
-    def __repr__(self) -> str:
-        return f"{self.job_id}@{self.run_id}:{self.instance_id}"
 
 
 P = TypeVar('P')

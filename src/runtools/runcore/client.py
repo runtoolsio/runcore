@@ -10,8 +10,8 @@ from json import JSONDecodeError
 from typing import List, Any, Dict, NamedTuple, Optional, TypeVar, Generic, Callable, Tuple
 
 from runtools.runcore import paths
-from runtools.runcore.job import JobRun
-from runtools.runcore.run import InstanceMetadata, JobInstanceMetadata
+from runtools.runcore.job import JobRun, JobInstanceMetadata
+from runtools.runcore.run import InstanceMetadata
 from runtools.runcore.util.socket import SocketClient, ServerResponse, Error
 
 log = logging.getLogger(__name__)

@@ -11,9 +11,9 @@ from typing import List
 
 from runtools.runcore import paths
 from runtools.runcore.db import SortCriteria, Persistence
-from runtools.runcore.job import JobStats, JobRun, JobRuns, InstanceTransitionObserver
+from runtools.runcore.job import JobStats, JobRun, JobRuns, InstanceTransitionObserver, JobInstanceMetadata
 from runtools.runcore.run import RunState, Lifecycle, PhaseInfo, RunFailure, RunError, Run, TerminationInfo, \
-    TerminationStatus, Outcome, JobInstanceMetadata
+    TerminationStatus, Outcome
 from runtools.runcore.track import TrackedTask
 from runtools.runcore.util import MatchingStrategy, format_dt_sql, parse_dt_sql
 

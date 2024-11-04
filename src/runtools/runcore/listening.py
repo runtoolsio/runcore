@@ -5,8 +5,8 @@ from abc import abstractmethod
 from json import JSONDecodeError
 
 from runtools.runcore import util, paths
-from runtools.runcore.job import JobRun, InstanceTransitionObserver, InstanceOutputObserver
-from runtools.runcore.run import PhaseRun, PhaseInfo, JobInstanceMetadata
+from runtools.runcore.job import JobRun, InstanceTransitionObserver, InstanceOutputObserver, JobInstanceMetadata
+from runtools.runcore.run import PhaseRun, PhaseInfo
 from runtools.runcore.util.observer import ObservableNotification
 from runtools.runcore.util.socket import SocketServer
 

@@ -17,7 +17,7 @@ from typing import Dict, Any, List, Optional, Tuple
 
 from runtools.runcore.output import Mode
 from runtools.runcore.run import TerminationStatus, RunState, Run, PhaseRun, PhaseInfo, InstanceMetadata, \
-    JobInstanceMetadata, Lifecycle, TerminationInfo, PhaseKey
+    Lifecycle, TerminationInfo, PhaseKey
 from runtools.runcore.track import TrackedTask
 from runtools.runcore.util import MatchingStrategy, format_dt_iso
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
@@ -228,6 +228,62 @@ class JobStats:
         return result
 
 
+@dataclass
+class JobInstanceMetadata(ABC):
+    """
+    A dataclass that contains metadata information related to a specific job run. This object is designed
+    to represent essential information about a job run in a compact and serializable format. By using this object
+    instead of a full `JobRun` snapshot, you can reduce the amount of data transmitted when sending information
+    across a network or between different parts of a system.
+    TODO Add job_type
+
+    Attributes:
+        job_id (str):
+            The unique identifier of the job associated with the instance.
+        run_id (str):
+            The unique identifier of the job instance run.
+        instance_id (str):
+            The reference identifier of the job instance.
+        system_parameters (Dict[str, Any]):
+            A dictionary containing system parameters for the job instance.
+            These parameters are implementation-specific and contain information needed by the system to
+            perform certain tasks or enable specific features.
+        user_params (Dict[str, Any]):
+            A dictionary containing user-defined parameters associated with the instance.
+            These are arbitrary parameters set by the user, and they do not affect the functionality.
+    """
+    job_id: str
+    run_id: str
+    instance_id: str
+    system_parameters: Dict[str, Any]
+    user_params: Dict[str, Any]
+
+    def serialize(self) -> Dict[str, Any]:
+        return {
+            "job_id": self.job_id,
+            "run_id": self.run_id,
+            "instance_id": self.instance_id,
+            "system_parameters": self.system_parameters,
+            "user_params": self.user_params,
+        }
+
+    @classmethod
+    def deserialize(cls, as_dict):
+        return cls(
+            as_dict['job_id'],
+            as_dict['run_id'],
+            as_dict['instance_id'],
+            as_dict['system_parameters'],
+            as_dict['user_params'],
+        )
+
+    def contains_system_parameters(self, *params):
+        return all(param in self.system_parameters for param in params)
+
+    def __repr__(self) -> str:
+        return f"{self.job_id}@{self.run_id}:{self.instance_id}"
+
+
 class JobInstance(abc.ABC):
     """
     The `JobInstance` class is a central component of this package. It denotes a single occurrence of a job.
@@ -239,18 +295,18 @@ class JobInstance(abc.ABC):
 
     @property
     @abc.abstractmethod
-    def instance_id(self):
+    def metadata(self):
         """
         Returns:
-            str: Instance reference/identity identifier.
+            InstanceMetadata: Identifiable and descriptive information about this instance.
         """
 
     @property
     @abc.abstractmethod
-    def metadata(self):
+    def instance_id(self):
         """
         Returns:
-            runtools.runcore.run.InstanceMetadata: Descriptive information about this instance.
+            str: Instance reference/identity identifier.
         """
 
     @property

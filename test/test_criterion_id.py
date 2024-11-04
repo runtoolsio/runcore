@@ -1,7 +1,7 @@
 from operator import eq
 
 from runtools.runcore.criteria import InstanceMetadataCriterion
-from runtools.runcore.run import JobInstanceMetadata
+from runtools.runcore.job import JobInstanceMetadata
 
 
 def job_run_id(job_id, run_id):

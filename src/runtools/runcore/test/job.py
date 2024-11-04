@@ -3,10 +3,10 @@ from typing import Type, Optional
 
 from runtools.runcore import util
 from runtools.runcore.job import JobInstance, JobRun, InstanceTransitionObserver, \
-    InstanceOutputObserver
+    InstanceOutputObserver, JobInstanceMetadata
 from runtools.runcore.output import InMemoryOutput, Mode
 from runtools.runcore.run import PhaseRun, TerminationInfo, Lifecycle, RunState, PhaseInfo, Run, \
-    TerminationStatus, RunFailure, Phase, P, JobInstanceMetadata, PhaseKey
+    TerminationStatus, RunFailure, Phase, P, PhaseKey
 from runtools.runcore.test.run import FakePhaser
 from runtools.runcore.track import TaskTrackerMem
 from runtools.runcore.util.observer import ObservableNotification, DEFAULT_OBSERVER_PRIORITY
