@@ -18,6 +18,12 @@ _current_persistence = 'sqlite'
 _persistence = {}
 
 
+class InvalidConfiguration(RuntoolsException):
+
+    def __init__(self, message: str):
+        super().__init__(message)
+
+
 def configure(**kwargs):
     persistence_obj = kwargs.get('persistence', {"type": _current_persistence})
     if "type" not in persistence_obj:
@@ -31,10 +37,14 @@ def configure_persistence(persistence_type, persistence_config=None):
     _persistence[_current_persistence] = MappingProxyType(persistence_config or {})
 
 
-class InvalidConfiguration(RuntoolsException):
+class PersistenceDisabledError(Exception):
+    """
+    Raised when attempting an operation while persistence is disabled.
+    Any code using persistence should always catch this exception.
+    """
 
-    def __init__(self, message: str):
-        super().__init__(message)
+    def __init__(self):
+        super().__init__("Cannot perform persistence operation because persistence is disabled.")
 
 
 def persistence(persistence_type=None) -> Persistence:
@@ -53,16 +63,6 @@ def read_history_runs(run_match, sort=SortCriteria.ENDED, *, asc=True, limit=-1,
 def read_history_stats(run_match=None):
     with persistence() as p:
         return p.read_history_stats(run_match)
-
-
-class PersistenceDisabledError(Exception):
-    """
-    Raised when attempting an operation while persistence is disabled.
-    Any code using persistence should always catch this exception.
-    """
-
-    def __init__(self):
-        super().__init__("Cannot perform persistence operation because persistence is disabled.")
 
 
 def api_client():

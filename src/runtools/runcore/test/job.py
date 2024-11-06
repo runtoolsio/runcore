@@ -20,7 +20,7 @@ TERM = PhaseKey('term', 'id')
 class FakePhase(Phase):
 
     def __init__(self, phase_key, run_state):
-        super().__init__(phase_key.type, phase_key.id, run_state)
+        super().__init__(phase_key.id, phase_key.type, run_state)
         self.approved = False
         self.ran = False
         self.stopped = False
@@ -79,14 +79,14 @@ class FakeJobInstance(JobInstance):
 
     @property
     def current_phase(self):
-        return self.phaser.current_phase
+        return self.phaser.current_phase_id
 
     @property
     def phases(self):
         return self.phaser.phases
 
     def get_phase(self, phase_type: Type[P], phase_name: str) -> Optional[P]:
-        return self.phaser.get_phase(phase_type, phase_name)
+        return self.phaser.get_phase(phase_name, phase_type)
 
     def job_run(self) -> JobRun:
         return JobRun(self.metadata, self.phaser.run_info(), self._task_tracker.tracked_task)

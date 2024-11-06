@@ -5,25 +5,33 @@ import pytest
 
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.run import Phaser, TerminationStatus, Phase, RunState, WaitWrapperPhase, \
-    FailedRun, RunError, TerminateRun, PhaseKey, PhaseKeys
+    FailedRun, RunError, TerminateRun, InitPhase, TerminalPhase
 
-INIT = PhaseKeys.INIT
-APPROVAL = PhaseKey('approval', 'id')
-EXEC = PhaseKey('exec', 'id')
-EXEC1 = PhaseKey('exec', '1')
-EXEC2 = PhaseKey('exec', '2')
-PROGRAM = PhaseKey('program', 'id')
-TERM = PhaseKeys.TERMINAL
+INIT = InitPhase.ID
+APPROVAL = 'approval'
+EXEC = 'exec'
+EXEC1 = 'exec1'
+EXEC2 = 'exec2'
+PROGRAM = 'program'
+TERM = TerminalPhase.ID
 
 
 class TestPhase(Phase):
 
-    def __init__(self, key, wait=False):
-        super().__init__(key.type, key.id, RunState.PENDING if wait else RunState.EXECUTING)
+    def __init__(self, phase_id, wait=False):
+        super().__init__(phase_id)
         self.fail = False
         self.failed_run = None
         self.exception = None
         self.wait: Optional[Event] = Event() if wait else None
+
+    @property
+    def type(self) -> str:
+        return 'TEST'
+
+    @property
+    def run_state(self) -> RunState:
+        return RunState.PENDING if self.wait else RunState.EXECUTING
 
     @property
     def stop_status(self):
@@ -68,7 +76,7 @@ def test_run_with_approval(sut_approve):
 
     wait_wrapper.wait(1)
     snapshot = sut_approve.run_info()
-    assert snapshot.lifecycle.current_phase == APPROVAL
+    assert snapshot.lifecycle.current_phase_id == APPROVAL
     assert snapshot.lifecycle.run_state == RunState.PENDING
 
     wait_wrapper.wrapped_phase.wait.set()
@@ -80,7 +88,7 @@ def test_post_prime(sut):
     sut.prime()
 
     snapshot = sut.run_info()
-    assert snapshot.lifecycle.current_phase == INIT
+    assert snapshot.lifecycle.current_phase_id == INIT
     assert snapshot.lifecycle.run_state == RunState.CREATED
 
 
