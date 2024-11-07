@@ -16,8 +16,8 @@ from threading import Thread
 from typing import Dict, Any, List, Optional, Tuple
 
 from runtools.runcore.output import Mode
-from runtools.runcore.run import TerminationStatus, RunState, Run, PhaseRun, PhaseInfo, InstanceMetadata, \
-    Lifecycle, TerminationInfo, PhaseKey
+from runtools.runcore.run import TerminationStatus, RunState, Run, PhaseRun, PhaseInfo, \
+    Lifecycle, TerminationInfo
 from runtools.runcore.track import TrackedTask
 from runtools.runcore.util import MatchingStrategy, format_dt_iso
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
@@ -502,7 +502,7 @@ class JobRun:
     def in_protected_phase(self, protection_phase_type: str | Enum, protection_id: str) -> bool:
         return self._run.in_protected_phase(protection_phase_type, protection_id)
 
-    def protected_phases(self, protection_phase_type: str | Enum, protection_id: str) -> List[PhaseKey]:
+    def protected_phases(self, protection_phase_type: str | Enum, protection_id: str) -> List[str]:
         return self._run.protected_phases(protection_phase_type, protection_id)
 
 
@@ -573,7 +573,7 @@ class InstanceTransitionObserver(abc.ABC):
 class InstanceOutputObserver(abc.ABC):
 
     @abc.abstractmethod
-    def new_instance_output(self, instance_meta: InstanceMetadata, phase: PhaseInfo, output: str, is_err: bool):
+    def new_instance_output(self, instance_meta: JobInstanceMetadata, phase: PhaseInfo, output: str, is_err: bool):
         """TODO"""
 
 

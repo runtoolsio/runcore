@@ -350,8 +350,8 @@ def register_phase_info(phase_type: Enum | str):
 
 @dataclass(frozen=True)
 class PhaseInfo:
-    phase_type: str
     phase_id: str
+    phase_type: str
     run_state: RunState
     phase_name: Optional[str]
     protection_id: Optional[str]
@@ -459,8 +459,8 @@ class Phase(ABC):
         pass
 
     def info(self) -> PhaseInfo:
-        return PhaseInfo(self._phase_type, self._phase_id, self._run_state, self._phase_name, self._protection_id,
-                         self._last_protected_phase)
+        return PhaseInfo(
+            self.id, self.type, self.run_state, self._phase_name, self._protection_id, self._last_protected_phase)
 
     @property
     @abstractmethod
@@ -698,10 +698,15 @@ class AbstractPhaser:
         self.transition_hook: Optional[Callable[[PhaseRun, PhaseRun, int], None]] = None
         self.output_hook: Optional[Callable[[PhaseInfo, str, bool], None]] = None
 
-    def get_phase(self, phase_id, phase_type: str | Enum):
-        if isinstance(phase_type, Enum):
-            phase_type = phase_type.value
-        return self._key_to_phase.get(phase_id)
+    def get_phase(self, phase_id, phase_type: str = None):
+        phase = self._key_to_phase.get(phase_id)
+        if phase is None:
+            raise KeyError(f"No phase found with id '{phase_id}'")
+
+        if phase_type is not None and phase.type != phase_type:
+            raise ValueError(f"Phase type mismatch: Expected '{phase_type}', but found '{phase.type}'")
+
+        return phase
 
     @property
     def phases(self) -> Dict[str, Phase]:

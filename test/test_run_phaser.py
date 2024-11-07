@@ -72,7 +72,7 @@ def test_run_with_approval(sut_approve):
     run_thread = Thread(target=sut_approve.run)
     run_thread.start()
     # The below code will be released once the run starts pending in the approval phase
-    wait_wrapper = sut_approve.get_phase(*APPROVAL)
+    wait_wrapper = sut_approve.get_phase(APPROVAL)
 
     wait_wrapper.wait(1)
     snapshot = sut_approve.run_info()
@@ -126,7 +126,7 @@ def test_stop_in_run(sut_approve):
     run_thread = Thread(target=sut_approve.run)
     run_thread.start()
     # The below code will be released once the run starts pending in the approval phase
-    sut_approve.get_phase(*APPROVAL).wait(1)
+    sut_approve.get_phase(APPROVAL).wait(1)
 
     sut_approve.stop()
     run_thread.join(1)  # Let the run end
@@ -137,7 +137,7 @@ def test_stop_in_run(sut_approve):
 
 
 def test_premature_termination(sut):
-    sut.get_phase(*EXEC1).fail = True
+    sut.get_phase(EXEC1).fail = True
     sut.prime()
     sut.run()
 
@@ -159,7 +159,7 @@ def test_transition_hook(sut):
     assert len(transitions) == 1
     prev_run, new_run, ordinal = transitions[0]
     assert not prev_run
-    assert new_run.phase_key == INIT
+    assert new_run.phase_id == INIT
     assert ordinal == 1
 
     sut.run()
@@ -169,7 +169,7 @@ def test_transition_hook(sut):
 
 def test_failed_run_exception(sut):
     failed_run = FailedRun('FaultType', 'reason')
-    sut.get_phase(*EXEC1).failed_run = failed_run
+    sut.get_phase(EXEC1).failed_run = failed_run
     sut.prime()
     sut.run()
 
@@ -182,7 +182,7 @@ def test_failed_run_exception(sut):
 
 def test_exception(sut):
     exc = InvalidStateError('reason')
-    sut.get_phase(*EXEC1).exception = exc
+    sut.get_phase(EXEC1).exception = exc
     sut.prime()
 
     with pytest.raises(InvalidStateError):
@@ -196,7 +196,7 @@ def test_exception(sut):
 
 
 def test_interruption(sut):
-    sut.get_phase(*EXEC1).exception = KeyboardInterrupt
+    sut.get_phase(EXEC1).exception = KeyboardInterrupt
     sut.prime()
 
     with pytest.raises(KeyboardInterrupt):

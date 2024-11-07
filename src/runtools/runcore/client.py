@@ -11,7 +11,6 @@ from typing import List, Any, Dict, NamedTuple, Optional, TypeVar, Generic, Call
 
 from runtools.runcore import paths
 from runtools.runcore.job import JobRun, JobInstanceMetadata
-from runtools.runcore.run import InstanceMetadata
 from runtools.runcore.util.socket import SocketClient, ServerResponse, Error
 
 log = logging.getLogger(__name__)
@@ -31,7 +30,7 @@ class InstanceResponse(NamedTuple):
         instance_meta: Metadata about the job instance.
         body: The JSON body of the response, as a dictionary.
     """
-    instance_meta: InstanceMetadata
+    instance_meta: JobInstanceMetadata
     body: Dict[str, Any]
 
 
@@ -41,7 +40,7 @@ class APIErrorType(Enum):
     """
 
     SOCKET = auto()  # Errors related to the socket communication
-    INVALID_RESPONSE = auto()  # Errors arising when the API's response cannot be processed correctly
+    INVALID_RESPONSE = auto()  # Errors arising when the API response cannot be processed correctly
     API_SERVER = auto()  # Errors signaled in the standard response indicating a problem on the server side
     API_CLIENT = auto()  # Errors resulting from client-side issues such as invalid request
 
@@ -116,7 +115,7 @@ class CollectedResponses(Generic[T]):
 
 @dataclass
 class JobInstanceResponse:
-    instance_metadata: InstanceMetadata
+    instance_metadata: JobInstanceMetadata
 
 
 class ApprovalResult(Enum):
