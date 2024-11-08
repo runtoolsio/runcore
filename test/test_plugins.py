@@ -1,29 +1,29 @@
 from typing import Optional
 
-import test.plugins
+import plugins as test_plugins
 from plugins import test_plugin
 from runtools.runcore import plugins
 from runtools.runcore.plugins import Plugin
 
 
 def test_plugin_discovered():
-    name2module = plugins.load_modules(['test_plugin'], package=test.plugins)
+    name2module = plugins.load_modules(['test_plugin'], package=test_plugins)
     assert len(name2module) == 1
-    assert name2module['test_plugin'].__name__ == 'test.plugins.test_plugin'
+    assert name2module['test_plugin'].__name__ == 'plugins.test_plugin'
 
 
 def test_invalid_plugin_ignored():
     """Test that error raised during plugin import is captured"""
-    name2module = plugins.load_modules(['test_plugin_invalid'], package=test.plugins)
+    name2module = plugins.load_modules(['test_plugin_invalid'], package=test_plugins)
     assert len(name2module) == 0
 
 
 def test_fetch_plugins():
-    plugins.load_modules(['test_plugin'], package=test.plugins)
+    plugins.load_modules(['test_plugin'], package=test_plugins)
     name2plugin = plugins.Plugin.fetch_plugins(['plugin2', 'test_plugin'])
     assert len(name2plugin) == 2
     assert isinstance(name2plugin['plugin2'], Plugin2)
-    assert isinstance(name2plugin['test_plugin'], test.plugins.test_plugin.TestPlugin)
+    assert isinstance(name2plugin['test_plugin'], test_plugin.TestPlugin)
 
 
 def test_fetch_plugin_twice():
