@@ -11,8 +11,9 @@ from enum import Enum
 from typing import Dict, Any, Set, Optional, TypeVar, Generic, Iterable
 
 from runtools.runcore import JobRun
-from runtools.runcore.run import Outcome, Lifecycle, TerminationInfo, InstanceMetadata, RunState, \
-    PhaseInfo, PhaseKey
+from runtools.runcore.job import JobInstanceMetadata
+from runtools.runcore.run import Outcome, Lifecycle, TerminationInfo, RunState, \
+    PhaseInfo
 from runtools.runcore.util import MatchingStrategy, and_, or_, parse, single_day_range, days_range, \
     format_dt_iso, to_list, DateTimeRange, parse_range_to_utc
 
@@ -33,7 +34,7 @@ class MatchCriteria(ABC, Generic[T]):
 
 
 @dataclass
-class InstanceMetadataCriterion(MatchCriteria[InstanceMetadata]):
+class InstanceMetadataCriterion(MatchCriteria[JobInstanceMetadata]):
     """
     This class specifies criteria for matching instance metadata.
     If all fields are empty, the matching strategy defaults to `MatchingStrategy.ALWAYS_TRUE`.
@@ -276,7 +277,7 @@ class PhaseCriterion(MatchCriteria[PhaseInfo]):
     run_state: Optional[RunState] = None
     phase_name: Optional[str] = None
     protection_id: Optional[str] = None
-    last_protected_phase: Optional[PhaseKey] = None
+    last_protected_phase: Optional[str] = None
     properties: Dict[str, Any] = field(default_factory=dict)
 
     def __init__(self,
@@ -285,7 +286,7 @@ class PhaseCriterion(MatchCriteria[PhaseInfo]):
                  run_state: Optional[RunState] = None,
                  phase_name: Optional[str] = None,
                  protection_id: Optional[str] = None,
-                 last_protected_phase: Optional[PhaseKey] = None,
+                 last_protected_phase: Optional[str] = None,
                  properties=None):
         if properties is None:
             properties = field(default_factory=dict)
@@ -307,7 +308,7 @@ class PhaseCriterion(MatchCriteria[PhaseInfo]):
         run_state = RunState[data['run_state']]
         phase_name = data.get('phase_name')
         protection_id = data.get('protection_id')
-        last_protected_phase = PhaseKey.deserialize(data['last_protected_phase']) if 'last_protected_phase' in data else None
+        last_protected_phase = data.get('last_protected_phase')
         properties = data.get('properties', {})
         return cls(phase_type, phase_id, run_state, phase_name, protection_id, last_protected_phase, properties)
 
@@ -318,7 +319,7 @@ class PhaseCriterion(MatchCriteria[PhaseInfo]):
             'run_state': self.run_state.value if self.run_state else RunState.NONE.value,
             'phase_name': self.phase_name,
             'protection_id': self.protection_id,
-            'last_protected_phase': self.last_protected_phase.serialize() if self.last_protected_phase else None,
+            'last_protected_phase': self.last_protected_phase,
             'properties': self.properties,
         }
 

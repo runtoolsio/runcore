@@ -353,9 +353,9 @@ class PhaseInfo:
     phase_id: str
     phase_type: str
     run_state: RunState
-    phase_name: Optional[str]
-    protection_id: Optional[str]
-    last_protected_phase: Optional[str]
+    phase_name: Optional[str] = None
+    protection_id: Optional[str] = None
+    last_protected_phase: Optional[str] = None
 
     @classmethod
     def deserialize(cls, as_dict) -> 'PhaseInfo':
@@ -364,8 +364,8 @@ class PhaseInfo:
             return info_cls.deserialize(as_dict)
 
         return cls(
-            as_dict["phase_type"],
             as_dict["phase_id"],
+            as_dict["phase_type"],
             RunState[as_dict["run_state"]],
             as_dict.get("phase_name"),
             as_dict.get("protection_id"),
@@ -374,8 +374,8 @@ class PhaseInfo:
 
     def serialize(self) -> Dict:
         d = {
-            "phase_type": self.phase_type,
             "phase_id": self.phase_id,
+            "phase_type": self.phase_type,
             "run_state": self.run_state.name,
         }
         if self.phase_name:
@@ -622,7 +622,7 @@ class TerminationInfo:
 
 @dataclass(frozen=True)
 class Run:
-    phases: Tuple[PhaseInfo]
+    phases: Tuple[PhaseInfo, ...]
     lifecycle: Lifecycle
     termination: Optional[TerminationInfo]
 

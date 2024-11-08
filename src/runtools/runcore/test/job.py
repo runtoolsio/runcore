@@ -6,24 +6,33 @@ from runtools.runcore.job import JobInstance, JobRun, InstanceTransitionObserver
     InstanceOutputObserver, JobInstanceMetadata
 from runtools.runcore.output import InMemoryOutput, Mode
 from runtools.runcore.run import PhaseRun, TerminationInfo, Lifecycle, RunState, PhaseInfo, Run, \
-    TerminationStatus, RunFailure, Phase, P, PhaseKey
+    TerminationStatus, RunFailure, Phase, P, InitPhase, TerminalPhase
 from runtools.runcore.test.run import FakePhaser
 from runtools.runcore.track import TaskTrackerMem
 from runtools.runcore.util.observer import ObservableNotification, DEFAULT_OBSERVER_PRIORITY
 
-INIT = PhaseKey('init', 'id')
-APPROVAL = PhaseKey('approval', 'id')
-PROGRAM = PhaseKey('program', 'id')
-TERM = PhaseKey('term', 'id')
+INIT = InitPhase.ID
+APPROVAL = 'approval'
+PROGRAM = 'program'
+TERM = TerminalPhase.ID
 
 
 class FakePhase(Phase):
 
-    def __init__(self, phase_key, run_state):
-        super().__init__(phase_key.id, phase_key.type, run_state)
+    def __init__(self, phase_id, run_state):
+        super().__init__(phase_id)
+        self._run_state = run_state
         self.approved = False
         self.ran = False
         self.stopped = False
+
+    @property
+    def type(self) -> str:
+        return "TEST_FAKE"
+
+    @property
+    def run_state(self) -> RunState:
+        return self._run_state
 
     def approve(self):
         self.approved = True
@@ -143,8 +152,8 @@ class FakeJobInstanceBuilder(AbstractBuilder):
         super().__init__(job_id, run_id, system_params, user_params)
         self.phases = []
 
-    def add_phase(self, key, run_state):
-        self.phases.append(FakePhase(key, run_state))
+    def add_phase(self, phase_id, run_state):
+        self.phases.append(FakePhase(phase_id, run_state))
         return self
 
     def build(self) -> FakeJobInstance:
@@ -158,19 +167,19 @@ class TestJobRunBuilder(AbstractBuilder):
 
     def __init__(self, job_id='j1', run_id=None, system_params=None, user_params=None):
         super().__init__(job_id, run_id, system_params, user_params)
-        self.phases = []
+        self.phase_runs = []
         self.tracker = TaskTrackerMem()
 
-    def add_phase(self, key, state, start=None, end=None):
+    def add_phase(self, phase_id, state, start=None, end=None):
         if not start:
             start = super().current_ts
             end = start + timedelta(minutes=1)
 
-        if key != INIT and not self.phases:
+        if phase_id != INIT and not self.phase_runs:
             self.add_phase(INIT, RunState.CREATED, start - timedelta(minutes=2), start - timedelta(minutes=1))
 
-        phase_run = PhaseRun(key, state, start, end)
-        self.phases.append(phase_run)
+        phase_run = PhaseRun(phase_id, state, start, end)
+        self.phase_runs.append(phase_run)
         return self
 
     def with_termination_info(self, status, time, failure=None):
@@ -178,14 +187,14 @@ class TestJobRunBuilder(AbstractBuilder):
         return self
 
     def build(self):
-        meta = (PhaseInfo('exec', 'p1', RunState.EXECUTING),)
-        lifecycle = Lifecycle(*self.phases)
-        run = Run(meta, lifecycle, self.termination_info)
+        meta = [PhaseInfo(p.phase_id, 'TEST', p.run_state) for p in self.phase_runs]
+        lifecycle = Lifecycle(*self.phase_runs)
+        run = Run(tuple(meta), lifecycle, self.termination_info)
         return JobRun(self.metadata, run, self.tracker.tracked_task)
 
 
 def ended_run(job_id, run_id='r1', *, offset_min=0, term_status=TerminationStatus.COMPLETED, created=None,
-              completed=None):
+              completed=None) -> JobRun:
     start_time = datetime.utcnow().replace(microsecond=0) + timedelta(minutes=offset_min)
 
     builder = TestJobRunBuilder(job_id, run_id, user_params={'name': 'value'})

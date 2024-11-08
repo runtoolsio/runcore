@@ -200,7 +200,7 @@ class SQLite(Persistence, InstanceTransitionObserver):
         log.debug("event=[executing_query] statement=[%s]", statement)
         c = self._conn.execute(statement, (limit, offset))
 
-        def to_job_info(t):
+        def to_job_run(t):
             metadata = JobInstanceMetadata(t[0], t[1], t[2], {}, json.loads(t[3]) if t[3] else dict())
             ended_at = parse_dt_sql(t[5])
             phases = tuple(PhaseInfo.deserialize(p) for p in json.loads(t[7]))
@@ -213,7 +213,7 @@ class SQLite(Persistence, InstanceTransitionObserver):
 
             return JobRun(metadata, run, task)
 
-        return JobRuns((to_job_info(row) for row in c.fetchall()))
+        return JobRuns((to_job_run(row) for row in c.fetchall()))
 
     def count_instances(self, run_match):
         """
