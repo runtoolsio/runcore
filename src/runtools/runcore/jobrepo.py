@@ -7,7 +7,6 @@ This module serves as a source of job definitions and offers:
 To add a custom job repository, implement the `JobRepository` interface and pass its instance to the `add_repo` function
 """
 
-
 import os
 from abc import ABC, abstractmethod
 from typing import List, Optional
@@ -42,12 +41,10 @@ class JobRepository(ABC):
 class JobRepositoryFile(JobRepository):
     DEF_FILE_CONTENT = \
         {
-            'jobs': [
-                {
-                    'id': '_this_is_example_taro_job_',
-                    'properties': {'prop1': 'value1'}
-                }
-            ]
+            'example_job_id': {
+                'job_type': 'BATCH',
+                'properties': { 'prop_1': 'val_1', }
+            }
         }
 
     def __init__(self, path=None):
@@ -59,11 +56,13 @@ class JobRepositoryFile(JobRepository):
 
     def read_jobs(self) -> List[Job]:
         root = util.read_toml_file(self.path or paths.lookup_jobs_file())
-        jobs = root.get('jobs')
-        if not jobs:
+        if not root:
             return []
 
-        return [Job(j.get('id'), j.get('properties')) for j in jobs]
+        return [
+            Job(job_id, job_type=job_config['job_type'], properties=job_config['properties'])
+            for job_id, job_config in root.items()
+        ]
 
     def reset(self, overwrite: bool):
         # TODO Create `runcore config create --jobs` command for this
@@ -71,7 +70,7 @@ class JobRepositoryFile(JobRepository):
         if not os.path.exists(path) or overwrite:
             pass
             # TODO Copy file from resources
-            # util.write_yaml_file(JobRepositoryFile.DEF_FILE_CONTENT, path)
+            # util.write_toml_file(JobRepositoryFile.DEF_FILE_CONTENT, path)
 
 
 class JobRepositoryActiveInstances(JobRepository):

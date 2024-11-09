@@ -21,7 +21,7 @@ from runtools.runcore.common import RuntoolsException
 
 CONFIG_DIR = 'runcore'
 CONFIG_FILE = 'runcore.toml'
-JOBS_FILE = 'jobs.yaml'
+JOBS_FILE = 'jobs.toml'
 _HOSTINFO_FILE = 'hostinfo'
 _LOG_FILE = 'runcore.log'
 

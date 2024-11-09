@@ -17,5 +17,5 @@ def remove_config_if_created():
 
 def test_defaults():
     create_custom_test_config(paths.JOBS_FILE, jobrepo.JobRepositoryFile.DEF_FILE_CONTENT)
-    example_job = jobrepo.JobRepositoryFile.DEF_FILE_CONTENT['jobs'][0]
-    assert jobrepo.read_job(example_job['id']).properties == example_job['properties']
+    example_job = jobrepo.JobRepositoryFile.DEF_FILE_CONTENT
+    assert jobrepo.read_job("example_job_id").properties == example_job["example_job_id"]["properties"]
