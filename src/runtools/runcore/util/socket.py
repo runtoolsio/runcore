@@ -115,7 +115,7 @@ class SocketServer(abc.ABC):
 
             socket_name = self._server.getsockname()  # This must be executed before the socket is closed
             try:
-                self._server.shutdown(socket.SHUT_RD)
+                # self._server.shutdown(socket.SHUT_RD) TODO Delete this when confirmed not needed
                 self._server.close()
             finally:
                 self._server = None
@@ -150,6 +150,7 @@ class SocketClient:
         self._servers_provider = servers_provider
         self._bidirectional = bidirectional
         self._client = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        self._client_addr = None
         if bidirectional:
             self._client.bind(self._client.getsockname())
             self._client.settimeout(timeout)
