@@ -2,13 +2,13 @@ import datetime
 
 import pytest
 
-from runtools.runcore.run import PhaseRun, RunState, Lifecycle, PhaseKey
+from runtools.runcore.run import PhaseRun, RunState, Lifecycle
 from runtools.runcore.util import utc_now
 
-INIT = PhaseKey('init', 'id')
-APPROVAL = PhaseKey('approval', 'id')
-EXECUTING = PhaseKey('exec', 'id')
-TERM = PhaseKey('term', 'id')
+INIT = 'init'
+APPROVAL = 'approval'
+EXECUTING = 'exec'
+TERM = 'term'
 
 
 @pytest.fixture

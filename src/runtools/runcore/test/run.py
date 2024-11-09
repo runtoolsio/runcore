@@ -39,7 +39,7 @@ class FakePhaser(AbstractPhaser):
         """
         Impl note: The execution must be guarded by the phase lock (except terminal phase)
         """
-        self.lifecycle.add_phase_run(PhaseRun(phase.key, phase.run_state, self._timestamp_generator()))
+        self.lifecycle.add_phase_run(PhaseRun(phase.id, phase.run_state, self._timestamp_generator()))
         if self.transition_hook:
             self.execute_transition_hook_safely(self.transition_hook)
         with self._condition:
