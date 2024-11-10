@@ -12,6 +12,7 @@ Discussion:
 import getpass
 import os
 import re
+import uuid
 from importlib.resources import path
 from pathlib import Path
 from typing import Generator, List, Callable
@@ -158,7 +159,7 @@ https://unix.stackexchange.com/questions/313036/is-a-subdirectory-of-tmp-a-suita
 """
 
 
-def socket_dir(create: bool) -> Path:
+def socket_dir(create: bool, *, subdir=None) -> Path:
     """
     1. Root user: /run/runcore
     2. Non-root user: /tmp/taro_${USER} (An alternative may be: ${HOME}/.cache/runcore)
@@ -168,12 +169,18 @@ def socket_dir(create: bool) -> Path:
     :param create: create path directories if not exist
     :return: directory path for unix domain sockets
     :raises FileNotFoundError: when path cannot be created (only if create == True)
+
+    Args:
+        subdir:
     """
 
     if _is_root():
         path = Path('/run/runcore')
     else:
         path = Path(f"/tmp/taro_{getpass.getuser()}")
+
+    if subdir:
+        path = path / subdir
 
     if create:
         path.mkdir(mode=0o700, exist_ok=True)
@@ -208,6 +215,21 @@ def socket_files_provider(file_extension: str) -> Callable[[], Generator[Path, N
         return socket_files(file_extension)
 
     return provider
+
+
+def socket_path_client(create: bool) -> Path:
+    """
+    Generate a unique socket path for client sockets.
+
+    - Root user: /run/runcore/client_{uuid}
+    - Non-root user: /tmp/taro_${USER}/client_{uuid}
+
+    :param create: create path directories if not exist
+    :return: unix domain socket path for client socket
+    :raises FileNotFoundError: when path cannot be created (only if create == True)
+    """
+    dir_path = socket_dir(create, subdir='clients')
+    return dir_path / f"client_{uuid.uuid4()}"
 
 
 def lock_dir(create: bool) -> Path:

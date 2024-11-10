@@ -157,7 +157,7 @@ def _no_resp_mapper(api_instance_response: InstanceResponse) -> InstanceResponse
 class APIClient(SocketClient):
 
     def __init__(self):
-        super().__init__(paths.socket_files_provider(API_FILE_EXTENSION), bidirectional=True)
+        super().__init__(paths.socket_files_provider(API_FILE_EXTENSION), client_address=str(paths.socket_path_client(True)))
 
     def __enter__(self):
         return self

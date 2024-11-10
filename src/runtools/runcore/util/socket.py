@@ -146,13 +146,19 @@ class PingResult:
 
 class SocketClient:
 
-    def __init__(self, servers_provider, bidirectional: bool, *, timeout=2):
+    def __init__(self, servers_provider, *, client_address=None, timeout=2):
+        """
+
+        Args:
+            servers_provider: TBS
+            client_address (str): bidirectional communication is assumed when this parameter is set
+            timeout: TBS
+        """
         self._servers_provider = servers_provider
-        self._bidirectional = bidirectional
         self._client = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-        self._client_addr = None
-        if bidirectional:
-            self._client.bind(self._client.getsockname())
+        self._client_addr = client_address
+        if client_address:
+            self._client.bind(client_address)
             self._client.settimeout(timeout)
         self.timed_out_servers = []
         self.stale_sockets = []
@@ -182,7 +188,7 @@ class SocketClient:
                 encoded = req_body.encode()
                 try:
                     self._client.sendto(encoded, str(server_file))
-                    if self._bidirectional:
+                    if self._client_addr:
                         datagram = self._client.recv(RECV_BUFFER_LENGTH)
                         resp = ServerResponse(server_id, datagram.decode())
                 except TimeoutError:
@@ -220,8 +226,14 @@ class SocketClient:
         return PingResult(active, timed_out, stale)
 
     def close(self):
-        self._client.shutdown(socket.SHUT_RDWR)
+        try:
+            self._client.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass  # Socket might already be closed
         self._client.close()
+        if self._client_addr and os.path.exists(self._client_addr):
+            os.unlink(self._client_addr)
+            self._client_addr = None
 
 
 class PayloadTooLarge(Exception):
