@@ -115,7 +115,13 @@ class SocketServer(abc.ABC):
 
             socket_name = self._server.getsockname()  # This must be executed before the socket is closed
             try:
-                # self._server.shutdown(socket.SHUT_RD) TODO Delete this when confirmed not needed
+                try:
+                    self._server.shutdown(socket.SHUT_RD)
+                except OSError as e:
+                    if e.errno == 57:  # macOS: Socket is not connected
+                        pass
+                    else:
+                        raise
                 self._server.close()
             finally:
                 self._server = None
