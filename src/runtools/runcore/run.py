@@ -110,7 +110,7 @@ class PhaseRun:
 
     def serialize(self):
         return {
-            'phase_key': self.phase_id,
+            'phase_id': self.phase_id,
             'run_state': self.run_state.name,
             'started_at': format_dt_iso(self.started_at),
             'ended_at': format_dt_iso(self.ended_at),
