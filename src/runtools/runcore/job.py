@@ -348,7 +348,7 @@ class JobInstance(abc.ABC):
         """
 
     @abc.abstractmethod
-    def get_phase(self, phase_type: str | Enum, phase_name: str):
+    def get_phase(self, phase_id: str, phase_type: str | Enum):
         """pass"""
 
     @abc.abstractmethod

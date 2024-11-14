@@ -94,8 +94,8 @@ class FakeJobInstance(JobInstance):
     def phases(self):
         return self.phaser.phases
 
-    def get_phase(self, phase_type: Type[P], phase_name: str) -> Optional[P]:
-        return self.phaser.get_phase(phase_name, phase_type)
+    def get_phase(self, phase_id: str, phase_type: Type[P] = None) -> Optional[P]:
+        return self.phaser.get_phase(phase_id, phase_type)
 
     def job_run(self) -> JobRun:
         return JobRun(self.metadata, self.phaser.run_info(), self._task_tracker.tracked_task)
