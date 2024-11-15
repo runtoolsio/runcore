@@ -3,37 +3,80 @@ from typing import Iterable, Optional, Callable
 
 from runtools.runcore import util
 from runtools.runcore.common import InvalidStateError
-from runtools.runcore.run import Phase, PhaseRun, AbstractPhaser, TerminationInfo, Run, RunState, InitPhase, \
-    TerminalPhase, TerminationStatus
+from runtools.runcore.run import Phase, PhaseRun, TerminationInfo, Run, RunState, \
+    TerminationStatus, PhaseInfo
 from runtools.runcore.util import utc_now
 
 
-class FakePhaser(AbstractPhaser):
+class TestPhase(Phase):
+
+    def __init__(self, phase_id, run_state):
+        self._phase_id = phase_id
+        self._run_state = run_state
+        self.approved = False
+        self.ran = False
+        self.stopped = False
+
+    @property
+    def id(self):
+        return self._phase_id
+
+    @property
+    def type(self) -> str:
+        return "TEST"
+
+    @property
+    def run_state(self) -> RunState:
+        return self._run_state
+
+    @property
+    def name(self):
+        return self._phase_id
+
+    def approve(self):
+        self.approved = True
+
+    @property
+    def stop_status(self):
+        return TerminationStatus.STOPPED
+
+    def run(self, run_ctx):
+        self.ran = True
+
+    def stop(self):
+        self.stopped = True
+
+
+class FakePhaser:
 
     def __init__(self, phases: Iterable[Phase], lifecycle, *, timestamp_generator=util.utc_now):
         super().__init__(phases, timestamp_generator=timestamp_generator)
-        self.phases_list = list(phases)
+        self.phases = list(phases)
+        self._timestamp_generator = timestamp_generator
         self.lifecycle = lifecycle
+        self.transition_hook: Optional[Callable[[PhaseRun, PhaseRun, int], None]] = None
+        self.output_hook: Optional[Callable[[PhaseInfo, str, bool], None]] = None
+
         self.termination: Optional[TerminationInfo] = None
         self._current_phase_index = -1
         self._condition = Condition()
 
     def run_info(self) -> Run:
-        phases = tuple(p.info() for p in self._key_to_phase.values())
+        phases = tuple(p.info() for p in self.phases)
         return Run(phases, self.lifecycle, self.termination)
 
     def prime(self):
         if self._current_phase_index != -1:
             raise InvalidStateError("Primed already")
-        self._next_phase(InitPhase())
+        self._next_phase(TestPhase('init', RunState.CREATED))
 
     def next_phase(self):
         self._current_phase_index += 1
-        if self._current_phase_index >= len(self.phases_list):
-            self._next_phase(TerminalPhase())
+        if self._current_phase_index >= len(self.phases):
+            self._next_phase(TestPhase('term', RunState.ENDED))
             self.termination = TerminationInfo(TerminationStatus.COMPLETED, utc_now())
         else:
-            self._next_phase(self.phases_list[self._current_phase_index])
+            self._next_phase(self.phases[self._current_phase_index])
 
     def _next_phase(self, phase):
         """
@@ -64,5 +107,5 @@ class FakePhaser(AbstractPhaser):
         pass
 
     def stop(self):
-        self._next_phase(TerminalPhase())
+        self._next_phase(TestPhase('term', RunState.ENDED))
         self.termination = TerminationInfo(TerminationStatus.STOPPED, utc_now())

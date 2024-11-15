@@ -1,51 +1,19 @@
 from datetime import datetime, timedelta
-from typing import Type, Optional
 
 from runtools.runcore import util
 from runtools.runcore.job import JobInstance, JobRun, InstanceTransitionObserver, \
     InstanceOutputObserver, JobInstanceMetadata
 from runtools.runcore.output import InMemoryOutput, Mode
 from runtools.runcore.run import PhaseRun, TerminationInfo, Lifecycle, RunState, PhaseInfo, Run, \
-    TerminationStatus, RunFailure, Phase, P, InitPhase, TerminalPhase
-from runtools.runcore.test.run import FakePhaser
+    TerminationStatus, RunFailure, Phase
+from runtools.runcore.test.run import FakePhaser, TestPhase
 from runtools.runcore.track import TaskTrackerMem
 from runtools.runcore.util.observer import ObservableNotification, DEFAULT_OBSERVER_PRIORITY
 
-INIT = InitPhase.ID
+INIT = 'init'
 APPROVAL = 'approval'
 PROGRAM = 'program'
-TERM = TerminalPhase.ID
-
-
-class FakePhase(Phase):
-
-    def __init__(self, phase_id, run_state):
-        super().__init__(phase_id)
-        self._run_state = run_state
-        self.approved = False
-        self.ran = False
-        self.stopped = False
-
-    @property
-    def type(self) -> str:
-        return "TEST_FAKE"
-
-    @property
-    def run_state(self) -> RunState:
-        return self._run_state
-
-    def approve(self):
-        self.approved = True
-
-    @property
-    def stop_status(self):
-        return TerminationStatus.STOPPED
-
-    def run(self, run_ctx):
-        self.ran = True
-
-    def stop(self):
-        self.stopped = True
+TERM = 'term'
 
 
 class AbstractBuilder:
@@ -94,7 +62,7 @@ class FakeJobInstance(JobInstance):
     def phases(self):
         return self.phaser.phases
 
-    def get_phase(self, phase_id: str, phase_type: Type[P] = None) -> Optional[P]:
+    def get_phase(self, phase_id: str, phase_type: str = None) -> Phase:
         return self.phaser.get_phase(phase_id, phase_type)
 
     def job_run(self) -> JobRun:
@@ -153,7 +121,7 @@ class FakeJobInstanceBuilder(AbstractBuilder):
         self.phases = []
 
     def add_phase(self, phase_id, run_state):
-        self.phases.append(FakePhase(phase_id, run_state))
+        self.phases.append(TestPhase(phase_id, run_state))
         return self
 
     def build(self) -> FakeJobInstance:
