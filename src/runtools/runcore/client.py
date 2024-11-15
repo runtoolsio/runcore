@@ -251,7 +251,7 @@ class APIClient(SocketClient):
 
         return self.send_request('/instances/stop', instance_match, resp_mapper=resp_mapper)
 
-    def fetch_output(self, instance_match=None) -> CollectedResponses[OutputResponse]:
+    def get_output(self, instance_match=None) -> CollectedResponses[OutputResponse]:
         """
         This function requests the last lines of the output from job instances
         that optionally match the provided criteria.

@@ -100,7 +100,7 @@ class FakeJobInstance(JobInstance):
     def job_run(self) -> JobRun:
         return JobRun(self.metadata, self.phaser.run_info(), self._task_tracker.tracked_task)
 
-    def fetch_output(self, mode=Mode.HEAD, *, lines=0):
+    def get_output(self, mode=Mode.HEAD, *, lines=0):
         return self.output.fetch(mode, lines=lines)
 
     def run(self):

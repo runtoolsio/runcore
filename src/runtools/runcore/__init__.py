@@ -131,7 +131,7 @@ def stop_instances(run_match) -> CollectedResponses[StopResponse]:
         return c.stop_instances(run_match)
 
 
-def fetch_output(run_match=None) -> CollectedResponses[OutputResponse]:
+def get_output(run_match=None) -> CollectedResponses[OutputResponse]:
     """
     This function requests the last lines of the output from job instances that optionally match the provided criteria.
 
@@ -146,7 +146,7 @@ def fetch_output(run_match=None) -> CollectedResponses[OutputResponse]:
     """
 
     with api_client() as c:
-        return c.fetch_output(run_match)
+        return c.get_output(run_match)
 
 
 def signal_dispatch(instance_match, queue_id) -> CollectedResponses[SignalDispatchResponse]:
