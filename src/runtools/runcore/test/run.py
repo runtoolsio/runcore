@@ -50,7 +50,6 @@ class TestPhase(Phase):
 class FakePhaser:
 
     def __init__(self, phases: Iterable[Phase], lifecycle, *, timestamp_generator=util.utc_now):
-        super().__init__(phases, timestamp_generator=timestamp_generator)
         self.phases = list(phases)
         self._timestamp_generator = timestamp_generator
         self.lifecycle = lifecycle
@@ -60,6 +59,28 @@ class FakePhaser:
         self.termination: Optional[TerminationInfo] = None
         self._current_phase_index = -1
         self._condition = Condition()
+
+    def get_phase(self, phase_id, phase_type: str = None):
+        """
+        Retrieve a phase by its ID and optionally verify its type.
+
+        Args:
+            phase_id: The ID of the phase to find
+            phase_type: Optional type to verify against the found phase
+
+        Returns:
+            The matching Phase object
+
+        Raises:
+            ValueError: If no phase with the given ID exists or if type verification fails
+        """
+        for phase in self.phases:
+            if phase.id == phase_id:
+                if phase_type and phase.type != phase_type:
+                    raise ValueError(f"Phase '{phase_id}' has type '{phase.type}' but '{phase_type}' was expected")
+                return phase
+
+        raise ValueError(f"Phase '{phase_id}' not found")
 
     def run_info(self) -> Run:
         phases = tuple(p.info() for p in self.phases)
