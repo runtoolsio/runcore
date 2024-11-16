@@ -80,7 +80,7 @@ class FakePhaser:
                     raise ValueError(f"Phase '{phase_id}' has type '{phase.type}' but '{phase_type}' was expected")
                 return phase
 
-        raise ValueError(f"Phase '{phase_id}' not found")
+        raise KeyError(f"Phase '{phase_id}' not found")
 
     def run_info(self) -> Run:
         phases = tuple(p.info() for p in self.phases)
