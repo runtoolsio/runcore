@@ -1,4 +1,5 @@
 import abc
+import errno
 import logging
 import os
 import socket
@@ -140,7 +141,7 @@ class Error(Enum):
 class ServerResponse(NamedTuple):
     server_id: str
     response: Optional[str]
-    error: Error = None
+    error: Optional[Exception] = None
 
 
 @dataclass
@@ -197,19 +198,19 @@ class SocketClient:
                     if self._client_addr:
                         datagram = self._client.recv(RECV_BUFFER_LENGTH)
                         resp = ServerResponse(server_id, datagram.decode())
-                except (socket.timeout, TimeoutError):
+                except (socket.timeout, TimeoutError) as e:
                     log.warning('event=[socket_timeout] socket=[{}]'.format(server_file))
                     self.timed_out_servers.append(server_id)
-                    resp = ServerResponse(server_id, None, Error.TIMEOUT)
+                    resp = ServerResponse(server_id, None, e)
                 except ConnectionRefusedError:  # TODO what about other errors?
                     log.warning('event=[stale_socket] socket=[{}]'.format(server_file))
                     self.stale_sockets.append(server_file)
                     skip = True  # Ignore this one and continue with another one
                     break
                 except OSError as e:
-                    if e.errno == 2 or e.errno == 32:
+                    if e.errno in (errno.ENOENT, errno.EPIPE):  # No such file/directory (2) or Broken pipe (32)
                         continue  # The server closed meanwhile
-                    if e.errno == 90:
+                    if e.errno == errno.EMSGSIZE:
                         raise PayloadTooLarge(len(encoded))
                     raise e
 
