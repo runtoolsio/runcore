@@ -134,8 +134,10 @@ class SocketServer(abc.ABC):
         self.wait()
 
 
-class Error(Enum):
-    TIMEOUT = auto()
+class ErrorType(Enum):
+    TIMEOUT = auto()    # Connection timeouts
+    STALE = auto()      # Dead/stale sockets
+    UNKNOWN = auto()    # Unexpected errors
 
 
 class ServerResponse(NamedTuple):
@@ -143,11 +145,22 @@ class ServerResponse(NamedTuple):
     response: Optional[str]
     error: Optional[Exception] = None
 
+    @property
+    def error_type(self) -> Optional[ErrorType]:
+        if not self.error:
+            return None
+        if isinstance(self.error, (socket.timeout, TimeoutError)):
+            return ErrorType.TIMEOUT
+        if isinstance(self.error, ConnectionRefusedError):
+            return ErrorType.STALE
+        return ErrorType.UNKNOWN
+
 
 @dataclass
 class PingResult:
     active_servers: List[str]
     timed_out_servers: List[str]
+    failing_servers: List[str]
     stale_sockets: List[Path]
 
 
@@ -167,8 +180,6 @@ class SocketClient:
         if client_address:
             self._client.bind(client_address)
             self._client.settimeout(timeout)
-        self.timed_out_servers = []
-        self.stale_sockets = []
 
     @coroutine
     def servers(self, include=()):
@@ -183,7 +194,7 @@ class SocketClient:
         skip = False
         for server_file in self._servers_provider():
             server_id = server_file.stem
-            if (server_file in self.stale_sockets) or (include and server_id not in include):
+            if include and server_id not in include:
                 continue
             while True:
                 if not skip:
@@ -200,11 +211,9 @@ class SocketClient:
                         resp = ServerResponse(server_id, datagram.decode())
                 except (socket.timeout, TimeoutError) as e:
                     log.warning('event=[socket_timeout] socket=[{}]'.format(server_file))
-                    self.timed_out_servers.append(server_id)
                     resp = ServerResponse(server_id, None, e)
-                except ConnectionRefusedError:  # TODO what about other errors?
+                except ConnectionRefusedError:
                     log.warning('event=[stale_socket] socket=[{}]'.format(server_file))
-                    self.stale_sockets.append(server_file)
                     skip = True  # Ignore this one and continue with another one
                     break
                 except OSError as e:
@@ -212,7 +221,7 @@ class SocketClient:
                         continue  # The server closed meanwhile
                     if e.errno == errno.EMSGSIZE:
                         raise PayloadTooLarge(len(encoded))
-                    raise e
+                    resp = ServerResponse(server_id, None, e)
 
     def communicate(self, req: str, include=()) -> List[ServerResponse]:
         server = self.servers(include=include)
@@ -225,12 +234,30 @@ class SocketClient:
                 break
         return responses
 
-    def ping(self):
+    def ping(self) -> PingResult:
+        """
+        Pings all available servers to check their status.
+
+        Returns:
+            PingResult containing lists of active, timed out, and stale servers
+        """
         responses = self.communicate('ping')
-        active = [resp.server_id for resp in responses]
-        timed_out = list(self.timed_out_servers)
-        stale = list(self.stale_sockets)
-        return PingResult(active, timed_out, stale)
+        active = []
+        timed_out = []
+        failed = []
+        stale = []
+
+        for resp in responses:
+            if resp.error_type is None:
+                active.append(resp.server_id)
+            elif resp.error_type == ErrorType.TIMEOUT:
+                timed_out.append(resp.server_id)
+            elif resp.error_type == ErrorType.STALE:
+                stale.append(Path(resp.server_id))
+            else:
+                failed.append(resp.server_id)
+
+        return PingResult(active, timed_out, failed, stale)
 
     def close(self):
         try:
