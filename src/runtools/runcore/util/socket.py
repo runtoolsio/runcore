@@ -197,7 +197,7 @@ class SocketClient:
                     if self._client_addr:
                         datagram = self._client.recv(RECV_BUFFER_LENGTH)
                         resp = ServerResponse(server_id, datagram.decode())
-                except TimeoutError:
+                except (socket.timeout, TimeoutError):
                     log.warning('event=[socket_timeout] socket=[{}]'.format(server_file))
                     self.timed_out_servers.append(server_id)
                     resp = ServerResponse(server_id, None, Error.TIMEOUT)
@@ -213,7 +213,7 @@ class SocketClient:
                         raise PayloadTooLarge(len(encoded))
                     raise e
 
-    def communicate(self, req, include=()) -> List[ServerResponse]:
+    def communicate(self, req: str, include=()) -> List[ServerResponse]:
         server = self.servers(include=include)
         responses = []
         while True:
