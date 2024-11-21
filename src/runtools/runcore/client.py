@@ -1,5 +1,5 @@
 """
-This module provides classes and functions for communicating with active job instances.
+This module provides classes and functions for communicating with active job instances using JSON-RPC 2.0.
 """
 
 import json
@@ -7,87 +7,53 @@ import logging
 from dataclasses import dataclass
 from enum import Enum, auto
 from json import JSONDecodeError
-from typing import List, Any, Dict, NamedTuple, Optional, TypeVar, Generic, Callable, Tuple
+from typing import List, Any, Dict, Optional, TypeVar, Generic, Callable, Tuple
 
 from runtools.runcore import paths
 from runtools.runcore.job import JobRun, JobInstanceMetadata
-from runtools.runcore.util.socket import SocketClient, ServerResponse, Error
+from runtools.runcore.util.socket import SocketClient, ServerResponse
 
 log = logging.getLogger(__name__)
 
 API_FILE_EXTENSION = '.api'
 
-
-class InstanceResponse(NamedTuple):
-    """
-    Represents generic data for a single job instance,
-    extracted from a successful de-serialized and pre-processed Instances API response.
-
-    Note that the Instances API may manage several job instances and thus may
-    return data for multiple instances, with each instance represented as a single instance response.
-
-    Attributes:
-        instance_meta: Metadata about the job instance.
-        body: The JSON body of the response, as a dictionary.
-    """
-    instance_meta: JobInstanceMetadata
-    body: Dict[str, Any]
-
-
-class APIErrorType(Enum):
-    """
-    This enumeration defines the types of errors that can occur during communication with API.
-    """
-
-    SOCKET = auto()  # Errors related to the socket communication
-    INVALID_RESPONSE = auto()  # Errors arising when the API response cannot be processed correctly
-    API_SERVER = auto()  # Errors signaled in the standard response indicating a problem on the server side
-    API_CLIENT = auto()  # Errors resulting from client-side issues such as invalid request
-
-
-class ErrorCode(Enum):
-    INVALID_REQUEST = 400
-    NOT_FOUND = 404
-    INVALID_ENTITY = 422
-    UNKNOWN = 1
+T = TypeVar('T')
 
 
 @dataclass
-class ResponseError:
-    """
-    Represents an error returned in the response from an API.
+class JsonRpcError:
+    code: int
+    message: str
+    data: Optional[Any] = None
 
-    This class encapsulates details about an error that the API itself has generated,
-    either due to server-side issues or client-request related problems.
+    @classmethod
+    def from_dict(cls, error_dict: dict) -> 'JsonRpcError':
+        return cls(
+            code=error_dict['code'],
+            message=error_dict['message'],
+            data=error_dict.get('data')
+        )
+
+
+@dataclass
+class InstanceResult:
+    """
+    Represents data for a single job instance from a JSON-RPC response.
 
     Attributes:
-        code: An enumeration member representing the type of error, as defined by the ErrorCode enumeration.
-        reason: A human-readable string providing more details about the cause of the error.
+        instance: Metadata about the job instance.
+        result: The JSON body of the response for this instance.
     """
-
-    code: ErrorCode
-    reason: str
+    instance: JobInstanceMetadata
+    result: Dict[str, Any]
 
 
 @dataclass
 class APIError:
-    """
-    Represents an error that occurred during communication with an API.
-
-    Attributes:
-        api_id: Identifier of the API which generated the error.
-        error_type: The type of error, as defined by the APIErrorType enumeration.
-        socket_error: An optional object, only present in case of `APIErrorType.SOCKET` error.
-        response_error: Details of the error returned by the API, only present in case of `APIErrorType.API_*` errors.
-    """
-
-    api_id: str
-    error_type: APIErrorType
-    socket_error: Optional[Error]
-    response_error: Optional[ResponseError]
-
-
-T = TypeVar('T')
+    server_id: str
+    socket_error: Optional[Exception] = None
+    response_error: Optional[JsonRpcError] = None
+    parse_error: Optional[str] = None
 
 
 @dataclass
@@ -101,11 +67,7 @@ class CollectedResponses(Generic[T]):
     Attributes:
         successful: A list of responses of type T that completed without error.
         errors: A list of APIError instances representing errors that occurred during the API calls.
-
-    Note: For the Instances API, a single endpoint's response may contain multiple instance responses.
-          This means the number of collected responses can exceed the number of contacted API endpoints.
     """
-
     successful: List[T]
     errors: List[APIError]
 
@@ -150,14 +112,85 @@ class SignalDispatchResponse(JobInstanceResponse):
     dispatched: bool
 
 
-def _no_resp_mapper(api_instance_response: InstanceResponse) -> InstanceResponse:
-    return api_instance_response
+def process_multi_server_responses(
+        server_responses: List[ServerResponse],
+        resp_mapper: Callable[[InstanceResult], T]
+) -> CollectedResponses[T]:
+    """
+    Process JSON-RPC 2.0 responses from multiple servers.
+
+    Args:
+        server_responses: List of responses from different servers
+        resp_mapper: Function to map each instance result to the desired type
+
+    Returns:
+        CollectedResponses containing successful responses and errors
+    """
+    successful: List[T] = []
+    errors: List[APIError] = []
+
+    for server_id, resp, error in server_responses:
+        # Handle socket communication errors
+        if error:
+            errors.append(APIError(server_id=server_id, socket_error=error))
+            continue
+
+        try:
+            response = json.loads(resp)
+        except JSONDecodeError as e:
+            errors.append(APIError(server_id=server_id, parse_error=str(e)))
+            continue
+
+        # Validate JSON-RPC 2.0 response structure
+        if not isinstance(response, dict) or 'jsonrpc' not in response or response['jsonrpc'] != '2.0':
+            errors.append(APIError(
+                server_id=server_id,
+                parse_error="Invalid JSON-RPC 2.0 response format"
+            ))
+            continue
+
+        # Handle JSON-RPC errors
+        if 'error' in response:
+            errors.append(APIError(
+                server_id=server_id,
+                response_error=JsonRpcError.from_dict(response['error'])
+            ))
+            continue
+
+        # Process successful responses for each instance
+        try:
+            for instance_data in response['result']:
+                instance_metadata = JobInstanceMetadata.deserialize(instance_data['instance_metadata'])
+                instance_result = InstanceResult(instance=instance_metadata, result=instance_data)
+                successful.append(resp_mapper(instance_result))
+        except Exception as e:
+            errors.append(APIError(
+                server_id=server_id,
+                parse_error=f"Error mapping result: {str(e)}"
+            ))
+
+    return CollectedResponses(successful, errors)
+
+
+def _no_resp_mapper(instance_result: InstanceResult) -> InstanceResult:
+    return instance_result
 
 
 class APIClient(SocketClient):
+    """
+    Client for communicating with job instances using JSON-RPC 2.0 protocol.
+
+    This client supports communicating with multiple servers simultaneously and
+    collecting their responses. Each method returns both successful responses
+    and any errors that occurred during communication.
+    """
 
     def __init__(self):
-        super().__init__(paths.socket_files_provider(API_FILE_EXTENSION), client_address=str(paths.socket_path_client(True)))
+        super().__init__(
+            paths.socket_files_provider(API_FILE_EXTENSION),
+            client_address=str(paths.socket_path_client(True))
+        )
+        self._request_id = 0
 
     def __enter__(self):
         return self
@@ -165,172 +198,144 @@ class APIClient(SocketClient):
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
-    def send_request(self, api: str, run_match=None, req_body=None,
-                     resp_mapper: Callable[[InstanceResponse], T] = _no_resp_mapper) -> CollectedResponses[T]:
-        if not req_body:
-            req_body = {}
-        req_body["request_metadata"] = {"api": api}
-        if run_match and run_match.metadata_criteria:
-            req_body["request_metadata"]["run_match"] = run_match.serialize()
+    def _next_request_id(self) -> int:
+        self._request_id += 1
+        return self._request_id
 
-        server_responses: List[ServerResponse] = self.communicate(json.dumps(req_body))
-        return _process_responses(server_responses, resp_mapper)
+    def send_request(
+            self,
+            method: str,
+            run_match=None,
+            params: Optional[dict] = None,
+            resp_mapper: Callable[[InstanceResult], T] = _no_resp_mapper
+    ) -> CollectedResponses[T]:
+        """
+        Send a JSON-RPC request to all available servers.
+
+        Args:
+            method: The JSON-RPC method name
+            run_match: Optional criteria for matching job instances
+            params: Optional additional parameters for the request
+            resp_mapper: Function to map instance responses to desired type
+
+        Returns:
+            CollectedResponses containing successful responses and any errors
+        """
+        if params is None:
+            params = {}
+
+        if run_match and run_match.metadata_criteria:
+            params["run_match"] = run_match.serialize()
+
+        request = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+            "id": self._next_request_id()
+        }
+
+        server_responses = self.communicate(json.dumps(request))
+        return process_multi_server_responses(server_responses, resp_mapper)
 
     def get_active_runs(self, run_match=None) -> CollectedResponses[JobRun]:
         """
         Retrieves instance information for all active job instances for the current user.
 
         Args:
-            run_match (JobRunAggregatedCriteria, optional):
-                A filter for instance matching. If provided, only instances that match will be included.
+            run_match: Optional filter for instance matching.
 
         Returns:
-            A container holding the :class:`JobInst` objects that represent job instances.
-            It also includes any errors that may have happened, each one related to a specific server API.
-
-        Raises:
-            PayloadTooLarge: If the payload size exceeds the maximum limit.
+            CollectedResponses containing JobRun objects for matching instances.
         """
 
-        def resp_mapper(inst_resp: InstanceResponse) -> JobRun:
-            return JobRun.deserialize(inst_resp.body["job_run"])
+        def resp_mapper(inst_resp: InstanceResult) -> JobRun:
+            return JobRun.deserialize(inst_resp.result["job_run"])
 
-        return self.send_request('/instances', run_match, resp_mapper=resp_mapper)
+        return self.send_request("instances.get", run_match, resp_mapper=resp_mapper)
 
     def approve_pending_instances(self, run_match, phase_id=None) -> CollectedResponses[ApprovalResponse]:
         """
-        This function releases job instances that are pending in the provided group
-        and optionally match the provided criteria.
+        Approves job instances that are pending in the provided phase and match the criteria.
 
         Args:
-            run_match (InstanceMatchCriteria, optional):
-                The operation will affect only instances matching these criteria or all instances if not provided.
-            phase_id (str, mandatory):
-                ID of the approval phase.
-        Returns:
-            A container holding :class:`ReleaseResponse` objects, each representing the result of the release operation
-            for a respective job instance.
-            It also includes any errors that may have happened, each one related to a specific server API.
-        """
+            run_match: Criteria for matching instances to approve
+            phase_id: Optional ID of the approval phase
 
+        Returns:
+            CollectedResponses containing ApprovalResponse objects for each instance
+
+        Raises:
+            ValueError: If run_match is not provided
+        """
         if run_match is None:
             raise ValueError("Missing run criteria (match)")
 
-        def approve_resp_mapper(inst_resp: InstanceResponse) -> ApprovalResponse:
-            try:
-                release_res = ApprovalResult[inst_resp.body["approval_result"].upper()]
-            except KeyError:
-                release_res = ApprovalResult.UNKNOWN
-            return ApprovalResponse(inst_resp.instance_meta, release_res)
+        def approve_resp_mapper(inst_resp: InstanceResult) -> ApprovalResponse:
+            return ApprovalResponse(
+                instance_metadata=inst_resp.instance,
+                release_result=ApprovalResult.APPROVED if inst_resp.result[
+                    "approved"] else ApprovalResult.NOT_APPLICABLE
+            )
 
-        req_body = {"phase_id": phase_id}
-        return self.send_request('/instances/approve', run_match, req_body, approve_resp_mapper)
+        params = {"phase_id": phase_id} if phase_id else {}
+        return self.send_request("instances.approve", run_match, params, approve_resp_mapper)
 
     def stop_instances(self, instance_match) -> CollectedResponses[StopResponse]:
         """
-        This function stops job instances that match the provided criteria.
+        Stops job instances that match the provided criteria.
 
         Args:
-            instance_match (InstanceMatchCriteria, mandatory):
-                The operation will affect only instances matching these criteria.
+            instance_match: Criteria for matching instances to stop
 
         Returns:
-            A container holding :class:`StopResponse` objects, each representing the result of the stop operation
-            for a respective job instance.
-            It also includes any errors that may have happened, each one related to a specific server API.
+            CollectedResponses containing StopResponse objects for each instance
 
-        Note:
-            The stop operation might not succeed if the instance doesn't correctly handle stop/terminate signals.
+        Raises:
+            ValueError: If instance_match is not provided
         """
-
         if not instance_match:
-            raise ValueError('Id matching criteria is mandatory for the stop operation')
+            raise ValueError('Instance matching criteria is mandatory for the stop operation')
 
-        def resp_mapper(inst_resp: InstanceResponse) -> StopResponse:
-            return StopResponse(inst_resp.instance_meta, StopResult[inst_resp.body["stop_result"].upper()])
+        def resp_mapper(inst_resp: InstanceResult) -> StopResponse:
+            return StopResponse(inst_resp.instance, StopResult[inst_resp.result["stop_result"]])
 
-        return self.send_request('/instances/stop', instance_match, resp_mapper=resp_mapper)
+        return self.send_request("instances.stop", instance_match, resp_mapper=resp_mapper)
 
     def get_output(self, instance_match=None) -> CollectedResponses[OutputResponse]:
         """
-        This function requests the last lines of the output from job instances
-        that optionally match the provided criteria.
+        Retrieves the output from job instances that match the provided criteria.
 
         Args:
-            instance_match (InstanceMatchCriteria, optional):
-                The operation will affect only instances matching these criteria.
-                If not provided, the tail of all instances is read.
+            instance_match: Optional criteria for matching instances
 
         Returns:
-            A container holding :class:`TailResponse` objects, each containing last lines for a respective job instance.
-            It also includes any errors that may have happened, each one related to a specific server API.
+            CollectedResponses containing OutputResponse objects for each instance
         """
 
-        def resp_mapper(inst_resp: InstanceResponse) -> OutputResponse:
-            return OutputResponse(inst_resp.instance_meta, inst_resp.body["output"])
+        def resp_mapper(inst_resp: InstanceResult) -> OutputResponse:
+            return OutputResponse(inst_resp.instance, inst_resp.result["output"])
 
-        return self.send_request('/instances/output', instance_match, resp_mapper=resp_mapper)
+        return self.send_request("instances.get_output", instance_match, resp_mapper=resp_mapper)
 
     def signal_dispatch(self, instance_match, queue_id) -> CollectedResponses[SignalDispatchResponse]:
-        def resp_mapper(inst_resp: InstanceResponse) -> SignalDispatchResponse:
-            return SignalDispatchResponse(inst_resp.instance_meta, inst_resp.body["dispatched"])
+        """
+        Signals dispatch for instances matching the criteria in the specified queue.
 
-        req_body = {"queue_id": queue_id}
-        return self.send_request('/instances/_signal/dispatch', instance_match, req_body, resp_mapper=resp_mapper)
+        Args:
+            instance_match: Criteria for matching instances
+            queue_id: ID of the queue to dispatch from
 
+        Returns:
+            CollectedResponses containing SignalDispatchResponse objects for each instance
 
-def _process_responses(server_responses: List[ServerResponse], resp_mapper: Callable[[InstanceResponse], T]) \
-        -> CollectedResponses[T]:
-    responses: List[T] = []
-    errors: List[APIError] = []
+        Raises:
+            ValueError: If queue_id is not provided
+        """
+        if not queue_id:
+            raise ValueError('Queue ID is required for dispatch operation')
 
-    for server_id, resp, error in server_responses:
-        if error:
-            log.error("event=[api_error] type=[socket] error=[%s]", error)
-            errors.append(APIError(server_id, APIErrorType.SOCKET, error, None))
-            continue
+        def resp_mapper(inst_resp: InstanceResult) -> SignalDispatchResponse:
+            return SignalDispatchResponse(inst_resp.instance, inst_resp.result["dispatched"])
 
-        try:
-            resp_body = json.loads(resp)
-        except JSONDecodeError:
-            # TODO Mostly when the resp is too long (i.e. server with many instances)
-            raise
-        resp_metadata = resp_body.get("response_metadata")
-        if not resp_metadata:
-            log.error("event=[api_error] type=[invalid_response] error=[missing_response_metadata]")
-            errors.append(APIError(server_id, APIErrorType.INVALID_RESPONSE, None, None))
-            continue
-        if "error" in resp_metadata:
-            code = resp_metadata.get('code')
-            reason = resp_metadata['error'].get('reason')
-            if not code or code < 400 or code >= 600:
-                log.error("event=[api_error] type=[invalid_response] error=[invalid_response_code] code=[%s]", code)
-                errors.append(APIError(server_id, APIErrorType.INVALID_RESPONSE, None, None))
-                continue
-            if not reason:
-                log.error("event=[api_error] type=[invalid_response] error=[missing_error_reason] code=[%s]", code)
-                errors.append(APIError(server_id, APIErrorType.INVALID_RESPONSE, None, None))
-                continue
-
-            error_type = APIErrorType.API_CLIENT if code < 500 else APIErrorType.API_SERVER
-            try:
-                err_code = ErrorCode(code)
-            except ValueError:
-                log.warning("event=[unknown_error_code] code=[%s]", code)
-                err_code = ErrorCode.UNKNOWN
-            log.error("event=[api_error] type=[%s] code=[%s] reason=[%s]", error_type, err_code, reason)
-            errors.append(APIError(server_id, error_type, None, ResponseError(err_code, reason)))
-            continue
-
-        for instance_resp in resp_body['instance_responses']:
-            instance_metadata = JobInstanceMetadata.deserialize(instance_resp['instance_metadata'])
-            api_instance_response = InstanceResponse(instance_metadata, instance_resp)
-            try:
-                resp = resp_mapper(api_instance_response)
-            except (KeyError, ValueError) as e:
-                log.error("event=[api_error] type=[%s] reason=[%s]", APIErrorType.INVALID_RESPONSE, e)
-                errors.append(APIError(server_id, APIErrorType.INVALID_RESPONSE, None, None))
-                break
-            responses.append(resp)
-
-    return CollectedResponses(responses, errors)
+        params = {"queue_id": queue_id}
+        return self.send_request("instances.dispatch", instance_match, params, resp_mapper=resp_mapper)
