@@ -386,7 +386,7 @@ class TerminationCriterion(MatchCriteria[TerminationInfo]):
         return self.outcome != Outcome.ANY
 
 
-def parse_criteria(pattern: str, strategy: MatchingStrategy = MatchingStrategy.EXACT):
+def parse_criteria(pattern: str, strategy: MatchingStrategy = MatchingStrategy.EXACT) -> 'JobRunCriteria':
     return JobRunCriteria.from_instance_pattern(pattern, strategy)
 
 
