@@ -1,13 +1,16 @@
 from datetime import datetime, timedelta
+from threading import Condition
+from typing import Iterable, Optional
 
 from runtools.runcore import util
+from runtools.runcore.common import InvalidStateError
 from runtools.runcore.job import JobInstance, JobRun, InstanceTransitionObserver, \
     InstanceOutputObserver, JobInstanceMetadata
 from runtools.runcore.output import InMemoryOutput, Mode
-from runtools.runcore.run import PhaseRun, TerminationInfo, Lifecycle, RunState, PhaseInfo, Run, \
-    TerminationStatus, RunFailure, Phase
-from runtools.runcore.test.run import FakePhaser, TestPhase
+from runtools.runcore.run import Phase, PhaseRun, TerminationInfo, Run, RunState, \
+    TerminationStatus, PhaseInfo, RunFailure, Lifecycle
 from runtools.runcore.track import TaskTrackerMem
+from runtools.runcore.util import utc_now
 from runtools.runcore.util.observer import ObservableNotification, DEFAULT_OBSERVER_PRIORITY
 
 INIT = 'init'
@@ -16,31 +19,67 @@ PROGRAM = 'program'
 TERM = 'term'
 
 
-class AbstractBuilder:
-    current_ts = datetime.utcnow().replace(microsecond=0)
+class TestPhase(Phase):
 
-    def __init__(self, job_id, run_id=None, system_params=None, user_params=None):
-        instance_id = util.unique_timestamp_hex()
-        run_id = run_id or instance_id
-        self.metadata = JobInstanceMetadata(job_id, run_id, instance_id, system_params or {}, user_params or {})
-        self.termination_info = None
+    def __init__(self, phase_id, run_state):
+        self._phase_id = phase_id
+        self._run_state = run_state
+        self.approved = False
+        self.ran = False
+        self.stopped = False
+
+    @property
+    def id(self):
+        return self._phase_id
+
+    @property
+    def type(self) -> str:
+        return "TEST"
+
+    @property
+    def run_state(self) -> RunState:
+        return self._run_state
+
+    @property
+    def name(self):
+        return self._phase_id
+
+    def approve(self):
+        self.approved = True
+
+    @property
+    def stop_status(self):
+        return TerminationStatus.STOPPED
+
+    def run(self, run_ctx):
+        self.ran = True
+
+    def stop(self):
+        self.stopped = True
 
 
 class FakeJobInstance(JobInstance):
 
-    def __init__(self, job_id, phaser, lifecycle, *,
-                 run_id=None, instance_id_gen=util.unique_timestamp_hex, **user_params):
+    def __init__(self, job_id, phases: Iterable[Phase], lifecycle, *,
+                 run_id=None, instance_id_gen=util.unique_timestamp_hex,
+                 timestamp_generator=util.utc_now, **user_params):
         inst_id = instance_id_gen()
         parameters = {}  # TODO
         self._metadata = JobInstanceMetadata(job_id, run_id or inst_id, inst_id, parameters, user_params)
-        self.phaser = phaser
+
+        # Ex-FakePhaser attributes
+        self._phases = list(phases)
+        self._timestamp_generator = timestamp_generator
         self.lifecycle = lifecycle
+        self.termination: Optional[TerminationInfo] = None
+        self._current_phase_index = -1
+        self._condition = Condition()
+
+        # Original FakeJobInstance attributes
         self.output = InMemoryOutput()
-        self._task_tracker = None or TaskTrackerMem()
+        self._task_tracker = TaskTrackerMem()
         self.transition_notification = ObservableNotification[InstanceTransitionObserver]()
         self.output_notification = ObservableNotification[InstanceOutputObserver]()
-
-        phaser.transition_hook = self._transition_hook
 
     @property
     def instance_id(self):
@@ -56,52 +95,96 @@ class FakeJobInstance(JobInstance):
 
     @property
     def current_phase(self):
-        return self.phaser.current_phase_id
+        if 0 <= self._current_phase_index < len(self.phases):
+            return self.phases[self._current_phase_index].id
+        return None
 
     @property
     def phases(self):
-        return self.phaser.phases
+        return self._phases
 
     def get_phase(self, phase_id: str, phase_type: str = None) -> Phase:
-        return self.phaser.get_phase(phase_id, phase_type)
+        """
+        Retrieve a phase by its ID and optionally verify its type.
+        """
+        for phase in self.phases:
+            if phase.id == phase_id:
+                if phase_type and phase.type != phase_type:
+                    raise ValueError(f"Phase '{phase_id}' has type '{phase.type}' but '{phase_type}' was expected")
+                return phase
+        raise KeyError(f"Phase '{phase_id}' not found")
 
     def job_run(self) -> JobRun:
-        return JobRun(self.metadata, self.phaser.run_info(), self._task_tracker.tracked_task)
+        run_info = self._create_run_info()
+        return JobRun(self.metadata, run_info, self._task_tracker.tracked_task)
+
+    def _create_run_info(self) -> Run:
+        phases = tuple(p.info() for p in self.phases)
+        return Run(phases, self.lifecycle, self.termination)
 
     def get_output(self, mode=Mode.HEAD, *, lines=0):
         return self.output.fetch(mode, lines=lines)
+
+    def prime(self):
+        if self._current_phase_index != -1:
+            raise InvalidStateError("Primed already")
+        self._next_phase(TestPhase('init', RunState.CREATED))
+
+    def next_phase(self):
+        self._current_phase_index += 1
+        if self._current_phase_index >= len(self.phases):
+            self._next_phase(TestPhase('term', RunState.ENDED))
+            self.termination = TerminationInfo(TerminationStatus.COMPLETED, utc_now())
+        else:
+            self._next_phase(self.phases[self._current_phase_index])
+
+    def _next_phase(self, phase):
+        """
+        Impl note: The execution must be guarded by the phase lock (except terminal phase)
+        """
+        phase_run = PhaseRun(phase.id, phase.run_state, self._timestamp_generator())
+        self.lifecycle.add_phase_run(phase_run)
+
+        # Call transition hook through the notification system
+        old_phase = self.lifecycle.previous_run
+        new_phase = self.lifecycle.current_run
+        job_run = JobRun(self.metadata, self._create_run_info(), self._task_tracker.tracked_task)
+        self.transition_notification.observer_proxy.new_instance_phase(
+            job_run, old_phase, new_phase, self.lifecycle.phase_count)
+
+        with self._condition:
+            self._condition.notify_all()
+
+    def wait_for_transition(self, phase_name=None, run_state=RunState.NONE, *, timeout=None):
+        with self._condition:
+            while True:
+                for run in self.lifecycle.phase_runs:
+                    if run.id == phase_name or run.run_state == run_state:
+                        return True
+
+                if not self._condition.wait(timeout):
+                    return False
+                if not phase_name and not run_state:
+                    return True
 
     def run(self):
         pass
 
     def stop(self):
-        """
-        Cancel not yet started execution or stop started execution.
-        Due to synchronous design there is a small window when an execution can be stopped before it is started.
-        All execution implementations must cope with such scenario.
-        """
-        self.phaser.stop()
+        self._next_phase(TestPhase('term', RunState.ENDED))
+        self.termination = TerminationInfo(TerminationStatus.STOPPED, utc_now())
 
     def interrupted(self):
         """
         Cancel not yet started execution or interrupt started execution.
-        Due to synchronous design there is a small window when an execution can be interrupted before it is started.
-        All execution implementations must cope with such scenario.
         """
-        self.phaser.stop()  # TODO Interrupt
-
-    def wait_for_transition(self, phase_name=None, run_state=RunState.NONE, *, timeout=None):
-        return self.phaser.wait_for_transition(phase_name, run_state, timeout=timeout)
+        self.stop()  # TODO Interrupt
 
     def add_observer_transition(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, notify_on_register=False):
         self.transition_notification.add_observer(observer, priority)
 
     def remove_observer_transition(self, callback):
         self.transition_notification.remove_observer(callback)
-
-    def _transition_hook(self, old_phase: PhaseRun, new_phase: PhaseRun, ordinal):
-        job_run = JobRun(self.metadata, self.phaser.run_info(), self._task_tracker.tracked_task)
-        self.transition_notification.observer_proxy.new_instance_phase(job_run, old_phase, new_phase, ordinal)
 
     def add_observer_output(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
         self.output_notification.add_observer(observer, priority)
@@ -114,10 +197,11 @@ class FakeJobInstance(JobInstance):
         return self.transition_notification.prioritized_observers
 
 
-class FakeJobInstanceBuilder(AbstractBuilder):
-
+class FakeJobInstanceBuilder:
     def __init__(self, job_id='j1', run_id=None, system_params=None, user_params=None):
-        super().__init__(job_id, run_id, system_params, user_params)
+        instance_id = util.unique_timestamp_hex()
+        run_id = run_id or instance_id
+        self.metadata = JobInstanceMetadata(job_id, run_id, instance_id, system_params or {}, user_params or {})
         self.phases = []
 
     def add_phase(self, phase_id, run_state):
@@ -126,21 +210,28 @@ class FakeJobInstanceBuilder(AbstractBuilder):
 
     def build(self) -> FakeJobInstance:
         lifecycle = Lifecycle()
-        phaser = FakePhaser(self.phases, lifecycle)
-        return FakeJobInstance(self.metadata.job_id, phaser, lifecycle, run_id=self.metadata.run_id,
-                               **self.metadata.user_params)
+        return FakeJobInstance(
+            self.metadata.job_id,
+            self.phases,
+            lifecycle,
+            run_id=self.metadata.run_id,
+            **self.metadata.user_params
+        )
 
 
-class TestJobRunBuilder(AbstractBuilder):
-
+class TestJobRunBuilder:
     def __init__(self, job_id='j1', run_id=None, system_params=None, user_params=None):
-        super().__init__(job_id, run_id, system_params, user_params)
+        instance_id = util.unique_timestamp_hex()
+        run_id = run_id or instance_id
+        self.metadata = JobInstanceMetadata(job_id, run_id, instance_id, system_params or {}, user_params or {})
         self.phase_runs = []
         self.tracker = TaskTrackerMem()
+        self.termination_info = None
+        self.current_ts = datetime.utcnow().replace(microsecond=0)
 
     def add_phase(self, phase_id, state, start=None, end=None):
         if not start:
-            start = super().current_ts
+            start = self.current_ts
             end = start + timedelta(minutes=1)
 
         if phase_id != INIT and not self.phase_runs:
