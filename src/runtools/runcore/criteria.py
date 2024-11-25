@@ -59,7 +59,7 @@ class InstanceMetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         return cls('', '', True, MatchingStrategy.ALWAYS_FALSE)
 
     @staticmethod
-    def for_run(job_run):
+    def match_run(job_run):
         # TODO Use identity ID
         """
         Creates a MetadataCriterion object that matches the provided job run.
@@ -387,12 +387,11 @@ class TerminationCriterion(MatchCriteria[TerminationInfo]):
 
 
 def parse_criteria(pattern: str, strategy: MatchingStrategy = MatchingStrategy.EXACT) -> 'JobRunCriteria':
-    return JobRunCriteria.from_instance_pattern(pattern, strategy)
+    return JobRunCriteria.parse(pattern, strategy)
 
 
 class JobRunCriteria(MatchCriteria[JobRun]):
     """
-    TODO Rename to RunCriteria ?
     This object aggregates various criteria for querying and matching job instances.
     An instance must meet all the provided criteria to be considered a match.
 
@@ -451,9 +450,21 @@ class JobRunCriteria(MatchCriteria[JobRun]):
         }
 
     @classmethod
-    def from_instance_pattern(cls, pattern: str, strategy: MatchingStrategy = MatchingStrategy.EXACT):
+    def parse(cls, pattern: str, strategy: MatchingStrategy = MatchingStrategy.EXACT):
         new = cls()
         new += InstanceMetadataCriterion.parse_pattern(pattern, strategy)
+        return new
+
+    @classmethod
+    def job_id(cls, job_id, strategy: MatchingStrategy = MatchingStrategy.EXACT):
+        new = cls()
+        new += InstanceMetadataCriterion(job_id=job_id, strategy=strategy)
+        return new
+
+    @classmethod
+    def match_run(cls, job_run):
+        new = cls()
+        new += InstanceMetadataCriterion.match_run(job_run)
         return new
 
     def __iadd__(self, criterion):

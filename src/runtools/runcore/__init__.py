@@ -115,7 +115,7 @@ def stop_instances(run_match) -> CollectedResponses[StopResponse]:
     This function stops job instances that match the provided criteria.
 
     Args:
-        run_match (InstanceMatchCriteria, mandatory):
+        run_match (JobRunCriteria, mandatory):
             The operation will affect only instances matching these criteria.
 
     Returns:
