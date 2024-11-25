@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from threading import Condition
 from typing import Iterable, Optional
 
@@ -19,7 +19,7 @@ PROGRAM = 'program'
 TERM = 'term'
 
 
-class TestPhase(Phase):
+class FakePhase(Phase):
 
     def __init__(self, phase_id, run_state):
         self._phase_id = phase_id
@@ -34,7 +34,7 @@ class TestPhase(Phase):
 
     @property
     def type(self) -> str:
-        return "TEST"
+        return "FAKE"
 
     @property
     def run_state(self) -> RunState:
@@ -67,7 +67,6 @@ class FakeJobInstance(JobInstance):
         parameters = {}  # TODO
         self._metadata = JobInstanceMetadata(job_id, run_id or inst_id, inst_id, parameters, user_params)
 
-        # Ex-FakePhaser attributes
         self._phases = list(phases)
         self._timestamp_generator = timestamp_generator
         self.lifecycle = lifecycle
@@ -75,7 +74,6 @@ class FakeJobInstance(JobInstance):
         self._current_phase_index = -1
         self._condition = Condition()
 
-        # Original FakeJobInstance attributes
         self.output = InMemoryOutput()
         self._task_tracker = TaskTrackerMem()
         self.transition_notification = ObservableNotification[InstanceTransitionObserver]()
@@ -128,12 +126,12 @@ class FakeJobInstance(JobInstance):
     def prime(self):
         if self._current_phase_index != -1:
             raise InvalidStateError("Primed already")
-        self._next_phase(TestPhase('init', RunState.CREATED))
+        self._next_phase(FakePhase('init', RunState.CREATED))
 
     def next_phase(self):
         self._current_phase_index += 1
         if self._current_phase_index >= len(self.phases):
-            self._next_phase(TestPhase('term', RunState.ENDED))
+            self._next_phase(FakePhase('term', RunState.ENDED))
             self.termination = TerminationInfo(TerminationStatus.COMPLETED, utc_now())
         else:
             self._next_phase(self.phases[self._current_phase_index])
@@ -171,7 +169,7 @@ class FakeJobInstance(JobInstance):
         pass
 
     def stop(self):
-        self._next_phase(TestPhase('term', RunState.ENDED))
+        self._next_phase(FakePhase('term', RunState.ENDED))
         self.termination = TerminationInfo(TerminationStatus.STOPPED, utc_now())
 
     def interrupted(self):
@@ -198,6 +196,7 @@ class FakeJobInstance(JobInstance):
 
 
 class FakeJobInstanceBuilder:
+
     def __init__(self, job_id='j1', run_id=None, system_params=None, user_params=None):
         instance_id = util.unique_timestamp_hex()
         run_id = run_id or instance_id
@@ -205,7 +204,7 @@ class FakeJobInstanceBuilder:
         self.phases = []
 
     def add_phase(self, phase_id, run_state):
-        self.phases.append(TestPhase(phase_id, run_state))
+        self.phases.append(FakePhase(phase_id, run_state))
         return self
 
     def build(self) -> FakeJobInstance:
@@ -220,6 +219,7 @@ class FakeJobInstanceBuilder:
 
 
 class TestJobRunBuilder:
+
     def __init__(self, job_id='j1', run_id=None, system_params=None, user_params=None):
         instance_id = util.unique_timestamp_hex()
         run_id = run_id or instance_id
@@ -227,7 +227,7 @@ class TestJobRunBuilder:
         self.phase_runs = []
         self.tracker = TaskTrackerMem()
         self.termination_info = None
-        self.current_ts = datetime.utcnow().replace(microsecond=0)
+        self.current_ts = datetime.now(UTC).replace(microsecond=0)
 
     def add_phase(self, phase_id, state, start=None, end=None):
         if not start:
@@ -254,7 +254,7 @@ class TestJobRunBuilder:
 
 def ended_run(job_id, run_id='r1', *, offset_min=0, term_status=TerminationStatus.COMPLETED, created=None,
               completed=None) -> JobRun:
-    start_time = datetime.utcnow().replace(microsecond=0) + timedelta(minutes=offset_min)
+    start_time = datetime.now(UTC).replace(microsecond=0) + timedelta(minutes=offset_min)
 
     builder = TestJobRunBuilder(job_id, run_id, user_params={'name': 'value'})
 
