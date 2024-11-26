@@ -1,4 +1,4 @@
-class ForwardLogs:
+class LogForwarding:
 
     def __init__(self, logger, target_handlers):
         self.logger = logger
