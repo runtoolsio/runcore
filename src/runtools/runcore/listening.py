@@ -6,7 +6,8 @@ from json import JSONDecodeError
 
 from runtools.runcore import util, paths
 from runtools.runcore.job import JobRun, InstanceTransitionObserver, InstanceOutputObserver, JobInstanceMetadata
-from runtools.runcore.run import PhaseRun, PhaseInfo
+from runtools.runcore.output import OutputLine
+from runtools.runcore.run import PhaseRun
 from runtools.runcore.util.observer import ObservableNotification
 from runtools.runcore.util.socket import SocketServer
 
@@ -108,10 +109,10 @@ class InstanceOutputReceiver(EventReceiver):
         self._notification = ObservableNotification[InstanceOutputObserver]()
 
     def handle_event(self, _, instance_meta, event):
-        phase = PhaseInfo.deserialize(event['phase'])
-        output = event['output']
+        text = event['text']
         is_error = event['is_error']
-        self._notification.observer_proxy.new_instance_output(instance_meta, phase, output, is_error)
+        phase_id = event['phase_id']
+        self._notification.observer_proxy.new_instance_output(instance_meta, OutputLine(text, is_error, phase_id))
 
     def add_observer_output(self, observer):
         self._notification.add_observer(observer)

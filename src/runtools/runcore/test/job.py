@@ -6,7 +6,7 @@ from runtools.runcore import util
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.job import JobInstance, JobRun, InstanceTransitionObserver, \
     InstanceOutputObserver, JobInstanceMetadata
-from runtools.runcore.output import InMemoryOutput, Mode
+from runtools.runcore.output import InMemoryTailBuffer, Output, TailNotSupportedError
 from runtools.runcore.run import Phase, PhaseRun, TerminationInfo, Run, RunState, \
     TerminationStatus, PhaseInfo, RunFailure, Lifecycle
 from runtools.runcore.track import TaskTrackerMem
@@ -57,6 +57,17 @@ class FakePhase(Phase):
     def stop(self):
         self.stopped = True
 
+class BasicOutput(Output):
+
+    def __init__(self, tail_buffer):
+        self.tail_buffer = tail_buffer
+
+    def tail(self, count: int = 0):
+        if not self.tail_buffer:
+            raise TailNotSupportedError
+
+        return self.tail_buffer.get_lines(count=count)
+
 
 class FakeJobInstance(JobInstance):
 
@@ -74,7 +85,7 @@ class FakeJobInstance(JobInstance):
         self._current_phase_index = -1
         self._condition = Condition()
 
-        self.output = InMemoryOutput()
+        self._output = BasicOutput(InMemoryTailBuffer())
         self._task_tracker = TaskTrackerMem()
         self.transition_notification = ObservableNotification[InstanceTransitionObserver]()
         self.output_notification = ObservableNotification[InstanceOutputObserver]()
@@ -101,6 +112,10 @@ class FakeJobInstance(JobInstance):
     def phases(self):
         return self._phases
 
+    @property
+    def output(self):
+        return self._output
+
     def get_phase(self, phase_id: str, phase_type: str = None) -> Phase:
         """
         Retrieve a phase by its ID and optionally verify its type.
@@ -119,9 +134,6 @@ class FakeJobInstance(JobInstance):
     def _create_run_info(self) -> Run:
         phases = tuple(p.info() for p in self.phases)
         return Run(phases, self.lifecycle, self.termination)
-
-    def get_output(self, mode=Mode.HEAD, *, lines=0):
-        return self.output.fetch(mode, lines=lines)
 
     def prime(self):
         if self._current_phase_index != -1:
@@ -254,7 +266,7 @@ class TestJobRunBuilder:
 
 def ended_run(job_id, run_id='r1', *, offset_min=0, term_status=TerminationStatus.COMPLETED, created=None,
               completed=None) -> JobRun:
-    start_time = datetime.now(UTC).replace(microsecond=0) + timedelta(minutes=offset_min)
+    start_time = datetime.now().replace(microsecond=0) + timedelta(minutes=offset_min)
 
     builder = TestJobRunBuilder(job_id, run_id, user_params={'name': 'value'})
 

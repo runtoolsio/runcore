@@ -1,5 +1,17 @@
+from abc import ABC, abstractmethod
+from collections import deque
+from dataclasses import dataclass
 from enum import Enum, auto
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
+
+from runtools.runcore.common import InvalidStateError
+
+
+class Output(ABC):
+
+    @abstractmethod
+    def tail(self, count: int = 0):
+        pass
 
 
 class Mode(Enum):
@@ -7,41 +19,57 @@ class Mode(Enum):
     TAIL = auto()
 
 
-class InMemoryOutput:
+@dataclass
+class OutputLine:
+    text: str
+    is_error: bool
+    source: Optional[str] = None
 
-    def __init__(self):
-        self._output_lines: List[Tuple[str, bool]] = []
-        self._source_ranges: Dict[str, range] = {}
+    @classmethod
+    def deserialize(cls, data: dict) -> 'OutputLine':
+        return cls(
+            text=data["text"],
+            is_error=data["is_error"],
+            source=data.get("source"),
+        )
 
-    def add(self, source: str, output: str, is_error: bool):
-        self._output_lines.append((output, is_error))
+    def serialize(self):
+        return {"text": self.text, "is_error": self.is_error, "source": self.source}
 
-        if source not in self._source_ranges:
-            self._source_ranges[source] = range(len(self._output_lines) - 1, len(self._output_lines))
-        else:
-            start = self._source_ranges[source].start
-            self._source_ranges[source] = range(start, len(self._output_lines))
 
-    def fetch(self, mode=Mode.HEAD, *, source=None, lines=0) -> List[Tuple[str, bool]]:
-        if lines < 0:
-            raise ValueError("Invalid argument: arg `lines` cannot be negative but was " + str(lines))
+class TailBuffer(ABC):
 
-        if source is not None:
-            if source_range := self._source_ranges.get(source):
-                source_lines = self._output_lines[source_range.start:source_range.stop]
-                if lines:
-                    if mode == Mode.HEAD:
-                        return source_lines[:lines]
-                    elif mode == Mode.TAIL:
-                        return source_lines[-lines:]
-                return source_lines
-            else:
-                return []
+    def add_line(self, line: OutputLine):
+        pass
 
-        if lines:
-            if mode == Mode.HEAD:
-                return self._output_lines[:lines]
-            elif mode == Mode.TAIL:
-                return self._output_lines[-lines:]
+    def get_lines(self, mode: Mode = Mode.HEAD, lines: int = 0) -> List[OutputLine]:
+        pass
 
-        return self._output_lines
+
+class InMemoryTailBuffer(TailBuffer):
+
+    def __init__(self, max_capacity: int = 0):
+        if max_capacity < 0:
+            raise ValueError("max_capacity cannot be negative")
+        self._max_capacity = max_capacity or None
+        self._lines = deque(maxlen=self._max_capacity)
+
+    def add_line(self, output_line: OutputLine):
+        self._lines.append(output_line)
+
+    def get_lines(self, mode: Mode = Mode.TAIL, count: int = 0) -> List[OutputLine]:
+        if count < 0:
+            raise ValueError("Count cannot be negative")
+
+        output = list(self._lines)
+        if not count:
+            return output
+
+        if mode == Mode.TAIL:
+            return output[-count:]
+
+        if mode == Mode.HEAD:
+            return output[:count]
+
+class TailNotSupportedError(InvalidStateError):
+    pass

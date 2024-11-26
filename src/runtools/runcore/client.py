@@ -7,10 +7,11 @@ import logging
 from dataclasses import dataclass
 from enum import Enum, auto
 from json import JSONDecodeError
-from typing import List, Any, Dict, Optional, TypeVar, Generic, Callable, Tuple
+from typing import List, Any, Dict, Optional, TypeVar, Generic, Callable
 
 from runtools.runcore import paths
 from runtools.runcore.job import JobRun, JobInstanceMetadata
+from runtools.runcore.output import OutputLine
 from runtools.runcore.util.socket import SocketClient, ServerResponse
 
 log = logging.getLogger(__name__)
@@ -104,7 +105,7 @@ class StopResponse(JobInstanceResponse):
 
 @dataclass
 class OutputResponse(JobInstanceResponse):
-    output: List[Tuple[str, bool]]
+    output: List[OutputLine]
 
 
 @dataclass
@@ -313,7 +314,7 @@ class APIClient(SocketClient):
         """
 
         def resp_mapper(inst_resp: InstanceResult) -> OutputResponse:
-            return OutputResponse(inst_resp.instance, inst_resp.result["output"])
+            return OutputResponse(inst_resp.instance, [OutputLine.deserialize(line) for line in inst_resp.result["output"]])
 
         return self.send_request("instances.get_output", instance_match, resp_mapper=resp_mapper)
 

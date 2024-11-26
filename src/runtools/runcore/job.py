@@ -15,7 +15,7 @@ from enum import Enum, auto
 from threading import Thread
 from typing import Dict, Any, List, Optional, Tuple
 
-from runtools.runcore.output import Mode
+from runtools.runcore.output import OutputLine
 from runtools.runcore.run import TerminationStatus, RunState, Run, PhaseRun, PhaseInfo, \
     Lifecycle, TerminationInfo
 from runtools.runcore.track import TrackedTask
@@ -302,12 +302,12 @@ class JobInstance(abc.ABC):
         """
 
     @property
-    @abc.abstractmethod
     def instance_id(self):
         """
         Returns:
             str: Instance reference/identity identifier.
         """
+        return self.metadata.instance_id
 
     @property
     def job_id(self):
@@ -323,7 +323,7 @@ class JobInstance(abc.ABC):
         Returns:
             str: Run part of the instance identifier.
         """
-        return self.metadata.job_id
+        return self.metadata.run_id
 
     @property
     @abc.abstractmethod
@@ -360,9 +360,10 @@ class JobInstance(abc.ABC):
             JobRun: A snapshot representing the current state of the job instance.
         """
 
+    @property
     @abc.abstractmethod
-    def get_output(self, mode=Mode.HEAD, *, lines=0):
-        """TODO Return an output reader object"""
+    def output(self):
+        pass
 
     @abc.abstractmethod
     def run(self):
@@ -373,7 +374,7 @@ class JobInstance(abc.ABC):
         by calling `exec_error` method.
         """
 
-    def run_new_thread(self, daemon=False):
+    def run_in_new_thread(self, daemon=False):
         """
         Run the job.
 
@@ -573,7 +574,7 @@ class InstanceTransitionObserver(abc.ABC):
 class InstanceOutputObserver(abc.ABC):
 
     @abc.abstractmethod
-    def new_instance_output(self, instance_meta: JobInstanceMetadata, phase: PhaseInfo, output: str, is_err: bool):
+    def new_instance_output(self, instance_meta: JobInstanceMetadata, output_line: OutputLine):
         """TODO"""
 
 

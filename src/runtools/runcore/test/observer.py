@@ -12,6 +12,7 @@ from threading import Condition
 from typing import Tuple, List, Callable
 
 from runtools.runcore.job import JobRun, InstanceTransitionObserver, InstanceOutputObserver
+from runtools.runcore.output import OutputLine
 from runtools.runcore.run import PhaseRun, RunState, PhaseInfo
 
 log = logging.getLogger(__name__)
@@ -106,9 +107,9 @@ class TestOutputObserver(InstanceOutputObserver):
     def __init__(self):
         self.outputs = []
 
-    def new_instance_output(self, job_run: JobRun, phase_meta: PhaseInfo, output: str, is_error: bool):
-        self.outputs.append((job_run, phase_meta, output, is_error))
+    def new_instance_output(self, job_run: JobRun, output_line: OutputLine):
+        self.outputs.append((job_run, output_line))
 
     @property
-    def last_line(self):
-        return self.outputs[-1][2]
+    def last_text(self):
+        return self.outputs[-1][1].text
