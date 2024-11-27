@@ -302,7 +302,7 @@ class APIClient(SocketClient):
 
         return self.send_request("instances.stop", instance_match, resp_mapper=resp_mapper)
 
-    def get_output(self, instance_match=None) -> CollectedResponses[OutputResponse]:
+    def get_tail(self, instance_match=None) -> CollectedResponses[OutputResponse]:
         """
         Retrieves the output from job instances that match the provided criteria.
 
@@ -314,9 +314,9 @@ class APIClient(SocketClient):
         """
 
         def resp_mapper(inst_resp: InstanceResult) -> OutputResponse:
-            return OutputResponse(inst_resp.instance, [OutputLine.deserialize(line) for line in inst_resp.result["output"]])
+            return OutputResponse(inst_resp.instance, [OutputLine.deserialize(line) for line in inst_resp.result["tail"]])
 
-        return self.send_request("instances.get_output", instance_match, resp_mapper=resp_mapper)
+        return self.send_request("instances.get_tail", instance_match, resp_mapper=resp_mapper)
 
     def signal_dispatch(self, instance_match, queue_id) -> CollectedResponses[SignalDispatchResponse]:
         """

@@ -131,22 +131,22 @@ def stop_instances(run_match) -> CollectedResponses[StopResponse]:
         return c.stop_instances(run_match)
 
 
-def get_output(run_match=None) -> CollectedResponses[OutputResponse]:
+def get_tail(run_match=None) -> CollectedResponses[OutputResponse]:
     """
     This function requests the last lines of the output from job instances that optionally match the provided criteria.
 
     Args:
-        run_match (InstanceMatchCriteria, optional):
+        run_match (JobMatchCriteria, optional):
             The operation will affect only instances matching these criteria.
             If not provided, the tail of all instances is read.
 
     Returns:
-        A container holding :class:`TailResponse` objects, each containing last lines for a respective job instance.
+        A container holding :class:`OutputResponse` objects, each containing last lines for a respective job instance.
         It also includes any errors that may have happened, each one related to a specific server API.
     """
 
     with api_client() as c:
-        return c.get_output(run_match)
+        return c.get_tail(run_match)
 
 
 def signal_dispatch(instance_match, queue_id) -> CollectedResponses[SignalDispatchResponse]:
