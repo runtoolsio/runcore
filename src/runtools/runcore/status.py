@@ -71,7 +71,10 @@ class OperationTracker:
                unit: Optional[str] = None,
                updated_at: Optional[datetime] = None) -> None:
         if completed is not None:
-            self.completed = completed
+            if not self.completed or completed > self.completed:
+                self.completed = completed  # Assuming is total completed
+            else:
+                self.completed += completed  # Assuming it is an increment
         if total is not None:
             self.total = total
         if unit is not None:
@@ -96,23 +99,22 @@ class StatusTracker:
         self._operations: List[OperationTracker] = []
         self.result = None
 
-    def set_event(self, text: str, timestamp=None) -> None:
+    def event(self, text: str, timestamp=None) -> None:
         timestamp = timestamp or datetime.now(UTC).replace(tzinfo=None)
         self.last_event = Event(text, timestamp)
 
-    def add_operation(self, name: str) -> OperationTracker:
-        op = OperationTracker(name)
-        self._operations.append(op)
+    def operation(self, name: str, timestamp=None) -> OperationTracker:
+        op = self._get_operation(name)
+        if not op:
+            op = OperationTracker(name, timestamp)
+            self._operations.append(op)
+
         return op
 
-    def get_operation(self, name: str) -> Optional[OperationTracker]:
+    def _get_operation(self, name: str) -> Optional[OperationTracker]:
         return next((op for op in self._operations if op.name == name), None)
 
-    @property
-    def last_operation(self) -> Optional[OperationTracker]:
-        return self._operations[-1] if self._operations else None
-
-    def set_result(self, result: str) -> None:
+    def result(self, result: str) -> None:
         self.result = result
 
     def to_status(self) -> Status:
