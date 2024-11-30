@@ -18,7 +18,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from runtools.runcore.output import OutputLine
 from runtools.runcore.run import TerminationStatus, RunState, Run, PhaseRun, PhaseInfo, \
     Lifecycle, TerminationInfo
-from runtools.runcore.track import TrackedTask
+from runtools.runcore.status import Status
 from runtools.runcore.util import MatchingStrategy, format_dt_iso
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
 
@@ -451,21 +451,21 @@ class JobRun:
     metadata: JobInstanceMetadata
     _run: Run  # private field
     """Detailed information about the run in the form of the tracked task"""
-    task: Optional[TrackedTask] = None
+    status: Optional[Status] = None
 
     @classmethod
     def deserialize(cls, as_dict: Dict[str, Any]):
         return cls(
             metadata=JobInstanceMetadata.deserialize(as_dict['metadata']),
             _run=Run.deserialize(as_dict['run']),
-            task=TrackedTask.deserialize(as_dict['task']) if as_dict.get('task') else None,
+            status=Status.deserialize(as_dict['task']) if as_dict.get('task') else None,
         )
 
     def serialize(self) -> Dict[str, Any]:
         return {
             "metadata": self.metadata.serialize(),
             "run": self._run.serialize(),
-            "task": self.task.serialize() if self.task else None,
+            "task": self.status.serialize() if self.status else None,
         }
 
     @property

@@ -14,7 +14,7 @@ from runtools.runcore.db import SortCriteria, Persistence
 from runtools.runcore.job import JobStats, JobRun, JobRuns, InstanceTransitionObserver, JobInstanceMetadata
 from runtools.runcore.run import RunState, Lifecycle, PhaseInfo, RunFailure, RunError, Run, TerminationInfo, \
     TerminationStatus, Outcome
-from runtools.runcore.track import TrackedTask
+from runtools.runcore.status import Status
 from runtools.runcore.util import MatchingStrategy, format_dt_sql, parse_dt_sql
 
 log = logging.getLogger(__name__)
@@ -146,7 +146,7 @@ class SQLite(Persistence, InstanceTransitionObserver):
                          termination_status int,
                          failure text,
                          error text,
-                         track text,
+                         status text,
                          warnings text,
                          misc text)
                          ''')
@@ -208,10 +208,10 @@ class SQLite(Persistence, InstanceTransitionObserver):
             term_status = TerminationStatus.from_code(t[9])
             failure = RunFailure.deserialize(json.loads(t[10])) if t[10] else None
             error = RunError.deserialize(json.loads(t[11])) if t[11] else None
-            task = TrackedTask.deserialize(json.loads(t[12])) if t[12] else None
+            status = Status.deserialize(json.loads(t[12])) if t[12] else None
             run = Run(phases, lifecycle, TerminationInfo(term_status, ended_at, failure, error))
 
-            return JobRun(metadata, run, task)
+            return JobRun(metadata, run, status)
 
         return JobRuns((to_job_run(row) for row in c.fetchall()))
 
@@ -326,7 +326,7 @@ class SQLite(Persistence, InstanceTransitionObserver):
                     r.termination.status.value,
                     json.dumps(r.termination.failure.serialize()) if r.termination.failure else None,
                     json.dumps(r.termination.error.serialize()) if r.termination.error else None,
-                    json.dumps(r.task.serialize()) if r.task else None,
+                    json.dumps(r.status.serialize()) if r.status else None,
                     None,  # TODO Warnings as a separate column?
                     None
                     )

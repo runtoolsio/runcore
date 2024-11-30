@@ -9,7 +9,7 @@ from runtools.runcore.job import JobInstance, JobRun, InstanceTransitionObserver
 from runtools.runcore.output import InMemoryTailBuffer, Output, TailNotSupportedError
 from runtools.runcore.run import Phase, PhaseRun, TerminationInfo, Run, RunState, \
     TerminationStatus, PhaseInfo, RunFailure, Lifecycle
-from runtools.runcore.track import TaskTrackerMem
+from runtools.runcore.status import StatusTracker
 from runtools.runcore.util import utc_now
 from runtools.runcore.util.observer import ObservableNotification, DEFAULT_OBSERVER_PRIORITY
 
@@ -86,7 +86,7 @@ class FakeJobInstance(JobInstance):
         self._condition = Condition()
 
         self._output = BasicOutput(InMemoryTailBuffer())
-        self._task_tracker = TaskTrackerMem()
+        self._status_tracker = StatusTracker()
         self.transition_notification = ObservableNotification[InstanceTransitionObserver]()
         self.output_notification = ObservableNotification[InstanceOutputObserver]()
 
@@ -100,7 +100,7 @@ class FakeJobInstance(JobInstance):
 
     @property
     def task_tracker(self):
-        return self._task_tracker
+        return self._status_tracker
 
     @property
     def current_phase(self):
@@ -129,7 +129,7 @@ class FakeJobInstance(JobInstance):
 
     def job_run(self) -> JobRun:
         run_info = self._create_run_info()
-        return JobRun(self.metadata, run_info, self._task_tracker.tracked_task)
+        return JobRun(self.metadata, run_info, self._status_tracker.to_status())
 
     def _create_run_info(self) -> Run:
         phases = tuple(p.info() for p in self.phases)
@@ -158,7 +158,7 @@ class FakeJobInstance(JobInstance):
         # Call transition hook through the notification system
         old_phase = self.lifecycle.previous_run
         new_phase = self.lifecycle.current_run
-        job_run = JobRun(self.metadata, self._create_run_info(), self._task_tracker.tracked_task)
+        job_run = JobRun(self.metadata, self._create_run_info(), self._status_tracker.to_status())
         self.transition_notification.observer_proxy.new_instance_phase(
             job_run, old_phase, new_phase, self.lifecycle.phase_count)
 
@@ -237,7 +237,7 @@ class TestJobRunBuilder:
         run_id = run_id or instance_id
         self.metadata = JobInstanceMetadata(job_id, run_id, instance_id, system_params or {}, user_params or {})
         self.phase_runs = []
-        self.tracker = TaskTrackerMem()
+        self.tracker = StatusTracker()
         self.termination_info = None
         self.current_ts = datetime.now(UTC).replace(microsecond=0)
 
@@ -261,7 +261,7 @@ class TestJobRunBuilder:
         meta = [PhaseInfo(p.phase_id, 'TEST', p.run_state) for p in self.phase_runs]
         lifecycle = Lifecycle(*self.phase_runs)
         run = Run(tuple(meta), lifecycle, self.termination_info)
-        return JobRun(self.metadata, run, self.tracker.tracked_task)
+        return JobRun(self.metadata, run, self.tracker.to_status())
 
 
 def ended_run(job_id, run_id='r1', *, offset_min=0, term_status=TerminationStatus.COMPLETED, created=None,

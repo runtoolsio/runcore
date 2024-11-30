@@ -7,10 +7,9 @@ from runtools.runcore import util
 def iso_date_time_parser(ts_key):
     def parse(text):
         match = re.search(util.ISO_DATE_TIME_PATTERN, text)
-        if match:
-            return {ts_key: match.group(0)}
-        else:
+        if not match:
             return None
+        return {ts_key: match.group(0)}
 
     return parse
 

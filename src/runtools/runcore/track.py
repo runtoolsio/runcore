@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Optional, Sequence
 
 from runtools.runcore import util
+from runtools.runcore.status import StatusObserver
 from runtools.runcore.util import format_dt_iso, is_empty
 from runtools.runcore.util.observer import ObservableNotification
 
@@ -40,13 +41,13 @@ class Trackable:
         self._timestamp_gen = timestamp_gen
         self._created_at: Optional[datetime] = created_at or timestamp_gen()
         self._updated_at: Optional[datetime] = None
-        self._notification = ObservableNotification[TrackedTaskObserver]()  # TODO Error hook
+        self._notification = ObservableNotification[StatusObserver]()  # TODO Error hook
         self._active = True
 
     def _updated(self, timestamp):
         timestamp = timestamp or self._timestamp_gen()
         self._updated_at = timestamp
-        self._notification.observer_proxy.new_trackable_update()
+        self._notification.observer_proxy.new_status_update()
 
         if self._parent:
             self._parent._updated(timestamp)
@@ -169,6 +170,7 @@ class OperationTracker(ABC):
 
     @abstractmethod
     def update(self, completed, total, unit=None, *, timestamp=None):
+
         pass
 
     @abstractmethod
@@ -499,7 +501,3 @@ class TaskTrackerMem(Trackable, TaskTracker):
         self._warnings.append(Event(warn, timestamp or self._timestamp_gen()))
 
 
-class TrackedTaskObserver(ABC):
-
-    def new_trackable_update(self):
-        pass
