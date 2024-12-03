@@ -131,6 +131,30 @@ class Status:
         return None
 
 
+    def __str__(self) -> str:
+        """
+        Formats a status line showing active operations and the last event.
+        Format: [op1] [op2]...  last_event_text
+        Only shows active operations. If there's a result, it shows that instead.
+        """
+        if self.result:
+            return self.result
+
+        parts = []
+
+        # Add active operations
+        active_ops = [str(op) for op in self.operations if op.active]
+        if active_ops:
+            parts.append(" ".join(active_ops))
+
+        # Add last event if present
+        if self.last_event:
+            if parts:  # If we have operations, add the separator without leading space
+                parts[-1] = parts[-1] + "..."  # Append directly to last part
+            parts.append(self.last_event.text)
+
+        return "  ".join(parts) if parts else ""
+
 class OperationTracker:
 
     def __init__(self, name: str, created_at: datetime = None):
