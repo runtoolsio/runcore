@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import re
 from abc import ABC
 from dataclasses import dataclass
-from datetime import UTC
 from datetime import datetime
 from typing import Optional, List
 
@@ -95,9 +93,9 @@ class Operation:
 
 @dataclass(frozen=True)
 class Status:
-    # TODO Warnings
     last_event: Optional[Event]
     operations: List[Operation]
+    warnings: List[Event]
     result: Optional[str]
 
     @classmethod
@@ -105,6 +103,7 @@ class Status:
         return cls(
             last_event=Event.deserialize(data['last_event']) if data['last_event'] else None,
             operations=[Operation.deserialize(op) for op in data['operations']],
+            warnings=[Event.deserialize(w) for w in data['warnings']],
             result=data['result']
         )
 
@@ -112,6 +111,7 @@ class Status:
         return {
             'last_event': self.last_event.serialize() if self.last_event else None,
             'operations': [op.serialize() for op in self.operations],
+            'warnings': [w.serialize() for w in self.warnings],
             'result': self.result
         }
 
@@ -130,120 +130,35 @@ class Status:
                 return operation
         return None
 
-
     def __str__(self) -> str:
         """
         Formats a status line showing active operations and the last event.
-        Format: [op1] [op2]...  last_event_text
-        Only shows active operations. If there's a result, it shows that instead.
+        Format: [op1] [op2]...  last_event_text  (!warning1, warning2)
+        If there's a result, shows: result  (!warning1, warning2)
         """
-        if self.result:
-            return self.result
-
         parts = []
 
-        # Add active operations
-        active_ops = [str(op) for op in self.operations if op.active]
-        if active_ops:
-            parts.append(" ".join(active_ops))
+        # Add result or active operations
+        if self.result:
+            parts.append(self.result)
+        else:
+            # Add active operations
+            active_ops = [str(op) for op in self.operations if op.active]
+            if active_ops:
+                parts.append(" ".join(active_ops))
 
-        # Add last event if present
-        if self.last_event:
-            if parts:  # If we have operations, add the separator without leading space
-                parts[-1] = parts[-1] + "..."  # Append directly to last part
-            parts.append(self.last_event.text)
+            # Add last event if present
+            if self.last_event:
+                if parts:  # If we have operations, add the separator
+                    parts[-1] = parts[-1] + "..."  # Append directly to last part
+                parts.append(self.last_event.text)
+
+        # Add warnings if present
+        if self.warnings:
+            warnings_str = ", ".join(w.text for w in self.warnings)
+            parts.append(f"(!{warnings_str})")
 
         return "  ".join(parts) if parts else ""
-
-class OperationTracker:
-
-    def __init__(self, name: str, created_at: datetime = None):
-        self.name = name
-        self.completed = None
-        self.total = None
-        self.unit = ''
-        self.created_at = created_at or datetime.now(UTC).replace(tzinfo=None)
-        self.updated_at = self.created_at
-        self.active = True
-
-    def update(self,
-               completed: Optional[float] = None,
-               total: Optional[float] = None,
-               unit: Optional[str] = None,
-               updated_at: Optional[datetime] = None) -> None:
-        if completed is not None:
-            if not self.completed or completed > self.completed:
-                self.completed = completed  # Assuming is total completed
-            else:
-                self.completed += completed  # Assuming it is an increment
-        if total is not None:
-            self.total = total
-        if unit is not None:
-            self.unit = unit
-        self.updated_at = updated_at or datetime.now(UTC).replace(tzinfo=None)
-
-    def parse_value(self, value):
-        # Check if value is a string and extract number and unit
-        if isinstance(value, str):
-            match = re.match(r"(\d+(\.\d+)?)(\s*)(\w+)?", value)
-            if match:
-                number = float(match.group(1))
-                unit = match.group(4) if match.group(4) else ''
-                return number, unit
-            else:
-                raise ValueError("String format is not correct. Expected format: {number}{unit} or {number} {unit}")
-        elif isinstance(value, (float, int)):
-            return float(value), self.unit
-        else:
-            raise TypeError("Value must be in the format `{number}{unit}` or `{number} {unit}`, but it was: "
-                            + str(value))
-
-    @property
-    def finished(self):
-        return self.completed and self.total and (self.completed == self.total)
-
-    def to_operation(self) -> Operation:
-        return Operation(
-            self.name,
-            self.completed,
-            self.total,
-            self.unit,
-            self.created_at,
-            self.updated_at,
-            self.active
-        )
-
-
-class StatusTracker:
-
-    def __init__(self):
-        self._last_event: Optional[Event] = None
-        self._operations: List[OperationTracker] = []
-        self._result: Optional[str] = None
-
-    def event(self, text: str, timestamp=None) -> None:
-        timestamp = timestamp or datetime.now(UTC).replace(tzinfo=None)
-        self._last_event = Event(text, timestamp)
-        for op in self._operations:
-            if op.finished:
-                op.active = False
-
-    def operation(self, name: str, timestamp=None) -> OperationTracker:
-        op = self._get_operation(name)
-        if not op:
-            op = OperationTracker(name, timestamp)
-            self._operations.append(op)
-
-        return op
-
-    def _get_operation(self, name: str) -> Optional[OperationTracker]:
-        return next((op for op in self._operations if op.name == name), None)
-
-    def result(self, result: str) -> None:
-        self._result = result
-
-    def to_status(self) -> Status:
-        return Status(self._last_event, [op.to_operation() for op in self._operations], self._result)
 
 
 class StatusObserver(ABC):

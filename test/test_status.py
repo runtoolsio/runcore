@@ -1,42 +1,7 @@
-from runtools.runcore.status import StatusTracker, Operation
-from runtools.runcore.util import parse_datetime, utc_now
+from datetime import datetime, UTC
 
-
-def test_add_event():
-    tracker = StatusTracker()
-    tracker.event('e1')
-    tracker.event('e2')
-
-    assert tracker.to_status().last_event.text == 'e2'
-
-
-def test_operation_updates():
-    tracker = StatusTracker()
-    tracker.operation('op1').update(1, 10, 'items')
-
-    op1 = tracker.to_status().operations[0]
-    assert op1.name == 'op1'
-    assert op1.completed == 1
-    assert op1.total == 10
-    assert op1.unit == 'items'
-
-
-def test_operation_incr_update():
-    tracker = StatusTracker()
-    tracker.operation('op1').update(1)
-    tracker.operation('op1').update(1)
-
-    op1 = tracker.to_status().operations[0]
-    assert op1.name == 'op1'
-    assert op1.completed == 2
-    assert op1.total is None
-    assert op1.unit == ''
-
-    tracker.operation('op2').update(5, 10)
-    tracker.operation('op2').update(4, 10)
-    op1 = tracker.to_status().operations[1]
-    assert op1.completed == 9
-    assert op1.total == 10
+from runtools.runcore.status import Operation, Status, Event
+from runtools.runcore.util import utc_now
 
 
 def test_operation_str():
@@ -58,43 +23,60 @@ def test_progress_str():
 
 
 def test_status_str():
-    tracker = StatusTracker()
-    assert str(tracker.to_status()) == ""
+    now = datetime.now(UTC)
+
+    # Test empty status
+    assert str(Status(None, [], [], None)) == ""
 
     # Test with just an event
-    tracker = StatusTracker()
-    tracker.event("Processing")
-    assert str(tracker.to_status()) == "Processing"
+    assert str(Status(Event("Processing", now), [], [], None)) == "Processing"
 
     # Test with single operation
-    tracker = StatusTracker()
-    tracker.operation("Copy").update(45, 100, "files")
-    assert str(tracker.to_status()) == "[Copy 45/100 files (45%)]"
+    op = Operation("Copy", 45, 100, "files", now, now)
+    assert str(Status(None, [op], [], None)) == "[Copy 45/100 files (45%)]"
 
     # Test with operation and event
-    tracker = StatusTracker()
-    tracker.operation("Copy").update(45, 100, "files")
-    tracker.event("Processing batch 2")
-    assert str(tracker.to_status()) == "[Copy 45/100 files (45%)]...  Processing batch 2"
+    assert str(Status(Event("Working batch 2", now), [op], [], None)) == "[Copy 45/100 files (45%)]...  Working batch 2"
 
     # Test with multiple operations and event
-    tracker = StatusTracker()
-    tracker.operation("Copy").update(45, 100, "files")
-    tracker.operation("Validate").update(20, 50, "records")
-    tracker.event("Processing batch 2")
-    assert str(tracker.to_status()) == "[Copy 45/100 files (45%)] [Validate 20/50 records (40%)]...  Processing batch 2"
+    ops = [
+        Operation("Copy", 45, 100, "files", now, now),
+        Operation("Validate", 20, 50, "records", now, now)
+    ]
+    assert str(Status(Event("Processing batch 2", now), ops, [],
+                      None)) == "[Copy 45/100 files (45%)] [Validate 20/50 records (40%)]...  Processing batch 2"
 
     # Test with finished operation (should not show in status)
-    tracker = StatusTracker()
-    op = tracker.operation("Copy")
-    op.update(100, 100, "files")
-    op.active = False
-    tracker.event("Finalizing")
-    assert str(tracker.to_status()) == "Finalizing"
+    finished_op = Operation("Copy", 100, 100, "files", now, now, active=False)
+    assert str(Status(Event("Finalizing", now), [finished_op], [], None)) == "Finalizing"
 
     # Test with result (should override everything else)
-    tracker = StatusTracker()
-    tracker.operation("Copy").update(45, 100, "files")
-    tracker.event("Processing")
-    tracker.result("Completed successfully")
-    assert str(tracker.to_status()) == "Completed successfully"
+    assert str(Status(Event("Processing", now), [op], [], "Completed successfully")) == "Completed successfully"
+
+
+def test_status_str_with_warnings():
+    now = datetime.now(UTC)
+
+    assert str(Status(None, [], [Event("Low disk space", now)], None)) == "(!Low disk space)"
+
+    assert str(Status(None, [], [Event("Low disk space", now), Event("Network unstable", now)],
+                      None)) == "(!Low disk space, Network unstable)"
+
+    assert str(
+        Status(Event("Processing", now), [], [Event("Low disk space", now)], None)) == "Processing  (!Low disk space)"
+
+    op = Operation("Copy", 45, 100, "files", now, now)
+    assert str(
+        Status(None, [op], [Event("Low disk space", now)], None)) == "[Copy 45/100 files (45%)]  (!Low disk space)"
+
+    assert str(
+        Status(Event("Processing batch 2", now), [op], [Event("Low disk space", now), Event("Network unstable", now)],
+               None)) == "[Copy 45/100 files (45%)]...  Processing batch 2  (!Low disk space, Network unstable)"
+
+    # Test that warnings are included with result
+    assert str(Status(Event("Processing", now), [op], [Event("Low disk space", now)],
+                      "Completed")) == "Completed  (!Low disk space)"
+
+    # Test result with multiple warnings
+    assert str(
+        Status(None, [], [Event("Error 1", now), Event("Error 2", now)], "Failed")) == "Failed  (!Error 1, Error 2)"

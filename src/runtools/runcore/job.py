@@ -327,7 +327,7 @@ class JobInstance(abc.ABC):
 
     @property
     @abc.abstractmethod
-    def task_tracker(self):
+    def status_tracker(self):
         """TODO: Task tracking information ..."""
 
     @property
