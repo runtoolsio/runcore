@@ -16,7 +16,7 @@ from collections import OrderedDict
 from copy import copy
 from dataclasses import dataclass
 from enum import Enum, EnumMeta
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, TypeVar, Generic
 
 from runtools.runcore import util
 from runtools.runcore.util import format_dt_iso, is_empty
@@ -394,7 +394,10 @@ class TerminateRun(Exception):
         super().__init__(f"Termination status: {term_status}")
 
 
-class Phase(ABC):
+E = TypeVar('E')
+
+
+class Phase(ABC, Generic[E]):
 
     @property
     @abstractmethod
@@ -431,7 +434,7 @@ class Phase(ABC):
         pass
 
     @abstractmethod
-    def run(self, run_ctx):
+    def run(self, env, ctx):
         pass
 
     @abstractmethod

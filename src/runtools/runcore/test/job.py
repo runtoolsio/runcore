@@ -6,7 +6,7 @@ from runtools.runcore import util
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.job import JobInstance, JobRun, InstanceTransitionObserver, \
     InstanceOutputObserver, JobInstanceMetadata
-from runtools.runcore.output import InMemoryTailBuffer, Output, TailNotSupportedError
+from runtools.runcore.output import Output, Mode
 from runtools.runcore.run import Phase, PhaseRun, TerminationInfo, Run, RunState, \
     TerminationStatus, PhaseInfo, RunFailure, Lifecycle
 from runtools.runcore.util import utc_now
@@ -50,7 +50,7 @@ class FakePhase(Phase):
     def stop_status(self):
         return TerminationStatus.STOPPED
 
-    def run(self, run_ctx):
+    def run(self, env, run_ctx):
         self.ran = True
 
     def stop(self):
@@ -58,14 +58,14 @@ class FakePhase(Phase):
 
 class BasicOutput(Output):
 
-    def __init__(self, tail_buffer):
-        self.tail_buffer = tail_buffer
+    def __init__(self):
+        self.lines = []
 
-    def tail(self, count: int = 0):
-        if not self.tail_buffer:
-            raise TailNotSupportedError
+    def add_line(self, output_line):
+        self.lines.append(output_line)
 
-        return self.tail_buffer.get_lines(count=count)
+    def tail(self, mode: Mode = Mode.TAIL, max_lines: int = 0):
+        return self.lines
 
 
 class FakeJobInstance(JobInstance):
@@ -84,7 +84,7 @@ class FakeJobInstance(JobInstance):
         self._current_phase_index = -1
         self._condition = Condition()
 
-        self._output = BasicOutput(InMemoryTailBuffer())
+        self._output = BasicOutput()
         self._status_tracker = None
         self.transition_notification = ObservableNotification[InstanceTransitionObserver]()
         self.output_notification = ObservableNotification[InstanceOutputObserver]()
