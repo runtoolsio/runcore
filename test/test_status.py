@@ -47,7 +47,7 @@ def test_status_str():
                       None)) == "[Copy 45/100 files (45%)] [Validate 20/50 records (40%)]...  Processing batch 2"
 
     # Test with finished operation (should not show in status)
-    finished_op = Operation("Copy", 100, 100, "files", now, now, active=False)
+    finished_op = Operation("Copy", 100, 100, "files", now, now, is_active=False)
     assert str(Status(Event("Finalizing", now), [finished_op], [], None)) == "Finalizing"
 
     # Test with result (should override everything else)

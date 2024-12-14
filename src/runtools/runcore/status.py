@@ -33,7 +33,8 @@ class Operation:
     unit: Optional[str]
     created_at: datetime
     updated_at: datetime
-    active: bool = True
+    is_active: bool = True
+    is_completed: bool = False
 
     @property
     def pct_done(self) -> Optional[float]:
@@ -49,7 +50,9 @@ class Operation:
             total=data['total'],
             unit=data['unit'],
             created_at=datetime.fromisoformat(data['created_at']),
-            updated_at=datetime.fromisoformat(data['updated_at'])
+            updated_at=datetime.fromisoformat(data['updated_at']),
+            is_active=data['is_active'],
+            is_completed=data['is_completed'],
         )
 
     def serialize(self) -> dict:
@@ -59,12 +62,19 @@ class Operation:
             'total': self.total,
             'unit': self.unit,
             'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat()
+            'updated_at': self.updated_at.isoformat(),
+            'is_active': self.is_active,
+            'is_completed': self.is_completed,
         }
 
     @property
     def finished(self):
-        return self.completed and self.total and (self.completed == self.total)
+        return self.is_completed or (
+                self.has_progress and
+                self.completed and
+                self.total and
+                (self.completed == self.total)
+        )
 
     @property
     def has_progress(self):
@@ -143,7 +153,7 @@ class Status:
             parts.append(self.result)
         else:
             # Add active operations
-            active_ops = [str(op) for op in self.operations if op.active]
+            active_ops = [str(op) for op in self.operations if op.is_active]
             if active_ops:
                 parts.append(" ".join(active_ops))
 
