@@ -434,7 +434,7 @@ class Phase(ABC, Generic[E]):
         pass
 
     @abstractmethod
-    def run(self, env, ctx):
+    def run(self, env: E, ctx):
         pass
 
     @abstractmethod
