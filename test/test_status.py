@@ -80,3 +80,26 @@ def test_status_str_with_warnings():
     # Test result with multiple warnings
     assert str(
         Status(None, [], [Event("Error 1", now), Event("Error 2", now)], "Failed")) == "Failed  (!Error 1, Error 2)"
+
+
+def test_operation_str_with_result():
+    now = utc_now()
+
+    op = Operation("Copy", 100, 100, "files", now, now, result="Done")
+    assert str(op) == "[Copy 100/100 files (100%) Done]"
+
+    op = Operation("Validation", None, None, None, now, now, result="Failed")
+    assert str(op) == "[Validation Failed]"
+
+    # Test just progress and result, no name
+    op = Operation("", 20, 50, "records", now, now, result="Failed")
+    assert str(op) == "[20/50 records (40%) Failed]"
+
+    op = Operation("Process", 75, 100, "items", now, now, result="Cancelled" )
+    assert str(op) == "[Process 75/100 items (75%) Cancelled]"
+
+    op = Operation("Check", None, None, None, now, now, result="Error: timeout")
+    assert str(op) == "[Check Error: timeout]"
+
+    op = Operation("", None, None, None, now, now, result="Done")
+    assert str(op) == "[Done]"

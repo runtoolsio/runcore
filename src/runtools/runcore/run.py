@@ -71,6 +71,7 @@ class TerminationStatus(Enum):
     TIMEOUT = 21
     OVERLAP = 22
     UNSATISFIED = 23
+    DENIED = 24
 
     FAILED = 31
     ERROR = 32

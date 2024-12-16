@@ -34,7 +34,7 @@ class Operation:
     created_at: datetime
     updated_at: datetime
     is_active: bool = True
-    is_completed: bool = False
+    result: Optional[str] = None
 
     @property
     def pct_done(self) -> Optional[float]:
@@ -52,7 +52,7 @@ class Operation:
             created_at=datetime.fromisoformat(data['created_at']),
             updated_at=datetime.fromisoformat(data['updated_at']),
             is_active=data['is_active'],
-            is_completed=data['is_completed'],
+            result=data['result'],
         )
 
     def serialize(self) -> dict:
@@ -64,12 +64,12 @@ class Operation:
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),
             'is_active': self.is_active,
-            'is_completed': self.is_completed,
+            'result': self.result,
         }
 
     @property
     def finished(self):
-        return self.is_completed or (
+        return self.result is not None or (
                 self.has_progress and
                 self.completed and
                 self.total and
@@ -97,9 +97,9 @@ class Operation:
             parts.append(self.name)
         if self.has_progress:
             parts.append(self._progress_str())
-
+        if self.result:
+            parts.append(self.result)
         return f"[{' '.join(parts)}]"
-
 
 @dataclass(frozen=True)
 class Status:
