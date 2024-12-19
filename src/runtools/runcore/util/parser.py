@@ -1,5 +1,5 @@
 import re
-from typing import Dict, Set, Optional, Sequence, Callable
+from typing import Dict, Set, Optional, Sequence, Callable, Union
 
 from runtools.runcore import util
 
@@ -125,3 +125,79 @@ class KVParser:
             parsed = post_parser(processed_text)
             if parsed:
                 kv.update(parsed)
+
+
+class IndexParser:
+
+    def __init__(
+            self,
+            field_indices: Dict[str, Union[int, slice]],
+            delimiter: str = " ",
+            prefix: str = "",
+            default: Optional[str] = None,
+            strip_chars: Optional[str] = None
+    ):
+        """
+        Initialize an index-based field parser.
+
+        Args:
+            field_indices: Dictionary mapping field names to their indices or slices
+            delimiter: Character(s) to split the input text on
+            prefix: Prefix to add to all field names in the output
+            default: Default value for fields when index is out of range
+            strip_chars: Characters to strip from each extracted field
+
+        Example:
+            parser = IndexParser({
+                'timestamp': 0,
+                'level': 1,
+                'message': slice(2, None)  # Rest of the line
+            })
+        """
+        self.field_indices = field_indices
+        self.delimiter = delimiter
+        self.prefix = prefix
+        self.default = default
+        self.strip_chars = strip_chars
+
+    def parse(self, text: str) -> Dict[str, str]:
+        """
+        Parse the input text according to the configured field indices.
+
+        Args:
+            text: Input text to parse
+
+        Returns:
+            Dictionary mapping field names to extracted values
+        """
+        # Split the text into fields
+        fields = text.split(self.delimiter)
+        result = {}
+
+        # Extract each field according to its index
+        for field_name, index in self.field_indices.items():
+            try:
+                if isinstance(index, slice):
+                    # Handle slice indices (e.g., for message fields that span multiple positions)
+                    value = self.delimiter.join(fields[index])
+                else:
+                    # Handle single position indices
+                    value = fields[index]
+
+                # Strip specified characters if requested
+                if self.strip_chars is not None:
+                    value = value.strip(self.strip_chars)
+
+                # Add the field to the result with optional prefix
+                result[self.prefix + field_name] = value
+
+            except (IndexError, TypeError):
+                # Handle out of range indices
+                if self.default is not None:
+                    result[self.prefix + field_name] = self.default
+
+        return result
+
+    def __call__(self, text: str) -> Dict[str, str]:
+        """Allow the parser to be used as a callable."""
+        return self.parse(text)
