@@ -51,7 +51,7 @@ def test_status_str():
     assert str(Status(Event("Finalizing", now), [finished_op], [], None)) == "Finalizing"
 
     # Test with result (should override everything else)
-    assert str(Status(Event("Processing", now), [op], [], "Completed successfully")) == "Completed successfully"
+    assert str(Status(Event("Processing", now), [op], [], Event("Completed successfully", now))) == "Completed successfully"
 
 
 def test_status_str_with_warnings():
@@ -75,11 +75,11 @@ def test_status_str_with_warnings():
 
     # Test that warnings are included with result
     assert str(Status(Event("Processing", now), [op], [Event("Low disk space", now)],
-                      "Completed")) == "Completed  (!Low disk space)"
+                      Event("Completed", now))) == "Completed  (!Low disk space)"
 
     # Test result with multiple warnings
     assert str(
-        Status(None, [], [Event("Error 1", now), Event("Error 2", now)], "Failed")) == "Failed  (!Error 1, Error 2)"
+        Status(None, [], [Event("Error 1", now), Event("Error 2", now)], Event("Failed", now))) == "Failed  (!Error 1, Error 2)"
 
 
 def test_operation_str_with_result():

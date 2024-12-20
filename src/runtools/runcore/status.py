@@ -106,7 +106,7 @@ class Status:
     last_event: Optional[Event]
     operations: List[Operation]
     warnings: List[Event]
-    result: Optional[str]
+    result: Optional[Event]
 
     @classmethod
     def deserialize(cls, data: dict) -> 'Status':
@@ -114,7 +114,7 @@ class Status:
             last_event=Event.deserialize(data['last_event']) if data['last_event'] else None,
             operations=[Operation.deserialize(op) for op in data['operations']],
             warnings=[Event.deserialize(w) for w in data['warnings']],
-            result=data['result']
+            result=Event.deserialize(data['result']),
         )
 
     def serialize(self) -> dict:
@@ -122,7 +122,7 @@ class Status:
             'last_event': self.last_event.serialize() if self.last_event else None,
             'operations': [op.serialize() for op in self.operations],
             'warnings': [w.serialize() for w in self.warnings],
-            'result': self.result
+            'result': self.result.serialize(),
         }
 
     def find_operation(self, name: str) -> Optional[Operation]:
@@ -150,7 +150,7 @@ class Status:
 
         # Add result or active operations
         if self.result:
-            parts.append(self.result)
+            parts.append(self.result.text)
         else:
             # Add active operations
             active_ops = [str(op) for op in self.operations if op.is_active]
