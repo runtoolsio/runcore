@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from copy import copy
 from dataclasses import dataclass
-from enum import Enum, EnumMeta
+from enum import Enum, EnumMeta, auto
 from typing import Optional, List, Dict, Any, Tuple, TypeVar, Generic
 
 from runtools.runcore import util
@@ -444,14 +444,10 @@ class Phase(ABC, Generic[E]):
 
 
 @dataclass
-class Fault:
-    category: str
+class RunFailure:
+    category: str  # Keep as string for flexibility
     reason: str
 
-
-@dataclass
-class RunFailure(Fault):
-
     def serialize(self):
         return {"cat": self.category, "reason": self.reason}
 
@@ -460,15 +456,30 @@ class RunFailure(Fault):
         return cls(as_dict["cat"], as_dict["reason"])
 
 
+class ErrorCategory(Enum):
+    PHASE_RUN_ERROR = auto()
+    TRANSITION_HOOK_ERROR = auto()
+
+
 @dataclass
-class RunError(Fault):
+class RunError:
+    category: ErrorCategory
+    reason: str
+    stack_trace: Optional[str] = None
 
     def serialize(self):
-        return {"cat": self.category, "reason": self.reason}
+        data = {"cat": self.category.name, "reason": self.reason}
+        if self.stack_trace:
+            data["stack_trace"] = self.stack_trace
+        return data
 
     @classmethod
     def deserialize(cls, as_dict):
-        return cls(as_dict["cat"], as_dict["reason"])
+        return cls(
+            ErrorCategory[as_dict["cat"]],
+            as_dict["reason"],
+            as_dict.get("stack_trace")
+        )
 
 
 class FailedRun(Exception):
@@ -511,6 +522,7 @@ class Run:
     phases: Tuple[PhaseInfo, ...]
     lifecycle: Lifecycle
     termination: Optional[TerminationInfo]
+    non_terminal_errors: Tuple[RunError, ...] = tuple()
 
     @classmethod
     def deserialize(cls, as_dict: Dict[str, Any]):
@@ -518,14 +530,18 @@ class Run:
             phases=tuple(PhaseInfo.deserialize(phase) for phase in as_dict['phases']),
             lifecycle=Lifecycle.deserialize(as_dict['lifecycle']),
             termination=TerminationInfo.deserialize(as_dict['termination']) if as_dict.get('termination') else None,
+            non_terminal_errors=tuple(RunError.deserialize(err) for err in as_dict.get('ignored_errors', [])),
         )
 
     def serialize(self) -> Dict[str, Any]:
-        return {
+        data = {
             "phases": [phase.serialize() for phase in self.phases],
             "lifecycle": self.lifecycle.serialize(),
             "termination": self.termination.serialize() if self.termination else None,
         }
+        if self.non_terminal_errors:
+            data["ignored_errors"] = [err.serialize() for err in self.non_terminal_errors]
+        return data
 
     @property
     def current_phase(self):
