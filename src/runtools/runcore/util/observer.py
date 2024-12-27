@@ -1,4 +1,3 @@
-import sys
 from _operator import itemgetter
 from itertools import chain
 from typing import List, Tuple, Any, Callable, Optional, TypeVar, Generic
@@ -6,10 +5,20 @@ from typing import List, Tuple, Any, Callable, Optional, TypeVar, Generic
 DEFAULT_OBSERVER_PRIORITY = 100
 
 
+class MultipleExceptions(Exception):
+    """Exception that carries multiple exceptions that occurred during execution"""
+
+    def __init__(self, exceptions: list[Exception]):
+        self.exceptions = exceptions
+        message = f"Multiple exceptions occurred ({len(exceptions)})"
+        super().__init__(message)
+
+
 class CallableNotification:
 
-    def __init__(self, *, error_hook: Optional[Callable[[Callable, Tuple[Any], Exception], None]] = None):
-        self.error_hook: Optional[Callable[[Callable, Tuple[Any], Exception], None]] = error_hook
+    def __init__(self, *, error_hook: Optional[Callable[[Callable, Tuple[Any], Exception], None]] = None, force_reraise=False):
+        self.error_hook: Optional[Callable[[Callable, Tuple[Any, ...], Exception], None]] = error_hook
+        self.force_reraise = force_reraise
         self._prioritized_observers = []
 
     def __call__(self, *args):
@@ -32,15 +41,18 @@ class CallableNotification:
         self._prioritized_observers = [(priority, o) for priority, o in self._prioritized_observers if o != observer]
 
     def notify_all(self, *args):
+        exceptions = []
         for _, observer in self._prioritized_observers:
-            # noinspection PyBroadException
             try:
                 observer(*args)
             except Exception as e:
                 if self.error_hook:
                     self.error_hook(observer, args, e)
-                else:
-                    print(f"{e.__class__.__name__}: {e}", file=sys.stderr)
+                if not self.error_hook or self.force_reraise:
+                    exceptions.append(e)
+
+        if exceptions:
+            raise MultipleExceptions(exceptions)
 
 
 O = TypeVar("O")
@@ -48,10 +60,11 @@ O = TypeVar("O")
 
 class ObservableNotification(Generic[O]):
 
-    def __init__(self, error_hook: Optional[Callable[[O, Tuple[Any], Exception], None]] = None):
+    def __init__(self, *, error_hook: Optional[Callable[[O, Tuple[Any], Exception], None]] = None, force_reraise=False):
         self.error_hook: Optional[Callable[[O, Tuple[Any], Exception], None]] = error_hook
+        self.force_reraise = force_reraise
         self._prioritized_observers = []
-        self._observer_proxy = _Proxy(self)
+        self._observer_proxy = _Proxy(self, force_reraise)
 
     @property
     def observer_proxy(self) -> O:
@@ -79,11 +92,13 @@ class ObservableNotification(Generic[O]):
 
 class _Proxy(Generic[O]):
 
-    def __init__(self, notification: ObservableNotification) -> None:
+    def __init__(self, notification: ObservableNotification, force_reraise) -> None:
         self._notification = notification
+        self._force_reraise = force_reraise
 
     def __getattribute__(self, name: str) -> object:
         def method(*args, **kwargs):
+            exceptions = []
             for observer in object.__getattribute__(self, "_notification").observers:
                 try:
                     getattr(observer, name)(*args, **kwargs)
@@ -91,14 +106,18 @@ class _Proxy(Generic[O]):
                     error_hook = object.__getattribute__(self, "_notification").error_hook
                     if error_hook:
                         error_hook(observer, args, e)
-                    else:
-                        print(f"{e.__class__.__name__}: {e}", file=sys.stderr)
+                    if not error_hook or self._force_reraise:
+                        exceptions.append(e)
+
+            if exceptions:
+                raise MultipleExceptions(exceptions)
 
         # Special handling for methods/attributes that are specific to the proxy object itself
         if name in ["_notification"]:
             return object.__getattribute__(self, name)
 
         return method
+
 
 class ObserverContext(Generic[O]):
 
