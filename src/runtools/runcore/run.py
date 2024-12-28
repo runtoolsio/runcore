@@ -522,7 +522,6 @@ class Run:
     phases: Tuple[PhaseInfo, ...]
     lifecycle: Lifecycle
     termination: Optional[TerminationInfo]
-    non_terminal_errors: Tuple[RunError, ...] = tuple()
 
     @classmethod
     def deserialize(cls, as_dict: Dict[str, Any]):
@@ -530,18 +529,14 @@ class Run:
             phases=tuple(PhaseInfo.deserialize(phase) for phase in as_dict['phases']),
             lifecycle=Lifecycle.deserialize(as_dict['lifecycle']),
             termination=TerminationInfo.deserialize(as_dict['termination']) if as_dict.get('termination') else None,
-            non_terminal_errors=tuple(RunError.deserialize(err) for err in as_dict.get('ignored_errors', [])),
         )
 
     def serialize(self) -> Dict[str, Any]:
-        data = {
+        return {
             "phases": [phase.serialize() for phase in self.phases],
             "lifecycle": self.lifecycle.serialize(),
             "termination": self.termination.serialize() if self.termination else None,
         }
-        if self.non_terminal_errors:
-            data["ignored_errors"] = [err.serialize() for err in self.non_terminal_errors]
-        return data
 
     @property
     def current_phase(self):
