@@ -150,7 +150,7 @@ class Lifecycle:
         Adds a new phase run to the lifecycle.
         """
         if phase_run.phase_id in self._phase_runs:
-            raise ValueError(f"Phase with ID `{phase_run.phase_id}` is already present: {self.phases}")
+            raise ValueError(f"Phase with ID `{phase_run.phase_id}` is already present: {self.phase_ids}")
 
         if self.current_run:
             self._previous_run = self._current_run
@@ -234,7 +234,7 @@ class Lifecycle:
         raise ValueError(f"Phase {phase_key} not found in lifecycle")
 
     @property
-    def phases(self) -> List[str]:
+    def phase_ids(self) -> List[str]:
         return list(self._phase_runs.keys())
 
     @property

@@ -29,7 +29,7 @@ def sut() -> Lifecycle:
 
 
 def test_phases(sut):
-    assert sut.phases == [
+    assert sut.phase_ids == [
         INIT,
         APPROVAL,
         EXECUTING,
