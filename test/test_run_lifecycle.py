@@ -44,7 +44,7 @@ def test_ordinal(sut):
 
 
 def test_transitions(sut):
-    assert sut.phase_started_at(EXECUTING) == datetime.datetime(2023, 1, 1, 0, 20)
+    assert sut.phase_start_dt(EXECUTING) == datetime.datetime(2023, 1, 1, 0, 20)
     assert sut.last_transition_at == datetime.datetime(2023, 1, 1, 0, 50)
 
 
@@ -81,10 +81,10 @@ def test_run_time(sut):
 
 
 def test_phases_between(sut):
-    assert sut.phases_between(APPROVAL, EXECUTING) == [APPROVAL, EXECUTING]
-    assert (sut.phases_between(APPROVAL, TERM)
+    assert sut.phase_ids_between(APPROVAL, EXECUTING) == [APPROVAL, EXECUTING]
+    assert (sut.phase_ids_between(APPROVAL, TERM)
             == [APPROVAL, EXECUTING, TERM])
-    assert sut.phases_between(APPROVAL, APPROVAL) == [APPROVAL]
-    assert sut.phases_between(EXECUTING, APPROVAL) == []
-    assert sut.phases_between(APPROVAL, 'Not contained') == []
-    assert sut.phases_between('Not contained', APPROVAL) == []
+    assert sut.phase_ids_between(APPROVAL, APPROVAL) == [APPROVAL]
+    assert sut.phase_ids_between(EXECUTING, APPROVAL) == []
+    assert sut.phase_ids_between(APPROVAL, 'Not contained') == []
+    assert sut.phase_ids_between('Not contained', APPROVAL) == []

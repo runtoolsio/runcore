@@ -260,10 +260,10 @@ class Lifecycle:
 
         return []
 
-    def phases_between(self, phase_from, phase_to) -> List[str]:
+    def phase_ids_between(self, phase_from, phase_to) -> List[str]:
         return [run.phase_id for run in self.runs_between(phase_from, phase_to)]
 
-    def phase_started_at(self, phase_id) -> Optional[datetime.datetime]:
+    def phase_start_dt(self, phase_id) -> Optional[datetime.datetime]:
         phase_run = self._phase_runs.get(phase_id)
         return phase_run.started_at if phase_run else None
 
@@ -563,7 +563,7 @@ class Run:
         if not protected_phase_start:
             return []
 
-        return self.lifecycle.phases_between(protected_phase_start, protected_phase_end or protected_phase_start)
+        return self.lifecycle.phase_ids_between(protected_phase_start, protected_phase_end or protected_phase_start)
 
 
 class PhaseExecutionError(Exception):
