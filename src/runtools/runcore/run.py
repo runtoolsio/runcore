@@ -564,3 +564,10 @@ class Run:
             return []
 
         return self.lifecycle.phases_between(protected_phase_start, protected_phase_end or protected_phase_start)
+
+
+class PhaseExecutionError(Exception):
+
+    def __init__(self, phase_id):
+        super().__init__(f"Phase '{phase_id}' execution failed")
+        self.phase_id = phase_id
