@@ -126,7 +126,7 @@ class FakeJobInstance(JobInstance):
                 return phase
         raise KeyError(f"Phase '{phase_id}' not found")
 
-    def job_run(self) -> JobRun:
+    def snapshot(self) -> JobRun:
         run_info = self._create_run_info()
         return JobRun(self.metadata, run_info, None, self._status_tracker.to_status() if self._status_tracker else None)
 

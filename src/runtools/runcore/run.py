@@ -428,6 +428,7 @@ class Phase(ABC, Generic[E]):
         pass
 
     def info(self) -> PhaseInfo:
+        """TODO property?"""
         return PhaseInfo(self.id, self.type, self.run_state, self.name, None, None)
 
     @property

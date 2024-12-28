@@ -328,31 +328,18 @@ class JobInstance(abc.ABC):
     @property
     @abc.abstractmethod
     def status_tracker(self):
-        """TODO: Task tracking information ..."""
-
-    @property
-    @abc.abstractmethod
-    def current_phase(self):
-        """
-        Returns:
-            Optional[Phase]: Current phase of the instance
-        """
+        """TODO: Remove? ..."""
 
     @property
     @abc.abstractmethod
     def phases(self):
         """
-        TODO
         Returns:
-            Dict[str, Phase]: Dictionary of {phase name: phase} in the order as defined in the instance
+            List[PhaseInfo]: Phases in the order as defined in the instance
         """
 
     @abc.abstractmethod
-    def get_phase(self, phase_id: str, phase_type: str | Enum):
-        """pass"""
-
-    @abc.abstractmethod
-    def job_run(self):
+    def snapshot(self):
         """
         Creates a consistent, thread-safe snapshot of the job instance's current state.
 
@@ -512,7 +499,7 @@ class JobRun:
         return self.metadata.run_id
 
     @property
-    def phases(self) -> Tuple[PhaseInfo]:
+    def phases(self) -> Tuple[PhaseInfo, ...]:
         return self._run.phases
 
     @property
