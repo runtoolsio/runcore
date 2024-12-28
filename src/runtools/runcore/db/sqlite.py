@@ -12,7 +12,7 @@ from typing import List
 from runtools.runcore import paths
 from runtools.runcore.db import SortCriteria, Persistence
 from runtools.runcore.job import JobStats, JobRun, JobRuns, InstanceTransitionObserver, JobInstanceMetadata
-from runtools.runcore.run import RunState, Lifecycle, PhaseInfo, RunFailure, RunError, Run, TerminationInfo, \
+from runtools.runcore.run import RunState, Lifecycle, PhaseInfo, Fault, Run, TerminationInfo, \
     TerminationStatus, Outcome
 from runtools.runcore.status import Status
 from runtools.runcore.util import MatchingStrategy, format_dt_sql, parse_dt_sql
@@ -206,8 +206,8 @@ class SQLite(Persistence, InstanceTransitionObserver):
             phases = tuple(PhaseInfo.deserialize(p) for p in json.loads(t[7]))
             lifecycle = Lifecycle.deserialize(json.loads(t[8]))
             term_status = TerminationStatus.from_code(t[9])
-            failure = RunFailure.deserialize(json.loads(t[10])) if t[10] else None
-            error = RunError.deserialize(json.loads(t[11])) if t[11] else None
+            failure = Fault.deserialize(json.loads(t[10])) if t[10] else None
+            error = Fault.deserialize(json.loads(t[11])) if t[11] else None
             status = Status.deserialize(json.loads(t[12])) if t[12] else None
             run = Run(phases, lifecycle, TerminationInfo(term_status, ended_at, failure, error))
 

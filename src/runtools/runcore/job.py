@@ -497,10 +497,6 @@ class JobRun:
         return self._run.lifecycle
 
     @property
-    def non_terminal_errors(self):
-        return self._run.non_terminal_errors
-
-    @property
     def termination(self) -> Optional[TerminationInfo]:
         return self._run.termination
 

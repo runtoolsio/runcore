@@ -8,7 +8,7 @@ from runtools.runcore.job import JobInstance, JobRun, InstanceTransitionObserver
     InstanceOutputObserver, JobInstanceMetadata
 from runtools.runcore.output import Output, Mode
 from runtools.runcore.run import Phase, PhaseRun, TerminationInfo, Run, RunState, \
-    TerminationStatus, PhaseInfo, RunFailure, Lifecycle
+    TerminationStatus, PhaseInfo, Fault, Lifecycle
 from runtools.runcore.util import utc_now
 from runtools.runcore.util.observer import ObservableNotification, DEFAULT_OBSERVER_PRIORITY
 
@@ -277,7 +277,7 @@ def ended_run(job_id, run_id='r1', *, offset_min=0, term_status=TerminationStatu
                       start_time + timedelta(minutes=3))
     builder.add_phase(TERM, RunState.ENDED, completed or start_time + timedelta(minutes=3), None)
 
-    failure = RunFailure('err1', 'reason') if term_status == TerminationStatus.FAILED else None
+    failure = Fault('err1', 'reason') if term_status == TerminationStatus.FAILED else None
     builder.with_termination_info(term_status, start_time + timedelta(minutes=3), failure)
 
     return builder.build()

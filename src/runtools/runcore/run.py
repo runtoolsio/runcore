@@ -11,11 +11,12 @@ by orchestrating the given phase phases.
 
 import datetime
 import logging
+import traceback
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from copy import copy
 from dataclasses import dataclass
-from enum import Enum, EnumMeta, auto
+from enum import Enum, EnumMeta
 from typing import Optional, List, Dict, Any, Tuple, TypeVar, Generic
 
 from runtools.runcore import util
@@ -444,31 +445,13 @@ class Phase(ABC, Generic[E]):
 
 
 @dataclass
-class RunFailure:
-    category: str  # Keep as string for flexibility
-    reason: str
-
-    def serialize(self):
-        return {"cat": self.category, "reason": self.reason}
-
-    @classmethod
-    def deserialize(cls, as_dict):
-        return cls(as_dict["cat"], as_dict["reason"])
-
-
-class ErrorCategory(Enum):
-    PHASE_RUN_ERROR = auto()
-    TRANSITION_HOOK_ERROR = auto()
-
-
-@dataclass
-class RunError:
-    category: ErrorCategory
+class Fault:
+    category: str
     reason: str
     stack_trace: Optional[str] = None
 
     def serialize(self):
-        data = {"cat": self.category.name, "reason": self.reason}
+        data = {"cat": self.category, "reason": self.reason}
         if self.stack_trace:
             data["stack_trace"] = self.stack_trace
         return data
@@ -476,9 +459,18 @@ class RunError:
     @classmethod
     def deserialize(cls, as_dict):
         return cls(
-            ErrorCategory[as_dict["cat"]],
+            as_dict["cat"],
             as_dict["reason"],
             as_dict.get("stack_trace")
+        )
+
+    @classmethod
+    def from_exception(cls, category: str, exception: Exception) -> 'Fault':
+        stack_trace = ''.join(traceback.format_exception(type(exception), exception, exception.__traceback__))
+        return cls(
+            category=category,
+            reason=f"{exception.__class__.__name__}: {exception}",
+            stack_trace=stack_trace
         )
 
 
@@ -487,25 +479,25 @@ class FailedRun(Exception):
     This exception is used to provide additional information about a run failure.
     """
 
-    def __init__(self, fault_type: str, reason: str):
-        super().__init__(f"{fault_type}: {reason}")
-        self.fault = RunFailure(fault_type, reason)
+    def __init__(self, fault):
+        super().__init__(fault.reason)
+        self.fault = fault
 
 
 @dataclass(frozen=True)
 class TerminationInfo:
     status: TerminationStatus
     terminated_at: datetime.datetime
-    failure: Optional[RunFailure] = None
-    error: Optional[RunError] = None
+    failure: Optional[Fault] = None
+    error: Optional[Fault] = None
 
     @classmethod
     def deserialize(cls, as_dict: Dict[str, Any]):
         return cls(
             status=TerminationStatus[as_dict['termination_status']],
             terminated_at=util.parse_datetime(as_dict['terminated_at']),
-            failure=RunFailure.deserialize(as_dict['failure']) if as_dict.get('failure') else None,
-            error=RunError.deserialize(as_dict['error']) if as_dict.get('error') else None
+            failure=Fault.deserialize(as_dict['failure']) if as_dict.get('failure') else None,
+            error=Fault.deserialize(as_dict['error']) if as_dict.get('error') else None
         )
 
     def serialize(self) -> Dict[str, Any]:
