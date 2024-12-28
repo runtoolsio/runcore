@@ -445,8 +445,8 @@ class JobInstance(abc.ABC):
 
 @dataclass(frozen=True)
 class JobFaults:
-    transition_observer_faults: Tuple[Fault, ...] = tuple()
-    output_observer_faults: Tuple[Fault, ...] = tuple()
+    transition_observer_faults: Tuple[Fault, ...]
+    output_observer_faults: Tuple[Fault, ...]
 
     def serialize(self) -> Dict[str, Any]:
         return {
@@ -473,7 +473,7 @@ class JobRun:
     """
     metadata: JobInstanceMetadata
     _run: Run  # private field
-    faults: JobFaults
+    faults: Optional[JobFaults]
     status: Optional[Status] = None
 
     @classmethod
@@ -481,17 +481,19 @@ class JobRun:
         return cls(
             metadata=JobInstanceMetadata.deserialize(as_dict['metadata']),
             _run=Run.deserialize(as_dict['run']),
-            faults=JobFaults.deserialize(as_dict['faults']),
+            faults=JobFaults.deserialize(as_dict['faults']) if as_dict.get('faults') else None,
             status=Status.deserialize(as_dict['task']) if as_dict.get('task') else None,
         )
 
     def serialize(self) -> Dict[str, Any]:
-        return {
+        d = {
             "metadata": self.metadata.serialize(),
             "run": self._run.serialize(),
-            "faults": self.faults.serialize(),
             "task": self.status.serialize() if self.status else None,
         }
+        if self.faults:
+            d["faults"] = self.faults.serialize()
+        return d
 
     @property
     def job_id(self) -> str:
