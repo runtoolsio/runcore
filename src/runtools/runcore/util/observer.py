@@ -13,10 +13,14 @@ class MultipleExceptions(Exception):
         message = f"Multiple exceptions occurred ({len(exceptions)})"
         super().__init__(message)
 
+    def __iter__(self):
+        return iter(self.exceptions)
+
 
 class CallableNotification:
 
-    def __init__(self, *, error_hook: Optional[Callable[[Callable, Tuple[Any], Exception], None]] = None, force_reraise=False):
+    def __init__(self, *, error_hook: Optional[Callable[[Callable, Tuple[Any], Exception], None]] = None,
+                 force_reraise=False):
         self.error_hook: Optional[Callable[[Callable, Tuple[Any, ...], Exception], None]] = error_hook
         self.force_reraise = force_reraise
         self._prioritized_observers = []

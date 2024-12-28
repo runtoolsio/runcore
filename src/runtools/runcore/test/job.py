@@ -5,7 +5,7 @@ from typing import Iterable, Optional
 from runtools.runcore import util
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.job import JobInstance, JobRun, InstanceTransitionObserver, \
-    InstanceOutputObserver, JobInstanceMetadata
+    InstanceOutputObserver, JobInstanceMetadata, JobFaults
 from runtools.runcore.output import Output, Mode
 from runtools.runcore.run import Phase, PhaseRun, TerminationInfo, Run, RunState, \
     TerminationStatus, PhaseInfo, Fault, Lifecycle
@@ -128,7 +128,7 @@ class FakeJobInstance(JobInstance):
 
     def job_run(self) -> JobRun:
         run_info = self._create_run_info()
-        return JobRun(self.metadata, run_info, self._status_tracker.to_status() if self._status_tracker else None)
+        return JobRun(self.metadata, run_info, JobFaults(), self._status_tracker.to_status() if self._status_tracker else None)
 
     def _create_run_info(self) -> Run:
         phases = tuple(p.info() for p in self.phases)
@@ -157,7 +157,7 @@ class FakeJobInstance(JobInstance):
         # Call transition hook through the notification system
         old_phase = self.lifecycle.previous_run
         new_phase = self.lifecycle.current_run
-        job_run = JobRun(self.metadata, self._create_run_info(), self._status_tracker.to_status() if self._status_tracker else None)
+        job_run = JobRun(self.metadata, self._create_run_info(), JobFaults(), self._status_tracker.to_status() if self._status_tracker else None)
         self.transition_notification.observer_proxy.new_instance_phase(
             job_run, old_phase, new_phase, self.lifecycle.phase_count)
 
@@ -260,7 +260,7 @@ class TestJobRunBuilder:
         meta = [PhaseInfo(p.phase_id, 'TEST', p.run_state) for p in self.phase_runs]
         lifecycle = Lifecycle(*self.phase_runs)
         run = Run(tuple(meta), lifecycle, self.termination_info)
-        return JobRun(self.metadata, run, self.tracker.to_status() if self.tracker else None)
+        return JobRun(self.metadata, run, JobFaults(), self.tracker.to_status() if self.tracker else None)
 
 
 def ended_run(job_id, run_id='r1', *, offset_min=0, term_status=TerminationStatus.COMPLETED, created=None,

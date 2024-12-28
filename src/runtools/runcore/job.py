@@ -17,7 +17,7 @@ from typing import Dict, Any, List, Optional, Tuple
 
 from runtools.runcore.output import OutputLine
 from runtools.runcore.run import TerminationStatus, RunState, Run, PhaseRun, PhaseInfo, \
-    Lifecycle, TerminationInfo
+    Lifecycle, TerminationInfo, Fault
 from runtools.runcore.status import Status
 from runtools.runcore.util import MatchingStrategy, format_dt_iso
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
@@ -444,13 +444,36 @@ class JobInstance(abc.ABC):
 
 
 @dataclass(frozen=True)
+class JobFaults:
+    transition_observer_faults: Tuple[Fault, ...] = tuple()
+    output_observer_faults: Tuple[Fault, ...] = tuple()
+
+    def serialize(self) -> Dict[str, Any]:
+        return {
+            "transition_observer_faults": [fault.serialize() for fault in self.transition_observer_faults],
+            "output_observer_faults": [fault.serialize() for fault in self.output_observer_faults]
+        }
+
+    @classmethod
+    def deserialize(cls, as_dict: Dict[str, Any]) -> 'JobFaults':
+        return cls(
+            transition_observer_faults=tuple(
+                Fault.deserialize(fault) for fault in as_dict.get("transition_observer_faults", [])
+            ),
+            output_observer_faults=tuple(
+                Fault.deserialize(fault) for fault in as_dict.get("output_observer_faults", [])
+            )
+        )
+
+
+@dataclass(frozen=True)
 class JobRun:
     """
     Immutable snapshot of job instance
     """
     metadata: JobInstanceMetadata
     _run: Run  # private field
-    """Detailed information about the run in the form of the tracked task"""
+    faults: JobFaults
     status: Optional[Status] = None
 
     @classmethod
@@ -458,6 +481,7 @@ class JobRun:
         return cls(
             metadata=JobInstanceMetadata.deserialize(as_dict['metadata']),
             _run=Run.deserialize(as_dict['run']),
+            faults=JobFaults.deserialize(as_dict['faults']),
             status=Status.deserialize(as_dict['task']) if as_dict.get('task') else None,
         )
 
@@ -465,6 +489,7 @@ class JobRun:
         return {
             "metadata": self.metadata.serialize(),
             "run": self._run.serialize(),
+            "faults": self.faults.serialize(),
             "task": self.status.serialize() if self.status else None,
         }
 
