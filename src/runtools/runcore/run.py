@@ -399,13 +399,27 @@ class TerminateRun(Exception):
 E = TypeVar('E')
 
 
-class PhaseControl(ABC):
-    """Base interface for phase control operations"""
-    pass
+class _ControlProperty(property):
+    _expose_to_control = True
 
 
-class PhaseControlNotAvailable(Exception):
-    pass
+def control_api(func):
+    if isinstance(func, property):
+        return _ControlProperty(func.fget, func.fset, func.fdel)
+    else:
+        func._expose_to_control = True
+        return func
+
+
+class PhaseControl:
+    def __init__(self, phase):
+        self._phase = phase
+
+    def __getattr__(self, name):
+        phase_attr = getattr(self._phase.__class__, name, None)
+        if phase_attr and getattr(phase_attr, '_expose_to_control', False):
+            return getattr(self._phase, name)
+        raise AttributeError(f"'{self.__class__.__name__}' has no attribute '{name}'")
 
 
 class Phase(ABC, Generic[E]):
@@ -447,7 +461,7 @@ class Phase(ABC, Generic[E]):
 
     @property
     def control(self):
-        raise PhaseControlNotAvailable
+        return PhaseControl(self)
 
     @abstractmethod
     def run(self, env: E, ctx):

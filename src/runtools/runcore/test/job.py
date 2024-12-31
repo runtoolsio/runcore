@@ -8,7 +8,7 @@ from runtools.runcore.job import JobInstance, JobRun, InstanceTransitionObserver
     InstanceOutputObserver, JobInstanceMetadata
 from runtools.runcore.output import Output, Mode
 from runtools.runcore.run import Phase, PhaseRun, TerminationInfo, Run, RunState, \
-    TerminationStatus, PhaseInfo, Fault, Lifecycle, PhaseControl
+    TerminationStatus, PhaseInfo, Fault, Lifecycle, PhaseControl, control_api
 from runtools.runcore.util import utc_now
 from runtools.runcore.util.observer import ObservableNotification, DEFAULT_OBSERVER_PRIORITY
 
@@ -18,12 +18,12 @@ PROGRAM = 'program'
 TERM = 'term'
 
 
-class FakePhase(Phase, PhaseControl):
+class FakePhase(Phase):
 
     def __init__(self, phase_id, run_state):
         self._phase_id = phase_id
         self._run_state = run_state
-        self.approved = False
+        self._approved = False
         self.ran = False
         self.stopped = False
 
@@ -43,12 +43,14 @@ class FakePhase(Phase, PhaseControl):
     def name(self):
         return self._phase_id
 
-    @property
-    def control(self):
-        return self
-
+    @control_api
     def approve(self):
-        self.approved = True
+        self._approved = True
+
+    @control_api
+    @property
+    def approved(self):
+        return self._approved
 
     @property
     def stop_status(self):
