@@ -399,6 +399,15 @@ class TerminateRun(Exception):
 E = TypeVar('E')
 
 
+class PhaseControl(ABC):
+    """Base interface for phase control operations"""
+    pass
+
+
+class PhaseControlNotAvailable(Exception):
+    pass
+
+
 class Phase(ABC, Generic[E]):
 
     @property
@@ -435,6 +444,10 @@ class Phase(ABC, Generic[E]):
     @abstractmethod
     def stop_status(self):
         pass
+
+    @property
+    def control(self):
+        raise PhaseControlNotAvailable
 
     @abstractmethod
     def run(self, env: E, ctx):

@@ -395,6 +395,12 @@ class JobInstance(abc.ABC):
         """
 
     @abc.abstractmethod
+    def get_phase_control(self, phase_id: str):
+        """
+        TODO
+        """
+
+    @abc.abstractmethod
     def add_observer_transition(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, notify_on_register=False):
         """
         Register an instance state observer. Optionally, trigger a notification with the last known state

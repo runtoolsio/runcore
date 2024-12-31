@@ -5,7 +5,7 @@ from typing import Iterable, Optional
 from runtools.runcore import util
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.job import JobInstance, JobRun, InstanceTransitionObserver, \
-    InstanceOutputObserver, JobInstanceMetadata, JobFaults
+    InstanceOutputObserver, JobInstanceMetadata
 from runtools.runcore.output import Output, Mode
 from runtools.runcore.run import Phase, PhaseRun, TerminationInfo, Run, RunState, \
     TerminationStatus, PhaseInfo, Fault, Lifecycle
@@ -55,6 +55,7 @@ class FakePhase(Phase):
 
     def stop(self):
         self.stopped = True
+
 
 class BasicOutput(Output):
 
@@ -157,7 +158,8 @@ class FakeJobInstance(JobInstance):
         # Call transition hook through the notification system
         old_phase = self.lifecycle.previous_run
         new_phase = self.lifecycle.current_run
-        job_run = JobRun(self.metadata, self._create_run_info(), None, self._status_tracker.to_status() if self._status_tracker else None)
+        job_run = JobRun(self.metadata, self._create_run_info(), None,
+                         self._status_tracker.to_status() if self._status_tracker else None)
         self.transition_notification.observer_proxy.new_instance_phase(
             job_run, old_phase, new_phase, self.lifecycle.phase_count)
 
@@ -175,6 +177,9 @@ class FakeJobInstance(JobInstance):
                     return False
                 if not phase_name and not run_state:
                     return True
+
+    def get_phase_control(self, phase_id: str):
+        return self.get_phase(phase_id).control
 
     def run(self):
         pass
