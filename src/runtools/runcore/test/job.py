@@ -8,7 +8,7 @@ from runtools.runcore.job import JobInstance, JobRun, InstanceTransitionObserver
     InstanceOutputObserver, JobInstanceMetadata
 from runtools.runcore.output import Output, Mode
 from runtools.runcore.run import Phase, PhaseRun, TerminationInfo, Run, RunState, \
-    TerminationStatus, PhaseInfo, Fault, Lifecycle
+    TerminationStatus, PhaseInfo, Fault, Lifecycle, PhaseControl
 from runtools.runcore.util import utc_now
 from runtools.runcore.util.observer import ObservableNotification, DEFAULT_OBSERVER_PRIORITY
 
@@ -18,7 +18,7 @@ PROGRAM = 'program'
 TERM = 'term'
 
 
-class FakePhase(Phase):
+class FakePhase(Phase, PhaseControl):
 
     def __init__(self, phase_id, run_state):
         self._phase_id = phase_id
@@ -42,6 +42,10 @@ class FakePhase(Phase):
     @property
     def name(self):
         return self._phase_id
+
+    @property
+    def control(self):
+        return self
 
     def approve(self):
         self.approved = True
@@ -127,6 +131,9 @@ class FakeJobInstance(JobInstance):
                 return phase
         raise KeyError(f"Phase '{phase_id}' not found")
 
+    def get_phase_control(self, phase_id: str):
+        return self.get_phase(phase_id).control
+
     def snapshot(self) -> JobRun:
         run_info = self._create_run_info()
         return JobRun(self.metadata, run_info, None, self._status_tracker.to_status() if self._status_tracker else None)
@@ -177,9 +184,6 @@ class FakeJobInstance(JobInstance):
                     return False
                 if not phase_name and not run_state:
                     return True
-
-    def get_phase_control(self, phase_id: str):
-        return self.get_phase(phase_id).control
 
     def run(self):
         pass
