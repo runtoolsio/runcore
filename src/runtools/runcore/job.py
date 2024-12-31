@@ -339,6 +339,12 @@ class JobInstance(abc.ABC):
         """
 
     @abc.abstractmethod
+    def get_phase_control(self, phase_id: str):
+        """
+        TODO
+        """
+
+    @abc.abstractmethod
     def snapshot(self):
         """
         Creates a consistent, thread-safe snapshot of the job instance's current state.
@@ -390,12 +396,6 @@ class JobInstance(abc.ABC):
 
     @abc.abstractmethod
     def wait_for_transition(self, phase_name=None, run_state=RunState.NONE, *, timeout=None):
-        """
-        TODO
-        """
-
-    @abc.abstractmethod
-    def get_phase_control(self, phase_id: str):
         """
         TODO
         """
