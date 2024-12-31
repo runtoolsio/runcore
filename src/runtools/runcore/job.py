@@ -12,7 +12,6 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum, auto
-from threading import Thread
 from typing import Dict, Any, List, Optional, Tuple
 
 from runtools.runcore.output import OutputLine
@@ -290,7 +289,7 @@ class JobInstance(abc.ABC):
     While the job itself describes static attributes common to all its instances, the JobInstance class
     represents a specific run of that job.
 
-    TODO add/remove observer output
+    TODO add/remove status output
     """
 
     @property
@@ -298,14 +297,14 @@ class JobInstance(abc.ABC):
     def metadata(self):
         """
         Returns:
-            InstanceMetadata: Identifiable and descriptive information about this instance.
+            InstanceMetadata: Identifiers and descriptive information about this instance.
         """
 
     @property
     def instance_id(self):
         """
         Returns:
-            str: Instance reference/identity identifier.
+            str: Instance reference/identity identifier. Expected to be a unique value.
         """
         return self.metadata.instance_id
 
@@ -313,7 +312,7 @@ class JobInstance(abc.ABC):
     def job_id(self):
         """
         Returns:
-            str: Job part of the instance identifier.
+            str: Identifier of the job.
         """
         return self.metadata.job_id
 
@@ -321,14 +320,9 @@ class JobInstance(abc.ABC):
     def run_id(self):
         """
         Returns:
-            str: Run part of the instance identifier.
+            str: Identifier of the individual run.
         """
         return self.metadata.run_id
-
-    @property
-    @abc.abstractmethod
-    def status_tracker(self):
-        """TODO: Remove? ..."""
 
     @property
     @abc.abstractmethod
@@ -339,7 +333,7 @@ class JobInstance(abc.ABC):
         """
 
     @abc.abstractmethod
-    def get_phase_control(self, phase_id: str):
+    def get_phase_control(self, phase_id: str, phase_type: str = None):
         """
         TODO
         """
@@ -366,17 +360,6 @@ class JobInstance(abc.ABC):
         This method is not expected to raise any errors. In case of any failure the error details can be retrieved
         by calling `exec_error` method.
         """
-
-    def run_in_new_thread(self, daemon=False):
-        """
-        Run the job.
-
-        This method is not expected to raise any errors. In case of any failure the error details can be retrieved
-        by calling `exec_error` method.
-        """
-
-        t = Thread(target=self.run, daemon=daemon)
-        t.start()
 
     @abc.abstractmethod
     def stop(self):
