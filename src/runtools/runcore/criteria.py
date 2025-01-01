@@ -42,27 +42,28 @@ class InstanceMetadataCriterion(MatchCriteria[JobInstanceMetadata]):
     Attributes:
         job_id (str): The pattern for job ID matching. If empty, the field is ignored.
         run_id (str): The pattern for run ID matching. If empty, the field is ignored.
-        match_both_ids (bool): If False, a match with either job_id or instance_id is sufficient. Default is True.
+        instance_id (str): The pattern for instance ID matching. If empty, the field is ignored.
+        match_any (bool): If True, a match with any provided ID is sufficient. If False, all provided IDs must match.
         strategy (MatchingStrategy): The strategy to use for matching. Default is `MatchingStrategy.EXACT`.
     """
-    job_id: str
+    job_id: str = ''
     run_id: str = ''
-    match_both_ids: bool = True
+    instance_id: str = ''
+    match_any: bool = False
     strategy: MatchingStrategy = MatchingStrategy.EXACT
 
     @classmethod
     def all_match(cls):
-        return cls('', '', False, MatchingStrategy.ALWAYS_TRUE)
+        return cls('', '', '', True, MatchingStrategy.ALWAYS_TRUE)
 
     @classmethod
     def none_match(cls):
-        return cls('', '', True, MatchingStrategy.ALWAYS_FALSE)
+        return cls('', '', '', False, MatchingStrategy.ALWAYS_FALSE)
 
     @staticmethod
     def match_run(job_run):
-        # TODO Use identity ID
         """
-        Creates a MetadataCriterion object that matches the provided job run.
+        Creates a MetadataCriterion object that matches the provided job run by its instance ID.
 
         Args:
             job_run: The specific job run to create a match for.
@@ -70,60 +71,50 @@ class InstanceMetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         Returns:
             InstanceMetadataCriterion: A criteria object that will match the given job instance.
         """
-        return InstanceMetadataCriterion(job_id=job_run.metadata.job_id, run_id=job_run.metadata.run_id)
+        return InstanceMetadataCriterion(instance_id=job_run.metadata.instance_id)
 
     @classmethod
     def parse_pattern(cls, pattern: str, strategy=MatchingStrategy.EXACT):
         """
-        Parses the provided pattern and returns the corresponding JobRunIdMatchCriteria object.
-        The pattern can contain the `@` token to denote `job_id` and `instance_id` parts in this format:
-        `{job_id}@{instance_id}`. If the token is not included, then the pattern is matched against both IDs,
-        and a match on any fields results in a positive match.
+        Parses the provided pattern and returns the corresponding metadata criterion.
 
-        For matching only `job_id`, use the format: `{job_id}@`
-        For matching only `instance_id`, use the format: `@{instance_id}`
+        The pattern can be in one of these formats:
+        - ":instance_id" - Match instance ID only
+        - "job_id@run_id" - Match specific job ID and run ID combination
+        - Any other text - Match against all IDs with match_any=True (will match if it matches any of job_id, run_id, or instance_id)
 
         Args:
-            pattern (str): The pattern to parse. It can contain a job ID and instance ID separated by '@'.
+            pattern (str): The pattern to parse. Can be empty, an instance ID with ':' prefix, a job/run combo with '@', or plain text.
             strategy (MatchingStrategy, optional): The strategy to use for matching. Default is `MatchingStrategy.EXACT`
 
         Returns:
-            InstanceMetadataCriterion: A new IDMatchCriteria object with the parsed job_id, instance_id, and strategy.
+            InstanceMetadataCriterion: A new criteria object configured according to the pattern format.
         """
-        if "@" in pattern:
-            job_id, instance_id = pattern.split("@")
-            match_both = True
-        else:
-            job_id = instance_id = pattern
-            match_both = False
-        return cls(job_id, instance_id, match_both, strategy)
+        if not pattern:
+            return cls.all_match()
 
-    @staticmethod
-    def parse_patterns(patterns: Iterable[str], strategy=MatchingStrategy.EXACT):
-        return [InstanceMetadataCriterion.parse_pattern(pattern, strategy) for pattern in patterns]
+        # Handle instance ID pattern
+        if pattern.startswith(':'):
+            return cls('', '', pattern[1:], False, strategy)
 
-    @classmethod
-    def deserialize(cls, as_dict):
-        return cls(as_dict['job_id'], as_dict['run_id'], as_dict['match_both_ids'],
-                   MatchingStrategy[as_dict['strategy'].upper()])
+        # Handle job@run pattern
+        if '@' in pattern:
+            job_id, run_id = pattern.split('@', 1)
+            return cls(job_id, run_id, '', False, strategy)
 
-    def serialize(self):
-        return {
-            'job_id': self.job_id,
-            'run_id': self.run_id,
-            'match_both_ids': self.match_both_ids,
-            'strategy': self.strategy.name.lower(),
-        }
+        # Handle plain text (match against any ID)
+        return cls(pattern, pattern, pattern, True, strategy)
 
-    def _op(self):
-        return and_ if self.match_both_ids else or_
+    def _matches_id(self, actual: str, criteria: str) -> bool:
+        if not criteria:
+            return True
+        if criteria.startswith('!'):
+            return not self.strategy(actual, criteria[1:])  # Remove '!' and negate the result
+        return self.strategy(actual, criteria)
 
-    def __call__(self, id_tuple):
-        return self.matches(id_tuple)
-
-    def matches(self, metadata):
+    def matches(self, metadata: JobInstanceMetadata) -> bool:
         """
-        The matching method. It can be also executed by calling this object (`__call__` delegates to this method).
+        The matching method. It can be also executed by calling this object.
 
         Args:
             metadata: A metadata to match
@@ -131,26 +122,52 @@ class InstanceMetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         Returns:
             bool: Whether the provided metadata matches this criteria
         """
-        op = self._op()
-        job_id = metadata.job_id
-        run_id = metadata.run_id
-        return op(not self.job_id or self.strategy(job_id, self.job_id),
-                  not self.run_id or self.strategy(run_id, self.run_id))
+        # Check each ID against its criteria
+        job_id_match = self._matches_id(metadata.job_id, self.job_id)
+        run_id_match = self._matches_id(metadata.run_id, self.run_id)
+        instance_id_match = self._matches_id(metadata.instance_id, self.instance_id)
 
-    def matches_run(self, job_run):
-        """
-        Args:
-            job_run: Job instance to be matched
+        if self.match_any:
+            # If any ID is provided and matches, return True
+            return (self.job_id and job_id_match) or \
+                (self.run_id and run_id_match) or \
+                (self.instance_id and instance_id_match)
+        else:
+            # All provided IDs must match
+            return (not self.job_id or job_id_match) and \
+                (not self.run_id or run_id_match) and \
+                (not self.instance_id or instance_id_match)
 
-        Returns:
-            bool: Whether the provided job instance matches this criteria
-        """
-        return self.matches(job_run.metadata)
+    def serialize(self):
+        return {
+            'job_id': self.job_id,
+            'run_id': self.run_id,
+            'instance_id': self.instance_id,
+            'match_any': self.match_any,
+            'strategy': self.strategy.name.lower(),
+        }
+
+    @classmethod
+    def deserialize(cls, as_dict):
+        return cls(
+            as_dict['job_id'],
+            as_dict['run_id'],
+            as_dict.get('instance_id', ''),  # For backward compatibility
+            as_dict.get('match_any', False),  # For backward compatibility
+            MatchingStrategy[as_dict['strategy'].upper()]
+        )
 
     def __str__(self):
-        op = "+" if self.match_both_ids else "|"
-        ids = f"{self.job_id}{op}{self.run_id}"
-        return f"{ids} {self.strategy.name}"
+        ids = []
+        if self.job_id:
+            ids.append(f"job={self.job_id}")
+        if self.run_id:
+            ids.append(f"run={self.run_id}")
+        if self.instance_id:
+            ids.append(f"instance={self.instance_id}")
+
+        op = "|" if self.match_any else "&"
+        return f"({op.join(ids)}) {self.strategy.name}"
 
 
 def compound_instance_filter(metadata_criteria):
