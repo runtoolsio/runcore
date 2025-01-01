@@ -334,42 +334,22 @@ class Lifecycle:
         return f"{self.__class__.__name__}({phase_runs_repr})"
 
 
-PHASE_INFO_REGISTRY = {}
-
-
-def register_phase_info(phase_type: Enum | str):
-    if isinstance(phase_type, Enum):
-        phase_type = phase_type.value
-
-    def decorator(cls):
-        PHASE_INFO_REGISTRY[phase_type] = cls
-        return cls
-
-    return decorator
-
-
 @dataclass(frozen=True)
 class PhaseInfo:
     phase_id: str
     phase_type: str
     run_state: RunState
     phase_name: Optional[str] = None
-    protection_id: Optional[str] = None
-    last_protected_phase: Optional[str] = None
+    attributes: Optional[Dict[str, Any]] = None  # or frozendict for true immutability
 
     @classmethod
     def deserialize(cls, as_dict) -> 'PhaseInfo':
-        info_cls = PHASE_INFO_REGISTRY.get(as_dict["phase_type"])
-        if info_cls and info_cls != PhaseInfo and 'deserialize' in info_cls.__dict__:
-            return info_cls.deserialize(as_dict)
-
         return cls(
             as_dict["phase_id"],
             as_dict["phase_type"],
             RunState[as_dict["run_state"]],
             as_dict.get("phase_name"),
-            as_dict.get("protection_id"),
-            as_dict.get("last_protected_phase"),
+            as_dict.get("attributes"),
         )
 
     def serialize(self) -> Dict:
@@ -380,10 +360,8 @@ class PhaseInfo:
         }
         if self.phase_name:
             d["phase_name"] = self.phase_name
-        if self.protection_id:
-            d["protection_id"] = self.protection_id
-        if self.last_protected_phase:
-            d["last_protected_phase"] = self.last_protected_phase
+        if self.attributes:
+            d["attributes"] = self.attributes
 
         return d
 
@@ -450,9 +428,13 @@ class Phase(ABC, Generic[E]):
     def name(self):
         pass
 
+    @property
+    def attributes(self):
+        return {}
+
+    @property
     def info(self) -> PhaseInfo:
-        """TODO property?"""
-        return PhaseInfo(self.id, self.type, self.run_state, self.name, None, None)
+        return PhaseInfo(self.id, self.type, self.run_state, self.name, self.attributes)
 
     @property
     @abstractmethod
@@ -559,7 +541,7 @@ class Run:
         }
 
     @property
-    def current_phase(self):
+    def current_phase(self) -> Optional[PhaseInfo]:
         current_phase_id = self.lifecycle.current_phase_id
         if not current_phase_id:
             return None
@@ -569,29 +551,6 @@ class Run:
                 return p
 
         return None
-
-    def in_protected_phase(self, protection_phase_type, protection_id) -> bool:
-        if isinstance(protection_phase_type, Enum):
-            protection_phase_type = protection_phase_type.value
-        return self.lifecycle.current_phase_id in self.protected_phases(protection_phase_type, protection_id)
-
-    def protected_phases(self, protection_phase_type, protection_id) -> List[str]:
-        if isinstance(protection_phase_type, Enum):
-            protection_phase_type = protection_phase_type.value
-        protected_phase_start = None
-        protected_phase_end = None
-
-        for idx, phase_info in enumerate(self.phases):
-            if phase_info.phase_type == protection_phase_type and phase_info.protection_id == protection_id:
-                if (idx + 1) < len(self.phases):
-                    protected_phase_start = self.phases[idx + 1].key
-                    protected_phase_end = phase_info.last_protected_phase
-                break
-
-        if not protected_phase_start:
-            return []
-
-        return self.lifecycle.phase_ids_between(protected_phase_start, protected_phase_end or protected_phase_start)
 
 
 class PhaseExecutionError(Exception):

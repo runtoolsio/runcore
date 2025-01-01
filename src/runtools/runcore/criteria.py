@@ -272,45 +272,21 @@ class LifecycleCriterion(MatchCriteria[Lifecycle]):
 
 @dataclass
 class PhaseCriterion(MatchCriteria[PhaseInfo]):
-    phase_type: Optional[Enum | str] = None
+    phase_type: Optional[str] = None
     phase_id: Optional[str] = None
     run_state: Optional[RunState] = None
     phase_name: Optional[str] = None
-    protection_id: Optional[str] = None
-    last_protected_phase: Optional[str] = None
-    properties: Dict[str, Any] = field(default_factory=dict)
-
-    def __init__(self,
-                 phase_type: Optional[Enum | str] = None,
-                 phase_id: Optional[str] = None,
-                 run_state: Optional[RunState] = None,
-                 phase_name: Optional[str] = None,
-                 protection_id: Optional[str] = None,
-                 last_protected_phase: Optional[str] = None,
-                 properties=None):
-        if properties is None:
-            properties = field(default_factory=dict)
-        if isinstance(phase_type, Enum):
-            self.phase_type = phase_type.value
-        else:
-            self.phase_type = phase_type
-        self.phase_id = phase_id
-        self.run_state = run_state
-        self.phase_name = phase_name
-        self.protection_id = protection_id
-        self.last_protected_phase = last_protected_phase
-        self.properties = properties or {}
+    attributes: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def deserialize(cls, data: Dict[str, Any]) -> 'PhaseCriterion':
-        phase_type = data['phase_type']
-        phase_id = data['phase_id']
-        run_state = RunState[data['run_state']]
-        phase_name = data.get('phase_name')
-        protection_id = data.get('protection_id')
-        last_protected_phase = data.get('last_protected_phase')
-        properties = data.get('properties', {})
-        return cls(phase_type, phase_id, run_state, phase_name, protection_id, last_protected_phase, properties)
+        return cls(
+            phase_type=data['phase_type'],
+            phase_id=data['phase_id'],
+            run_state=RunState[data['run_state']] if data.get('run_state') else None,
+            phase_name=data.get('phase_name'),
+            attributes=data.get('attributes', {})
+        )
 
     def serialize(self) -> Dict[str, Any]:
         return {
@@ -318,9 +294,7 @@ class PhaseCriterion(MatchCriteria[PhaseInfo]):
             'phase_id': self.phase_id,
             'run_state': self.run_state.value if self.run_state else RunState.NONE.value,
             'phase_name': self.phase_name,
-            'protection_id': self.protection_id,
-            'last_protected_phase': self.last_protected_phase,
-            'properties': self.properties,
+            'attributes': self.attributes
         }
 
     def matches(self, phase_info: PhaseInfo) -> bool:
@@ -336,15 +310,12 @@ class PhaseCriterion(MatchCriteria[PhaseInfo]):
         if self.phase_name and phase_info.phase_name != self.phase_name:
             return False
 
-        if self.protection_id and phase_info.protection_id != self.protection_id:
-            return False
-
-        if self.last_protected_phase and phase_info.last_protected_phase != self.last_protected_phase:
-            return False
-
-        for key, value in self.properties.items():
-            if getattr(phase_info, key, None) != value:
+        if self.attributes:
+            if not phase_info.attributes:
                 return False
+            for key, value in self.attributes.items():
+                if phase_info.attributes.get(key) != value:
+                    return False
 
         return True
 
@@ -352,7 +323,7 @@ class PhaseCriterion(MatchCriteria[PhaseInfo]):
         return self.matches(phase_metadata)
 
     def __bool__(self):
-        return self.phase_name or self.run_state or self.properties
+        return bool(self.phase_name or self.run_state or self.attributes)
 
 
 @dataclass

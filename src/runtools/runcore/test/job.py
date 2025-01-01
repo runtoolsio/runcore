@@ -8,7 +8,7 @@ from runtools.runcore.job import JobInstance, JobRun, InstanceTransitionObserver
     InstanceOutputObserver, JobInstanceMetadata
 from runtools.runcore.output import Output, Mode
 from runtools.runcore.run import Phase, PhaseRun, TerminationInfo, Run, RunState, \
-    TerminationStatus, PhaseInfo, Fault, Lifecycle, PhaseControl, control_api
+    TerminationStatus, PhaseInfo, Fault, Lifecycle, control_api
 from runtools.runcore.util import utc_now
 from runtools.runcore.util.observer import ObservableNotification, DEFAULT_OBSERVER_PRIORITY
 
@@ -141,7 +141,7 @@ class FakeJobInstance(JobInstance):
                       self._status_tracker.to_status() if self._status_tracker else None)
 
     def _create_run_info(self) -> Run:
-        phases = tuple(p.info() for p in self.phases)
+        phases = tuple(p.info for p in self.phases)
         return Run(phases, self.lifecycle, self.termination)
 
     def prime(self):
