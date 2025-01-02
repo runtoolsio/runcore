@@ -424,9 +424,8 @@ class Phase(ABC, Generic[E]):
         pass
 
     @property
-    @abstractmethod
-    def name(self):
-        pass
+    def name(self) -> Optional[str]:
+        return None
 
     @property
     def attributes(self):

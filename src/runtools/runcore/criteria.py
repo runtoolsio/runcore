@@ -7,14 +7,13 @@ TODO: Remove immutable properties
 import datetime
 from abc import abstractmethod, ABC
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Dict, Any, Set, Optional, TypeVar, Generic, Iterable
+from typing import Dict, Any, Set, Optional, TypeVar, Generic
 
 from runtools.runcore import JobRun
 from runtools.runcore.job import JobInstanceMetadata
 from runtools.runcore.run import Outcome, Lifecycle, TerminationInfo, RunState, \
     PhaseInfo
-from runtools.runcore.util import MatchingStrategy, and_, or_, parse, single_day_range, days_range, \
+from runtools.runcore.util import MatchingStrategy, parse, single_day_range, days_range, \
     format_dt_iso, to_list, DateTimeRange, parse_range_to_utc
 
 T = TypeVar('T')
@@ -43,13 +42,13 @@ class InstanceMetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         job_id (str): The pattern for job ID matching. If empty, the field is ignored.
         run_id (str): The pattern for run ID matching. If empty, the field is ignored.
         instance_id (str): The pattern for instance ID matching. If empty, the field is ignored.
-        match_any (bool): If True, a match with any provided ID is sufficient. If False, all provided IDs must match.
+        match_both_ids (bool): If True, a match with any provided ID is sufficient. If False, all provided IDs must match.
         strategy (MatchingStrategy): The strategy to use for matching. Default is `MatchingStrategy.EXACT`.
     """
     job_id: str = ''
     run_id: str = ''
     instance_id: str = ''
-    match_any: bool = False
+    match_both_ids: bool = False
     strategy: MatchingStrategy = MatchingStrategy.EXACT
 
     @classmethod
@@ -127,7 +126,7 @@ class InstanceMetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         run_id_match = self._matches_id(metadata.run_id, self.run_id)
         instance_id_match = self._matches_id(metadata.instance_id, self.instance_id)
 
-        if self.match_any:
+        if self.match_both_ids:
             # If any ID is provided and matches, return True
             return (self.job_id and job_id_match) or \
                 (self.run_id and run_id_match) or \
@@ -143,7 +142,7 @@ class InstanceMetadataCriterion(MatchCriteria[JobInstanceMetadata]):
             'job_id': self.job_id,
             'run_id': self.run_id,
             'instance_id': self.instance_id,
-            'match_any': self.match_any,
+            'match_any': self.match_both_ids,
             'strategy': self.strategy.name.lower(),
         }
 
@@ -166,7 +165,7 @@ class InstanceMetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         if self.instance_id:
             ids.append(f"instance={self.instance_id}")
 
-        op = "|" if self.match_any else "&"
+        op = "|" if self.match_both_ids else "&"
         return f"({op.join(ids)}) {self.strategy.name}"
 
 
