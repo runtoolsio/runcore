@@ -48,7 +48,7 @@ def _build_where_clause(run_match, alias=''):
             break
 
         conditions = []
-        op = ' AND ' if c.match_all_ids else ' OR '
+        op = ' OR ' if c.match_any_id else ' AND '
         if c.job_id:
             if c.strategy == MatchingStrategy.PARTIAL:
                 conditions.append(f'{alias}job_id GLOB "*{c.job_id}*"')
