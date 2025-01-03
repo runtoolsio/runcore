@@ -111,6 +111,9 @@ class InstanceMetadataCriterion(MatchCriteria[JobInstanceMetadata]):
             return not self.strategy(actual, criteria[1:])  # Remove '!' and negate the result
         return self.strategy(actual, criteria)
 
+    def __call__(self, metadata: JobInstanceMetadata):
+        return self.matches(metadata)
+
     def matches(self, metadata: JobInstanceMetadata) -> bool:
         """
         The matching method. It can be also executed by calling this object.
