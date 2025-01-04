@@ -32,8 +32,21 @@ class MatchCriteria(ABC, Generic[T]):
         pass
 
 
+def negate_id(id_value: str) -> str:
+    """
+    Creates a negated ID pattern for matching.
+
+    Args:
+        id_value: The ID to negate
+
+    Returns:
+        A pattern that will match anything except the given ID
+    """
+    return f"!{id_value}" if id_value else id_value
+
+
 @dataclass
-class InstanceMetadataCriterion(MatchCriteria[JobInstanceMetadata]):
+class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
     """
     Specifies criteria for matching instance metadata.
     If all fields are empty, the matching strategy defaults to `MatchingStrategy.ALWAYS_TRUE`.
@@ -52,17 +65,17 @@ class InstanceMetadataCriterion(MatchCriteria[JobInstanceMetadata]):
     strategy: MatchingStrategy = MatchingStrategy.EXACT
 
     @classmethod
-    def all_match(cls) -> 'InstanceMetadataCriterion':
+    def all_match(cls) -> 'MetadataCriterion':
         """Creates a criterion that matches all instances."""
         return cls('', '', '', True, MatchingStrategy.ALWAYS_TRUE)
 
     @classmethod
-    def none_match(cls) -> 'InstanceMetadataCriterion':
+    def none_match(cls) -> 'MetadataCriterion':
         """Creates a criterion that matches no instances."""
         return cls('', '', '', False, MatchingStrategy.ALWAYS_FALSE)
 
     @staticmethod
-    def match_run(job_run: 'JobRun') -> 'InstanceMetadataCriterion':
+    def exact_match(job_run: 'JobRun') -> 'MetadataCriterion':
         """
         Creates a criterion that matches a specific job run by its instance ID.
 
@@ -70,13 +83,27 @@ class InstanceMetadataCriterion(MatchCriteria[JobInstanceMetadata]):
             job_run: The specific job run to create a match for.
 
         Returns:
-            InstanceMetadataCriterion: A criteria object that will match the given job instance.
+            MetadataCriterion: A criteria object that will match the given job instance.
         """
-        return InstanceMetadataCriterion(instance_id=job_run.metadata.instance_id)
+        return MetadataCriterion(instance_id=job_run.metadata.instance_id)
+
+    @classmethod
+    def all_except(cls, job_run: 'JobRun') -> 'MetadataCriterion':
+        """
+        Creates a criterion that matches any job run except the specified one.
+
+        Args:
+            job_run: The specific job run to exclude from matching.
+
+        Returns:
+            MetadataCriterion: A criteria object that will match any job instance
+            except the given one.
+        """
+        return cls(instance_id=negate_id(job_run.metadata.instance_id))
 
     @classmethod
     def parse_pattern(cls, pattern: str,
-                      strategy: MatchingStrategy = MatchingStrategy.EXACT) -> 'InstanceMetadataCriterion':
+                      strategy: MatchingStrategy = MatchingStrategy.EXACT) -> 'MetadataCriterion':
         """
         Parses the provided pattern and returns the corresponding metadata criterion.
 
@@ -166,7 +193,7 @@ class InstanceMetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         }
 
     @classmethod
-    def deserialize(cls, as_dict: Dict[str, Any]) -> 'InstanceMetadataCriterion':
+    def deserialize(cls, as_dict: Dict[str, Any]) -> 'MetadataCriterion':
         """
         Deserializes a criterion from a dictionary.
 
@@ -443,13 +470,13 @@ class JobRunCriteria(MatchCriteria[JobRun]):
 
     @classmethod
     def all(cls):
-        return cls(metadata_criteria=InstanceMetadataCriterion.all_match())
+        return cls(metadata_criteria=MetadataCriterion.all_match())
 
     @classmethod
     def deserialize(cls, as_dict):
         new = cls()
         new.jobs = as_dict.get('jobs', [])
-        new.metadata_criteria = [InstanceMetadataCriterion.deserialize(c) for c in as_dict.get('metadata_criteria', ())]
+        new.metadata_criteria = [MetadataCriterion.deserialize(c) for c in as_dict.get('metadata_criteria', ())]
         new.interval_criteria = [LifecycleCriterion.deserialize(c) for c in as_dict.get('interval_criteria', ())]
         new.phase_criteria = [PhaseCriterion.deserialize(c) for c in as_dict.get('phase_criteria', ())]
         new.termination_criteria = [TerminationCriterion.deserialize(c) for c in
@@ -468,19 +495,25 @@ class JobRunCriteria(MatchCriteria[JobRun]):
     @classmethod
     def parse(cls, pattern: str, strategy: MatchingStrategy = MatchingStrategy.EXACT):
         new = cls()
-        new += InstanceMetadataCriterion.parse_pattern(pattern, strategy)
+        new += MetadataCriterion.parse_pattern(pattern, strategy)
         return new
 
     @classmethod
     def job_id(cls, job_id, strategy: MatchingStrategy = MatchingStrategy.EXACT):
         new = cls()
-        new += InstanceMetadataCriterion(job_id=job_id, strategy=strategy)
+        new += MetadataCriterion(job_id=job_id, strategy=strategy)
         return new
 
     @classmethod
-    def match_run(cls, job_run):
+    def exact_match(cls, job_run):
         new = cls()
-        new += InstanceMetadataCriterion.match_run(job_run)
+        new += MetadataCriterion.exact_match(job_run)
+        return new
+
+    @classmethod
+    def all_except(cls, job_run):
+        new = cls()
+        new += MetadataCriterion.all_except(job_run)
         return new
 
     def __iadd__(self, criterion):
@@ -490,7 +523,7 @@ class JobRunCriteria(MatchCriteria[JobRun]):
         match criterion:
             case str():
                 self.jobs.append(criterion)
-            case InstanceMetadataCriterion():
+            case MetadataCriterion():
                 self.metadata_criteria.append(criterion)
             case LifecycleCriterion():
                 self.interval_criteria.append(criterion)
