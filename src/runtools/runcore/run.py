@@ -551,6 +551,30 @@ class Run:
 
         return None
 
+    def find_phase(self, criterion) -> Optional[PhaseInfo]:
+        for phase in self.phases:
+            if criterion(phase):
+                return phase
+
+        return None
+
+    def phase_after(self, phase: PhaseInfo) -> Optional[PhaseInfo]:
+        """
+        Returns the phase that comes immediately after the given phase in the sequence.
+
+        Args:
+            phase: The reference phase to find the next phase from
+
+        Returns:
+            The phase that follows the given phase, or None if the given phase
+            is the last one or not found in the sequence
+        """
+        try:
+            idx = self.phases.index(phase)
+            return self.phases[idx + 1] if idx + 1 < len(self.phases) else None
+        except ValueError:
+            return None
+
 
 class PhaseExecutionError(Exception):
 

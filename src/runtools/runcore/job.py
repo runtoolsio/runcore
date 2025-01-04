@@ -495,6 +495,12 @@ class JobRun:
     def current_phase(self) -> Optional[PhaseInfo]:
         return self._run.current_phase
 
+    def find_phase(self, criterion):
+        return self._run.find_phase(criterion)
+
+    def phase_after(self, phase: PhaseInfo):
+        return self._run.phase_after(phase)
+
     @property
     def lifecycle(self) -> Lifecycle:
         return self._run.lifecycle
