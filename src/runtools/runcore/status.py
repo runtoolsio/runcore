@@ -111,10 +111,10 @@ class Status:
     @classmethod
     def deserialize(cls, data: dict) -> 'Status':
         return cls(
-            last_event=Event.deserialize(data['last_event']) if data['last_event'] else None,
+            last_event=Event.deserialize(data['last_event']) if data.get('last_event') else None,
             operations=[Operation.deserialize(op) for op in data['operations']],
             warnings=[Event.deserialize(w) for w in data['warnings']],
-            result=Event.deserialize(data['result']),
+            result=Event.deserialize(data['result']) if data.get('result') else None,
         )
 
     def serialize(self) -> dict:
@@ -122,7 +122,7 @@ class Status:
             'last_event': self.last_event.serialize() if self.last_event else None,
             'operations': [op.serialize() for op in self.operations],
             'warnings': [w.serialize() for w in self.warnings],
-            'result': self.result.serialize(),
+            'result': self.result.serialize() if self.result else None,
         }
 
     def find_operation(self, name: str) -> Optional[Operation]:

@@ -509,12 +509,6 @@ class JobRun:
     def termination(self) -> Optional[TerminationInfo]:
         return self._run.termination
 
-    def in_protected_phase(self, protection_phase_type: str | Enum, protection_id: str) -> bool:
-        return self._run.in_protected_phase(protection_phase_type, protection_id)
-
-    def protected_phases(self, protection_phase_type: str | Enum, protection_id: str) -> List[str]:
-        return self._run.protected_phases(protection_phase_type, protection_id)
-
 
 class JobRuns(list):
     """

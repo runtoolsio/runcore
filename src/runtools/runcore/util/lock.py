@@ -84,7 +84,8 @@ class PortalockerStateLocker(StateLocker):
         Returns:
              int: A random interval (in seconds) between 10 milliseconds and the max check time.
         """
-        return random.randint(10, self.max_check_time * 1000) / 1000
+        # Convert to integers for randint by rounding max time to milliseconds
+        return random.randint(10, int(self.max_check_time * 1000)) / 1000
 
     @contextlib.contextmanager
     def __call__(self):
