@@ -85,7 +85,8 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         Returns:
             MetadataCriterion: A criteria object that will match the given job instance.
         """
-        return MetadataCriterion(instance_id=job_run.metadata.instance_id)
+        return MetadataCriterion.instance_match(job_run.metadata.instance_id)
+
 
     @classmethod
     def all_except(cls, job_run: 'JobRun') -> 'MetadataCriterion':
@@ -99,7 +100,20 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
             MetadataCriterion: A criteria object that will match any job instance
             except the given one.
         """
-        return cls(instance_id=negate_id(job_run.metadata.instance_id))
+        return MetadataCriterion.instance_match(negate_id(job_run.metadata.instance_id))
+
+    @staticmethod
+    def instance_match(instance_id: str) -> 'MetadataCriterion':
+        """
+        Creates a criterion that matches a specific instance.
+
+        Args:
+            instance_id: The specific instance to create a match for.
+
+        Returns:
+            MetadataCriterion: A criteria object that will match the given job instance.
+        """
+        return MetadataCriterion(instance_id=instance_id)
 
     @classmethod
     def parse_pattern(cls, pattern: str,
@@ -499,7 +513,7 @@ class JobRunCriteria(MatchCriteria[JobRun]):
         return new
 
     @classmethod
-    def job_id(cls, job_id, strategy: MatchingStrategy = MatchingStrategy.EXACT):
+    def job_match(cls, job_id, strategy: MatchingStrategy = MatchingStrategy.EXACT):
         new = cls()
         new += MetadataCriterion(job_id=job_id, strategy=strategy)
         return new
@@ -514,6 +528,12 @@ class JobRunCriteria(MatchCriteria[JobRun]):
     def all_except(cls, job_run):
         new = cls()
         new += MetadataCriterion.all_except(job_run)
+        return new
+
+    @classmethod
+    def instance_match(cls, instance_id):
+        new = cls()
+        new += MetadataCriterion.instance_match(instance_id)
         return new
 
     def __iadd__(self, criterion):
