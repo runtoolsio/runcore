@@ -374,7 +374,7 @@ class TerminateRun(Exception):
         super().__init__(f"Termination status: {term_status}")
 
 
-E = TypeVar('E')
+C = TypeVar('C')
 
 
 class _ControlProperty(property):
@@ -400,7 +400,7 @@ class PhaseControl:
         raise AttributeError(f"'{self.__class__.__name__}' has no attribute '{name}'")
 
 
-class Phase(ABC, Generic[E]):
+class Phase(ABC, Generic[C]):
 
     @property
     @abstractmethod
@@ -445,7 +445,7 @@ class Phase(ABC, Generic[E]):
         return PhaseControl(self)
 
     @abstractmethod
-    def run(self, env: E, ctx):
+    def run(self, ctx: Optional[C]):
         pass
 
     @abstractmethod
