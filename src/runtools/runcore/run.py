@@ -10,7 +10,6 @@ by orchestrating the given phase phases.
 """
 
 import datetime
-import logging
 import traceback
 from abc import ABC, abstractmethod
 from collections import OrderedDict
@@ -21,8 +20,6 @@ from typing import Optional, List, Dict, Any, Tuple, TypeVar, Generic
 
 from runtools.runcore import util
 from runtools.runcore.util import format_dt_iso, is_empty
-
-log = logging.getLogger(__name__)
 
 
 class RunStateMeta(EnumMeta):
