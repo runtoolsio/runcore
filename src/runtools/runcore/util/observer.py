@@ -90,7 +90,7 @@ class ObservableNotification(Generic[O]):
     def remove_observer(self, observer: O) -> None:
         self._prioritized_observers = [(priority, o) for priority, o in self._prioritized_observers if o != observer]
 
-    def observer(self, observer: O, priority: int = DEFAULT_OBSERVER_PRIORITY) -> 'ObserverContext[O]':
+    def observer_context(self, observer: O, priority: int = DEFAULT_OBSERVER_PRIORITY) -> 'ObserverContext[O]':
         return ObserverContext(self, observer, priority)
 
 
