@@ -56,7 +56,7 @@ class FakePhase(Phase):
     def stop_status(self):
         return TerminationStatus.STOPPED
 
-    def run(self, env, run_ctx):
+    def run(self, ctx):
         self.ran = True
 
     def stop(self):
