@@ -1,5 +1,6 @@
 from _operator import itemgetter
 from itertools import chain
+from types import FunctionType, MethodType
 from typing import List, Tuple, Any, Callable, Optional, TypeVar, Generic
 
 DEFAULT_OBSERVER_PRIORITY = 100
@@ -105,7 +106,10 @@ class _Proxy(Generic[O]):
             exceptions = []
             for observer in object.__getattribute__(self, "_notification").observers:
                 try:
-                    getattr(observer, name)(*args, **kwargs)
+                    if isinstance(observer, (FunctionType, MethodType)):
+                        observer(*args, **kwargs)
+                    else:
+                        getattr(observer, name)(*args, **kwargs)
                 except Exception as e:
                     error_hook = object.__getattribute__(self, "_notification").error_hook
                     if error_hook:
