@@ -1,10 +1,17 @@
 from abc import ABC, abstractmethod
 
+from runtools.runcore import APIClient, InstanceTransitionReceiver
 from runtools.runcore.db import SortCriteria
-from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
+from runtools.runcore.job import InstanceTransitionObserver, InstanceOutputObserver
+from runtools.runcore.listening import InstanceOutputReceiver
+from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification, MultipleExceptions
 
 
 class Environment(ABC):
+
+    @abstractmethod
+    def get_active_runs(self, run_match):
+        pass
 
     @abstractmethod
     def get_instances(self, run_match):
@@ -52,6 +59,10 @@ class Environment(ABC):
         """Remove a previously registered output observer."""
         pass
 
+    @abstractmethod
+    def close(self):
+        pass
+
 
 class EnvironmentBase(Environment, ABC):
 
@@ -63,3 +74,79 @@ class EnvironmentBase(Environment, ABC):
 
     def read_history_stats(self, run_match=None):
         return self._persistence.read_history_stats(run_match)
+
+    def close(self):
+        self._persistence.close()
+
+
+class LocalEnvironment(EnvironmentBase):
+    
+    def __init__(self, persistence):
+        super().__init__(persistence)
+        self._client = APIClient()
+        self._transition_notification = ObservableNotification[InstanceTransitionObserver]()
+        self._output_notification = ObservableNotification[InstanceOutputObserver]()
+        self._transition_receiver = InstanceTransitionReceiver()
+        self._transition_receiver.add_observer_transition(self._transition_notification.observer_proxy)
+        self._output_receiver = InstanceOutputReceiver()
+        self._output_receiver.add_observer_output(self._output_notification.observer_proxy)
+
+    def __enter__(self):
+        """
+        Open the environment node.
+        """
+        return self.open()
+
+    def open(self):
+        self._transition_receiver.start()
+        self._output_receiver.start()
+        return self
+
+    def get_active_runs(self, run_match):
+        return self._client.get_active_runs(run_match)
+
+    def get_instances(self, run_match):
+        pass
+
+    def add_observer_transition(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
+        self._transition_notification.add_observer(observer, priority)
+
+    def remove_observer_transition(self, observer):
+        self._transition_notification.remove_observer(observer)
+
+    def add_observer_output(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
+        self._output_notification.add_observer(observer, priority)
+
+    def remove_observer_output(self, observer):
+        self._output_notification.remove_observer(observer)
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def close(self):
+        exceptions = []
+
+        try:
+            super().close()
+        except Exception as e:
+            exceptions.append(e)
+
+        try:
+            self._output_receiver.close()
+        except Exception as e:
+            exceptions.append(e)
+
+        try:
+            self._transition_receiver.close()
+        except Exception as e:
+            exceptions.append(e)
+
+        try:
+            self._client.close()
+        except Exception as e:
+            exceptions.append(e)
+
+        if exceptions:
+            if len(exceptions) > 1:
+                raise MultipleExceptions(exceptions)
+            raise exceptions[0]
