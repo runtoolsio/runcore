@@ -51,3 +51,15 @@ class Environment(ABC):
     def remove_observer_output(self, observer):
         """Remove a previously registered output observer."""
         pass
+
+
+class EnvironmentBase(Environment, ABC):
+
+    def __init__(self, persistence):
+        self._persistence = persistence
+
+    def read_history_runs(self, run_match, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+        return self._persistence.read_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+
+    def read_history_stats(self, run_match=None):
+        return self._persistence.read_history_stats(run_match)
