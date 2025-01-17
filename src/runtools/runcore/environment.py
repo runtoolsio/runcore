@@ -78,28 +78,10 @@ class Environment(ABC):
         pass
 
 
-class EnvironmentBase(Environment, ABC):
+class LocalEnvironment(Environment):
 
     def __init__(self, persistence):
         self._persistence = persistence
-
-    def open(self):
-        self._persistence.open()
-
-    def read_history_runs(self, run_match, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
-        return self._persistence.read_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
-
-    def read_history_stats(self, run_match=None):
-        return self._persistence.read_history_stats(run_match)
-
-    def close(self):
-        self._persistence.close()
-
-
-class LocalEnvironment(EnvironmentBase):
-    
-    def __init__(self, persistence):
-        super().__init__(persistence)
         self._client = APIClient()
         self._transition_notification = ObservableNotification[InstanceTransitionObserver]()
         self._output_notification = ObservableNotification[InstanceOutputObserver]()
@@ -109,7 +91,6 @@ class LocalEnvironment(EnvironmentBase):
         self._output_receiver.add_observer_output(self._output_notification.observer_proxy)
 
     def open(self):
-        super().open()
         self._transition_receiver.start()
         self._output_receiver.start()
 
@@ -118,6 +99,12 @@ class LocalEnvironment(EnvironmentBase):
 
     def get_instances(self, run_match):
         pass
+
+    def read_history_runs(self, run_match, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+        return self._persistence.read_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+
+    def read_history_stats(self, run_match=None):
+        return self._persistence.read_history_stats(run_match)
 
     def add_observer_transition(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
         self._transition_notification.add_observer(observer, priority)
@@ -150,7 +137,7 @@ class LocalEnvironment(EnvironmentBase):
             exceptions.append(e)
 
         try:
-            super().close()
+            self._persistence.close()
         except Exception as e:
             exceptions.append(e)
 
