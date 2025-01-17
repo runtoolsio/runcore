@@ -78,33 +78,29 @@ class Environment(ABC):
         pass
 
 
-class LocalEnvironment(Environment):
+class PersistingEnvironment(Environment, ABC):
 
     def __init__(self, persistence):
         self._persistence = persistence
-        self._client = APIClient()
-        self._transition_notification = ObservableNotification[InstanceTransitionObserver]()
-        self._output_notification = ObservableNotification[InstanceOutputObserver]()
-        self._transition_receiver = InstanceTransitionReceiver()
-        self._transition_receiver.add_observer_transition(self._transition_notification.observer_proxy)
-        self._output_receiver = InstanceOutputReceiver()
-        self._output_receiver.add_observer_output(self._output_notification.observer_proxy)
 
     def open(self):
-        self._transition_receiver.start()
-        self._output_receiver.start()
-
-    def get_active_runs(self, run_match):
-        return self._client.get_active_runs(run_match)
-
-    def get_instances(self, run_match):
-        pass
+        self._persistence.open()
 
     def read_history_runs(self, run_match, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
         return self._persistence.read_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
 
     def read_history_stats(self, run_match=None):
         return self._persistence.read_history_stats(run_match)
+
+    def close(self):
+        self._persistence.close()
+
+
+class JobInstanceObservable:
+
+    def __init__(self):
+        self._transition_notification = ObservableNotification[InstanceTransitionObserver]()
+        self._output_notification = ObservableNotification[InstanceOutputObserver]()
 
     def add_observer_transition(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
         self._transition_notification.add_observer(observer, priority)
@@ -118,7 +114,35 @@ class LocalEnvironment(Environment):
     def remove_observer_output(self, observer):
         self._output_notification.remove_observer(observer)
 
+
+class LocalEnvironment(JobInstanceObservable, PersistingEnvironment, Environment):
+
+    def __init__(self, persistence):
+        JobInstanceObservable.__init__(self)
+        PersistingEnvironment.__init__(self, persistence)
+        self._client = APIClient()
+        self._transition_receiver = InstanceTransitionReceiver()
+        self._output_receiver = InstanceOutputReceiver()
+
+    def open(self):
+        PersistingEnvironment.open(self)
+
+        self._transition_receiver.add_observer_transition(self._transition_notification.observer_proxy)
+        self._transition_receiver.start()
+
+        self._output_receiver.add_observer_output(self._output_notification.observer_proxy)
+        self._output_receiver.start()
+
+    def get_active_runs(self, run_match):
+        return self._client.get_active_runs(run_match)
+
+    def get_instances(self, run_match):
+        pass
+
     def close(self):
+        self._output_receiver.remove_observer_output(self._output_notification.observer_proxy)
+        self._transition_receiver.remove_observer_transition(self._transition_notification.observer_proxy)
+
         exceptions = []
 
         try:
@@ -137,7 +161,7 @@ class LocalEnvironment(Environment):
             exceptions.append(e)
 
         try:
-            self._persistence.close()
+            PersistingEnvironment.close(self)
         except Exception as e:
             exceptions.append(e)
 
