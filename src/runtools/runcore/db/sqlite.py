@@ -109,7 +109,10 @@ def _build_where_clause(run_match, alias=''):
     all_conditions_list = (job_conditions, id_conditions, int_conditions, term_conditions)
     all_conditions_str = ["(" + " OR ".join(c_list) + ")" for c_list in all_conditions_list if c_list]
 
-    return " WHERE {conditions}".format(conditions=" AND ".join(all_conditions_str))
+    if all_conditions_str:
+        return " WHERE {conditions}".format(conditions=" AND ".join(all_conditions_str))
+    else:
+        return ""
 
 
 class SQLite(Persistence, InstanceTransitionObserver):
