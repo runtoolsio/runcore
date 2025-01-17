@@ -9,6 +9,17 @@ from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, Observable
 
 class Environment(ABC):
 
+    def __enter__(self):
+        """
+        Open the environment node.
+        """
+        self.open()
+        return self
+
+    @abstractmethod
+    def open(self):
+        pass
+
     @abstractmethod
     def get_active_runs(self, run_match):
         pass
@@ -59,6 +70,9 @@ class Environment(ABC):
         """Remove a previously registered output observer."""
         pass
 
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
     @abstractmethod
     def close(self):
         pass
@@ -68,6 +82,9 @@ class EnvironmentBase(Environment, ABC):
 
     def __init__(self, persistence):
         self._persistence = persistence
+
+    def open(self):
+        self._persistence.open()
 
     def read_history_runs(self, run_match, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
         return self._persistence.read_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
@@ -91,16 +108,10 @@ class LocalEnvironment(EnvironmentBase):
         self._output_receiver = InstanceOutputReceiver()
         self._output_receiver.add_observer_output(self._output_notification.observer_proxy)
 
-    def __enter__(self):
-        """
-        Open the environment node.
-        """
-        return self.open()
-
     def open(self):
+        super().open()
         self._transition_receiver.start()
         self._output_receiver.start()
-        return self
 
     def get_active_runs(self, run_match):
         return self._client.get_active_runs(run_match)
@@ -120,16 +131,8 @@ class LocalEnvironment(EnvironmentBase):
     def remove_observer_output(self, observer):
         self._output_notification.remove_observer(observer)
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
-
     def close(self):
         exceptions = []
-
-        try:
-            super().close()
-        except Exception as e:
-            exceptions.append(e)
 
         try:
             self._output_receiver.close()
@@ -143,6 +146,11 @@ class LocalEnvironment(EnvironmentBase):
 
         try:
             self._client.close()
+        except Exception as e:
+            exceptions.append(e)
+
+        try:
+            super().close()
         except Exception as e:
             exceptions.append(e)
 

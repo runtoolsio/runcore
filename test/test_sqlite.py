@@ -1,11 +1,10 @@
-import sqlite3
 from datetime import datetime as dt
 
 import pytest
 
 from runtools.runcore.criteria import LifecycleCriterion, JobRunCriteria, \
     parse_criteria
-from runtools.runcore.db.sqlite import SQLite
+from runtools.runcore.db import sqlite
 from runtools.runcore.run import TerminationStatus
 from runtools.runcore.test.job import ended_run as run
 from runtools.runcore.util import parse_iso8601_duration, MatchingStrategy
@@ -13,11 +12,8 @@ from runtools.runcore.util import parse_iso8601_duration, MatchingStrategy
 
 @pytest.fixture
 def sut():
-    db_con = sqlite3.connect(':memory:')
-    sqlite_ = SQLite(db_con)
-    sqlite_.check_tables_exist()
-    yield sqlite_
-    sqlite_.close()
+    with sqlite.create(':memory:') as db:
+        yield db
 
 
 def test_store_and_fetch(sut):
@@ -90,7 +86,8 @@ def test_job_id_match(sut):
 
 
 def test_cleanup(sut):
-    sut.store_job_runs(run('j1', offset_min=-120), run('j2'), run('j3', offset_min=-240), run('j4', offset_min=-10), run('j5', offset_min=-60))
+    sut.store_job_runs(run('j1', offset_min=-120), run('j2'), run('j3', offset_min=-240), run('j4', offset_min=-10),
+                       run('j5', offset_min=-60))
 
     sut.clean_up(1, parse_iso8601_duration('PT50S'))
     jobs = sut.read_history_runs()

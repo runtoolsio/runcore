@@ -2,6 +2,7 @@ import sqlite3
 from pathlib import Path
 
 from runtools.runcore import cfg, persistence
+from runtools.runcore.db import sqlite
 from runtools.runcore.db.sqlite import SQLite
 
 
@@ -34,7 +35,7 @@ def test_sqlite_cfg_vars():
 
 
 def create_test_sqlite():
-    return SQLite(sqlite3.connect(test_db_path()))
+    sqlite.create(test_db_path())
 
 
 def test_db_path() -> Path:

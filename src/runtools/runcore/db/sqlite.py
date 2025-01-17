@@ -7,17 +7,29 @@ import json
 import logging
 import sqlite3
 from datetime import timezone
+from functools import wraps
 from typing import List
 
 from runtools.runcore import paths
+from runtools.runcore.common import InvalidStateError
 from runtools.runcore.db import SortCriteria, Persistence
-from runtools.runcore.job import JobStats, JobRun, JobRuns, InstanceTransitionObserver, JobInstanceMetadata
-from runtools.runcore.run import RunState, Lifecycle, PhaseInfo, Fault, Run, TerminationInfo, \
+from runtools.runcore.job import JobStats, JobRun, JobRuns, JobInstanceMetadata
+from runtools.runcore.run import Lifecycle, PhaseInfo, Fault, Run, TerminationInfo, \
     TerminationStatus, Outcome
 from runtools.runcore.status import Status
 from runtools.runcore.util import MatchingStrategy, format_dt_sql, parse_dt_sql
 
 log = logging.getLogger(__name__)
+
+
+def ensure_open(f):
+    @wraps(f)
+    def wrapper(self, *args, **kwargs):
+        if not self._conn:
+            raise InvalidStateError("Database connection not opened")
+        return f(self, *args, **kwargs)
+
+    return wrapper
 
 
 def create_database(db_conf):
@@ -115,22 +127,70 @@ def _build_where_clause(run_match, alias=''):
         return ""
 
 
-class SQLite(Persistence, InstanceTransitionObserver):
+def create(database=None, *,
+           timeout=5.0,
+           detect_types=0,
+           isolation_level='DEFERRED',
+           check_same_thread=True,
+           cached_statements=128,
+           uri=False,
+           autocommit=sqlite3.LEGACY_TRANSACTION_CONTROL):
+    """
+    Creates SQLite persistence with configurable connection parameters.
 
-    def __init__(self, connection):
-        self._conn = connection
+    Args:
+        database: Database path or ':memory:' for in-memory database. If None, uses default path
+        timeout: Float timeout value in seconds
+        detect_types: Control whether string or binary is converted to SQLite types
+        isolation_level: Sets transaction isolation level
+        check_same_thread: Enforce thread safety checks
+        cached_statements: Number of statements to cache
+        uri: True if database parameter is a URI
+        autocommit: Transaction control mode
+
+    Returns:
+        SQLite: Configured SQLite persistence instance
+    """
+
+    def connection_factory():
+        return sqlite3.connect(
+            database or str(paths.sqlite_db_path(True)),
+            timeout=timeout,
+            detect_types=detect_types,
+            isolation_level=isolation_level,
+            check_same_thread=check_same_thread,
+            cached_statements=cached_statements,
+            uri=uri,
+            autocommit=autocommit
+        )
+
+    return SQLite(connection_factory)
+
+
+class SQLite(Persistence):
+
+    def __init__(self, connection_factory):
+        """
+        Args:
+            connection_factory: Callable that returns a sqlite3.Connection
+        """
+        self._connection_factory = connection_factory
+        self._conn = None
 
     def __enter__(self):
+        self.open()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
-        # TODO Handle exceptions if necessary, return False to propagate any exception, True to suppress
+    def open(self):
+        if self._conn is not None:
+            raise InvalidStateError("Database connection already opened")
+        self._conn = self._connection_factory()
+        self.check_tables_exist()
 
-    def new_instance_phase(self, job_run: JobRun, previous_phase, new_phase, ordinal):
-        if new_phase.run_state == RunState.ENDED:
-            self.store_job_runs(job_run)
+    def is_open(self):
+        return self._conn is not None
 
+    @ensure_open
     def check_tables_exist(self):
         # Version 5
         c = self._conn.cursor()
@@ -159,6 +219,7 @@ class SQLite(Persistence, InstanceTransitionObserver):
             log.debug('event=[table_created] table=[history]')
             self._conn.commit()
 
+    @ensure_open
     def read_history_runs(self, run_match=None, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=-1, last=False) \
             -> JobRuns:
         """
@@ -218,6 +279,7 @@ class SQLite(Persistence, InstanceTransitionObserver):
 
         return JobRuns((to_job_run(row) for row in c.fetchall()))
 
+    @ensure_open
     def count_instances(self, run_match):
         """
         Counts the total number of job instances based on the specified match criteria.
@@ -231,6 +293,7 @@ class SQLite(Persistence, InstanceTransitionObserver):
         """
         return sum(s.count for s in (self.read_history_stats(run_match)))
 
+    @ensure_open
     def clean_up(self, max_records, max_age):
         if max_records >= 0:
             self._max_rows(max_records)
@@ -251,6 +314,7 @@ class SQLite(Persistence, InstanceTransitionObserver):
                            ((datetime.datetime.now(tz=timezone.utc) - max_age),))
         self._conn.commit()
 
+    @ensure_open
     def read_history_stats(self, run_match=None) -> List[JobStats]:
         """
         Returns job statistics for each job based on specified criteria.
@@ -306,6 +370,7 @@ class SQLite(Persistence, InstanceTransitionObserver):
 
         return [to_job_stats(row) for row in c.fetchall()]
 
+    @ensure_open
     def store_job_runs(self, *job_runs):
         """
         Stores the provided job instances to the configured persistence source.
@@ -341,6 +406,7 @@ class SQLite(Persistence, InstanceTransitionObserver):
         )
         self._conn.commit()
 
+    @ensure_open
     def remove_job_runs(self, run_match):
         """
         Removes job instances based on the specified match criteria from the configured persistence source.
@@ -354,6 +420,9 @@ class SQLite(Persistence, InstanceTransitionObserver):
             raise ValueError("No rows to remove")
         self._conn.execute("DELETE FROM history" + where_clause)
         self._conn.commit()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
 
     def close(self):
         self._conn.close()
