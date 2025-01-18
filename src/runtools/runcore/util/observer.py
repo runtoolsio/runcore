@@ -3,8 +3,6 @@ from itertools import chain
 from types import FunctionType, MethodType
 from typing import List, Tuple, Any, Callable, Optional, TypeVar, Generic
 
-from runtools.runcore.util.err import MultipleExceptions
-
 DEFAULT_OBSERVER_PRIORITY = 100
 
 
@@ -47,7 +45,7 @@ class CallableNotification:
                     exceptions.append(e)
 
         if exceptions:
-            raise MultipleExceptions(exceptions)
+            raise ExceptionGroup("Observer exception(s) occurred", exceptions)
 
 
 O = TypeVar("O")
@@ -108,7 +106,7 @@ class _Proxy(Generic[O]):
                         exceptions.append(e)
 
             if exceptions:
-                raise MultipleExceptions(exceptions)
+                raise ExceptionGroup("Observer exception(s) occurred", exceptions)
 
         # Special handling for methods/attributes that are specific to the proxy object itself
         if name in ["_notification"]:

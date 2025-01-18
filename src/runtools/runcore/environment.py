@@ -131,6 +131,7 @@ class _LocalEnvironment(JobInstanceObservable, PersistingEnvironment, Environmen
         self._transition_receiver.remove_observer_transition(self._transition_notification.observer_proxy)
 
         run_isolated_collect_exceptions(
+            "Errors during closing local environment",
             self._output_receiver.close,
             self._transition_receiver.close,
             self._client.close,
