@@ -23,11 +23,11 @@ class Environment(ABC):
         pass
 
     @abstractmethod
-    def get_active_runs(self, run_match):
+    def get_active_runs(self, run_match=None):
         pass
 
     @abstractmethod
-    def get_instances(self, run_match):
+    def get_instances(self, run_match=None):
         pass
 
     @abstractmethod
@@ -100,10 +100,10 @@ class PersistingEnvironment(Environment, ABC):
 
 def local(persistence=None):
     persistence = persistence or sqlite.create(':memory:')
-    return _LocalEnvironment(persistence)
+    return LocalEnvironment(persistence)
 
 
-class _LocalEnvironment(JobInstanceObservable, PersistingEnvironment, Environment):
+class LocalEnvironment(JobInstanceObservable, PersistingEnvironment, Environment):
 
     def __init__(self, persistence):
         JobInstanceObservable.__init__(self)
@@ -121,10 +121,10 @@ class _LocalEnvironment(JobInstanceObservable, PersistingEnvironment, Environmen
         self._output_receiver.add_observer_output(self._output_notification.observer_proxy)
         self._output_receiver.start()
 
-    def get_active_runs(self, run_match):
+    def get_active_runs(self, run_match=None):
         return self._client.get_active_runs(run_match).successful
 
-    def get_instances(self, run_match):
+    def get_instances(self, run_match=None):
         pass
 
     def close(self):
