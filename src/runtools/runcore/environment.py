@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 
 from runtools.runcore import APIClient, InstanceTransitionReceiver
-from runtools.runcore.db import SortCriteria
+from runtools.runcore.db import SortCriteria, sqlite
 from runtools.runcore.job import JobInstanceObservable
 from runtools.runcore.listening import InstanceOutputReceiver
 from runtools.runcore.util.err import run_isolated_collect_exceptions
@@ -97,7 +97,12 @@ class PersistingEnvironment(Environment, ABC):
         self._persistence.close()
 
 
-class LocalEnvironment(JobInstanceObservable, PersistingEnvironment, Environment):
+def local(persistence=None):
+    persistence = persistence or sqlite.create(':memory:')
+    return _LocalEnvironment(persistence)
+
+
+class _LocalEnvironment(JobInstanceObservable, PersistingEnvironment, Environment):
 
     def __init__(self, persistence):
         JobInstanceObservable.__init__(self)
@@ -116,7 +121,7 @@ class LocalEnvironment(JobInstanceObservable, PersistingEnvironment, Environment
         self._output_receiver.start()
 
     def get_active_runs(self, run_match):
-        return self._client.get_active_runs(run_match)
+        return self._client.get_active_runs(run_match).successful
 
     def get_instances(self, run_match):
         pass
