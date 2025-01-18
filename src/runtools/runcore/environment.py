@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from threading import Event
 
 from runtools.runcore import APIClient, InstanceTransitionReceiver
 from runtools.runcore.db import SortCriteria, sqlite
@@ -137,3 +138,12 @@ class _LocalEnvironment(JobInstanceObservable, PersistingEnvironment, Environmen
             self._client.close,
             lambda: PersistingEnvironment.close(self)
         )
+
+def wait_for_interrupt(env, *, reraise=True):
+    try:
+        Event().wait()
+    except KeyboardInterrupt:
+        env.close()
+    finally:
+        if reraise:
+            raise KeyboardInterrupt
