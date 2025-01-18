@@ -28,6 +28,15 @@ def to_list(e):
     return list(e) if isinstance(e, Iterable) else [e]
 
 
+def ensure_tuple_copy(e):
+    if e is None:
+        return ()
+    if not isinstance(e, (list, tuple, set)):
+        features = (e,)
+
+    return tuple(e)
+
+
 def flatten_dict(dictionary, parent_key='', separator='_'):
     """
 
