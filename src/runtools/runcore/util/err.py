@@ -1,3 +1,6 @@
+import traceback
+
+
 def run_isolated_collect_exceptions(*callbacks) -> None:
     """
     Execute callbacks in order, collecting any exceptions that occur.
@@ -26,6 +29,7 @@ def run_isolated_collect_exceptions(*callbacks) -> None:
         raise MultipleExceptions(exceptions)
 
 
+
 class MultipleExceptions(Exception):
     """Exception that carries multiple exceptions that occurred during execution"""
 
@@ -33,6 +37,13 @@ class MultipleExceptions(Exception):
         self.exceptions = exceptions
         message = f"Multiple exceptions occurred ({len(exceptions)})"
         super().__init__(message)
+
+    def __str__(self):
+        parts = [super().__str__()]
+        for i, exc in enumerate(self.exceptions, 1):
+            parts.append(f"\nException {i}:")
+            parts.append(''.join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+        return "\n".join(parts)
 
     def __iter__(self):
         return iter(self.exceptions)
