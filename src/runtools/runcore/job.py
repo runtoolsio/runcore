@@ -19,7 +19,7 @@ from runtools.runcore.run import TerminationStatus, RunState, Run, PhaseRun, Pha
     Lifecycle, TerminationInfo, Fault
 from runtools.runcore.status import Status
 from runtools.runcore.util import MatchingStrategy, format_dt_iso
-from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
+from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 
 
 class JobType(Enum):
@@ -613,3 +613,22 @@ class JobInstanceManager(ABC):
             job_instance: The job instance to be unregistered.
         """
         pass
+
+
+class JobInstanceObservable:
+
+    def __init__(self):
+        self._transition_notification = ObservableNotification[InstanceTransitionObserver]()
+        self._output_notification = ObservableNotification[InstanceOutputObserver]()
+
+    def add_observer_transition(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
+        self._transition_notification.add_observer(observer, priority)
+
+    def remove_observer_transition(self, observer):
+        self._transition_notification.remove_observer(observer)
+
+    def add_observer_output(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
+        self._output_notification.add_observer(observer, priority)
+
+    def remove_observer_output(self, observer):
+        self._output_notification.remove_observer(observer)

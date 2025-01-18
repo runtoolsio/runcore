@@ -2,9 +2,9 @@ from abc import ABC, abstractmethod
 
 from runtools.runcore import APIClient, InstanceTransitionReceiver
 from runtools.runcore.db import SortCriteria
-from runtools.runcore.job import InstanceTransitionObserver, InstanceOutputObserver
+from runtools.runcore.job import JobInstanceObservable
 from runtools.runcore.listening import InstanceOutputReceiver
-from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification, MultipleExceptions
+from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, MultipleExceptions
 
 
 class Environment(ABC):
@@ -94,25 +94,6 @@ class PersistingEnvironment(Environment, ABC):
 
     def close(self):
         self._persistence.close()
-
-
-class JobInstanceObservable:
-
-    def __init__(self):
-        self._transition_notification = ObservableNotification[InstanceTransitionObserver]()
-        self._output_notification = ObservableNotification[InstanceOutputObserver]()
-
-    def add_observer_transition(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
-        self._transition_notification.add_observer(observer, priority)
-
-    def remove_observer_transition(self, observer):
-        self._transition_notification.remove_observer(observer)
-
-    def add_observer_output(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
-        self._output_notification.add_observer(observer, priority)
-
-    def remove_observer_output(self, observer):
-        self._output_notification.remove_observer(observer)
 
 
 class LocalEnvironment(JobInstanceObservable, PersistingEnvironment, Environment):
