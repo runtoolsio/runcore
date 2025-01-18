@@ -213,7 +213,7 @@ class SocketClient:
                     log.warning('event=[socket_timeout] socket=[{}]'.format(server_file))
                     resp = ServerResponse(server_id, None, e)
                 except ConnectionRefusedError:
-                    log.warning('event=[stale_socket] socket=[{}]'.format(server_file))
+                    log.debug('event=[stale_socket] socket=[{}]'.format(server_file))
                     skip = True  # Ignore this one and continue with another one
                     break
                 except OSError as e:
