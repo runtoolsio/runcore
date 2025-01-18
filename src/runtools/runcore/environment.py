@@ -4,7 +4,8 @@ from runtools.runcore import APIClient, InstanceTransitionReceiver
 from runtools.runcore.db import SortCriteria
 from runtools.runcore.job import JobInstanceObservable
 from runtools.runcore.listening import InstanceOutputReceiver
-from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, MultipleExceptions
+from runtools.runcore.util.err import run_isolated_collect_exceptions
+from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
 
 
 class Environment(ABC):
@@ -124,29 +125,9 @@ class LocalEnvironment(JobInstanceObservable, PersistingEnvironment, Environment
         self._output_receiver.remove_observer_output(self._output_notification.observer_proxy)
         self._transition_receiver.remove_observer_transition(self._transition_notification.observer_proxy)
 
-        exceptions = []
-
-        try:
-            self._output_receiver.close()
-        except Exception as e:
-            exceptions.append(e)
-
-        try:
-            self._transition_receiver.close()
-        except Exception as e:
-            exceptions.append(e)
-
-        try:
-            self._client.close()
-        except Exception as e:
-            exceptions.append(e)
-
-        try:
-            PersistingEnvironment.close(self)
-        except Exception as e:
-            exceptions.append(e)
-
-        if exceptions:
-            if len(exceptions) > 1:
-                raise MultipleExceptions(exceptions)
-            raise exceptions[0]
+        run_isolated_collect_exceptions(
+            self._output_receiver.close,
+            self._transition_receiver.close,
+            self._client.close,
+            lambda: PersistingEnvironment.close(self)
+        )

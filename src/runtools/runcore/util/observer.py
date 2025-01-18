@@ -3,19 +3,9 @@ from itertools import chain
 from types import FunctionType, MethodType
 from typing import List, Tuple, Any, Callable, Optional, TypeVar, Generic
 
+from runtools.runcore.util.err import MultipleExceptions
+
 DEFAULT_OBSERVER_PRIORITY = 100
-
-
-class MultipleExceptions(Exception):
-    """Exception that carries multiple exceptions that occurred during execution"""
-
-    def __init__(self, exceptions: list[Exception]):
-        self.exceptions = exceptions
-        message = f"Multiple exceptions occurred ({len(exceptions)})"
-        super().__init__(message)
-
-    def __iter__(self):
-        return iter(self.exceptions)
 
 
 class CallableNotification:

@@ -32,7 +32,7 @@ def ensure_tuple_copy(e):
     if e is None:
         return ()
     if not isinstance(e, (list, tuple, set)):
-        features = (e,)
+        return (e,)
 
     return tuple(e)
 
