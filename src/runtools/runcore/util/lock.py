@@ -1,80 +1,32 @@
 """
 This module provides the logic required for the locking mechanisms used by specific parts of the library.
-
-Locks:
-1. State Lock
-Several features provide synchronization among job instances. To ensure their proper functioning, it is essential
-to control when an active job instance can change its state. To achieve this, the instance must obtain the state lock.
-While an instance holds the lock, only that instance is permitted to change its state.
-Therefore, any part of the code possessing the lock can depend on the current immutable state of all instances (using
-the same lock).
+TODO: Move to runjob?
 """
 
-import contextlib
 import logging
 import random
 import time
-from abc import ABC, abstractmethod
 
 import portalocker
 
 from runtools.runcore import paths
+from runtools.runcore.common import InvalidStateError
 
 log = logging.getLogger(__name__)
 
 
-class StateLocker(ABC):
+class FileLock:
     """
-    Manages locking for instances that either:
-    1. Intend to change their state (without considering the states of other instances).
-    2. Need to determine if they can modify their state based on the states of other instances.
-
-    While a lock is held by one instance, no other instances can change their state.
+    A file-based lock implementation using Portalocker.
+    The lock can be reused within the same thread but cannot be shared between threads.
     """
 
-    @abstractmethod
-    def __call__(self):
-        """
-        Attempts to acquire the state lock and returns it to the caller.
-
-        Returns:
-             StateLock: The acquired state lock in its locked state.
-        """
-
-
-class StateLock(ABC):
-    """
-    Represents a state lock returned by a state locker. This lock can be passed to another component, which
-    is then responsible for unlocking it when a specified condition is met.
-    """
-
-    @abstractmethod
-    def unlock(self):
-        """
-        Unlock the state lock
-        """
-
-
-class PortalockerStateLocker(StateLocker):
-    """
-    A state locker implementation that uses a shared file lock provided by the Portalocker library.
-    The lock file should be accessible only by the current user to ensure security.
-
-    Attributes:
-        lock_file (str, Path):
-            Path to the file used for locking.
-        timeout (float, optional):
-            Maximum duration (in seconds) to wait for the lock before giving up.
-            Defaults to the value of `cfg.lock_timeout_sec`.
-        max_check_time (float, optional):
-            Maximum duration (in seconds) between lock acquisition attempts.
-            Defaults to the value of `cfg.lock_max_check_time_sec`.
-    """
-
-    def __init__(self, lock_file, *, timeout=None, max_check_time=None):
+    def __init__(self, lock_file, *, timeout=10, max_check_time=0.05):
         self.lock_file = lock_file
         self.timeout = timeout
         self.max_check_time = max_check_time
+        self._file_lock = None
+        self._start_time = None
 
     def _check_interval(self):
         """
@@ -87,85 +39,52 @@ class PortalockerStateLocker(StateLocker):
         # Convert to integers for randint by rounding max time to milliseconds
         return random.randint(10, int(self.max_check_time * 1000)) / 1000
 
-    @contextlib.contextmanager
-    def __call__(self):
+    def acquire(self):
         """
-        Attempts to acquire the state lock using Portalocker.
-        If successful, yields a PortalockerStateLock for potential use by the caller.
-        When the context is exited (e.g., at the end of a 'with' block), the lock is automatically unlocked.
-        If used outside a context manager scope, the caller should manually ensure the lock is unlocked.
+        Manually acquire the lock.
 
-        Yields:
-            PortalockerStateLock: The acquired state lock, if successful.
+        Raises:
+            RuntimeError: If the lock has already been used or acquired
         """
-        file_lock = portalocker.Lock(self.lock_file, timeout=self.timeout, check_interval=self._check_interval())
-        start_time = time.time()
-        file_lock.acquire()
-        log.debug(f'event=[coord_lock_acquired] wait=[{(time.time() - start_time) * 1000 :.2f} ms]')
+        if self._file_lock:
+            raise InvalidStateError("Lock is already acquired")
 
-        lock = PortalockerStateLock(file_lock)
-        try:
-            yield lock
-        finally:
-            lock.unlock()
+        self._file_lock = portalocker.Lock(self.lock_file, timeout=self.timeout, check_interval=self._check_interval())
 
+        self._start_time = time.time()
+        self._file_lock.acquire()
+        log.debug(f'event=[file_lock_acquired] wait=[{(time.time() - self._start_time) * 1000 :.2f} ms]')
 
-class PortalockerStateLock(StateLock):
-    """
-    Represents a state lock using Portalocker, keeping track of its creation and unlock times.
-
-    Attributes:
-        file_lock: The lock file object.
-        created_at: Timestamp when the lock was created.
-        unlocked_at: Timestamp when the lock was unlocked, or None if still locked.
-    """
-
-    def __init__(self, file_lock):
+    def release(self):
         """
-        Initialize the PortalockerStateLock with the given locked file.
+        Manually release the lock.
+
+        Raises:
+            RuntimeError: If the lock hasn't been acquired
         """
-        self.file_lock = file_lock
-        self.created_at = time.time()
-        self.unlocked_at = None
+        if not self._file_lock:
+            raise InvalidStateError("Lock is not acquired")
 
-    def unlock(self):
-        """
-        Unlock the associated locked file and log the duration for which it was locked.
-        """
-        if self.unlocked_at:
-            return
+        self._file_lock.release()
+        self._file_lock = None
 
-        self.file_lock.release()
-        self.unlocked_at = time.time()
-        lock_time_ms = (self.unlocked_at - self.created_at) * 1000
-        log.debug(f'event=[coord_lock_released] locked=[{lock_time_ms:.2f} ms]')
+        lock_time_ms = (time.time() - self._start_time) * 1000
+        log.debug(f'event=[lock_released] locked=[{lock_time_ms:.2f} ms]')
 
+    def __enter__(self):
+        self.acquire()
+        return self
 
-class NullStateLocker(StateLocker, StateLock):
-    """
-    A no-op implementation of StateLocker and StateLock. It is useful for testing where locking is not required.
-    """
-
-    @contextlib.contextmanager
-    def __call__(self, *args, **kwargs):
-        """
-        Yield itself without performing any locking operations.
-        """
-        yield self
-
-    def unlock(self):
-        """
-        No-op unlock method.
-        """
-        pass
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.release()
 
 
-def default_queue_locker():
-    return PortalockerStateLocker(paths.lock_path('state0.lock', True))
+def default_queue_lock():
+    return FileLock(paths.lock_path('state0.lock', True))
 
 
-def default_locker_factory(*, timeout=10, max_check_time=0.05):
+def default_file_lock_factory(*, timeout=10, max_check_time=0.05):
     def factory(lock_file):
-        return PortalockerStateLocker(lock_file, timeout=timeout, max_check_time=max_check_time)
+        return FileLock(lock_file, timeout=timeout, max_check_time=max_check_time)
 
     return factory
