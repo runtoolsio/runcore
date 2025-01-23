@@ -6,6 +6,8 @@ TODO: Move to runjob?
 import logging
 import random
 import time
+import weakref
+from threading import RLock
 
 import portalocker
 
@@ -88,3 +90,41 @@ def default_file_lock_factory(*, timeout=10, max_check_time=0.05):
         return FileLock(lock_file, timeout=timeout, max_check_time=max_check_time)
 
     return factory
+
+
+class MemoryLockFactory:
+    """
+    Factory class that produces and manages reentrant locks.
+    Locks are shared by ID and cleaned up when no longer referenced.
+    """
+
+    def __init__(self, *, timeout=2.0):
+        self._locks = weakref.WeakValueDictionary()
+        self._dict_lock = RLock()
+        self.timeout = timeout
+
+    def __call__(self, lock_id):
+        """
+        Get or create a lock for the given ID.
+
+        Args:
+            lock_id: Identifier for the lock
+
+        Returns:
+            threading.RLock: A reentrant lock instance
+        """
+        with self._dict_lock:
+            # First try to get the lock - keep a strong reference
+            lock = self._locks.get(lock_id)
+            if lock is None:
+                lock = RLock()
+                self._locks[lock_id] = lock
+            return lock
+
+
+def default_memory_lock_factory():
+    """
+    Creates a lock factory instance.
+
+    """
+    return MemoryLockFactory()
