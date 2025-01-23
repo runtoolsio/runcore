@@ -571,10 +571,3 @@ class Run:
             return self.phases[idx + 1] if idx + 1 < len(self.phases) else None
         except ValueError:
             return None
-
-
-class PhaseExecutionError(Exception):
-
-    def __init__(self, phase_id):
-        super().__init__(f"Phase '{phase_id}' execution failed")
-        self.phase_id = phase_id
