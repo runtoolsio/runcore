@@ -87,7 +87,6 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         """
         return MetadataCriterion.instance_match(job_run.metadata.instance_id)
 
-
     @classmethod
     def all_except(cls, job_run: 'JobRun') -> 'MetadataCriterion':
         """
@@ -226,17 +225,18 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         )
 
     def __str__(self) -> str:
-        """Returns a human-readable string representation of the criterion."""
-        ids = []
+        fields = []
         if self.job_id:
-            ids.append(f"job={self.job_id}")
+            fields.append(f"job_id='{self.job_id}'")
         if self.run_id:
-            ids.append(f"run={self.run_id}")
+            fields.append(f"run_id='{self.run_id}'")
         if self.instance_id:
-            ids.append(f"instance={self.instance_id}")
-
-        op = "|" if self.match_any_id else "&"
-        return f"({op.join(ids)}) {self.strategy.name}"
+            fields.append(f"instance_id='{self.instance_id}'")
+        if self.match_any_id:
+            fields.append("match_any_id=True")
+        if self.strategy != MatchingStrategy.EXACT:
+            fields.append(f"strategy={self.strategy.name}")
+        return f"[{', '.join(fields)}]" if fields else "[]"
 
 
 def compound_instance_filter(metadata_criteria):
@@ -355,6 +355,14 @@ class LifecycleCriterion(MatchCriteria[Lifecycle]):
     def matches(self, lifecycle):
         return self.created_range(lifecycle.created_at) and not self.ended_range or self.ended_range(lifecycle.ended_at)
 
+    def __str__(self) -> str:
+        parts = []
+        if self.created_range:
+            parts.append(f"created{self.created_range}")
+        if self.ended_range:
+            parts.append(f"ended{self.ended_range}")
+        return f"[{', '.join(parts)}]" if parts else "[]"
+
 
 @dataclass
 class PhaseCriterion(MatchCriteria[PhaseInfo]):
@@ -411,6 +419,60 @@ class PhaseCriterion(MatchCriteria[PhaseInfo]):
     def __bool__(self):
         return bool(self.phase_name or self.run_state or self.attributes)
 
+    def __str__(self) -> str:
+        fields = []
+        if self.phase_type:
+            fields.append(f"type='{self.phase_type}'")
+        if self.phase_id:
+            fields.append(f"id='{self.phase_id}'")
+        if self.run_state:
+            fields.append(f"state={self.run_state.name}")
+        if self.phase_name:
+            fields.append(f"name='{self.phase_name}'")
+        if self.attributes:
+            fields.append(f"attrs={self.attributes}")
+        return f"[{', '.join(fields)}]" if fields else "[]"
+
+
+@dataclass
+class DateTimeRange:
+    start: Optional[datetime] = None
+    end: Optional[datetime] = None
+    end_included: bool = True
+
+    def __iter__(self):
+        return iter((self.start, self.end, self.end_included))
+
+    def __bool__(self):
+        return bool(self.start) or bool(self.end)
+
+    def __call__(self, tested_dt):
+        return self.matches(tested_dt)
+
+    def matches(self, tested_dt):
+        if not tested_dt:
+            return not bool(self)
+
+        if self.start and tested_dt < self.start:
+            return False
+        if self.end:
+            if self.end_included:
+                if tested_dt > self.end:
+                    return False
+            else:
+                if tested_dt >= self.end:
+                    return False
+
+        return True
+
+    def __str__(self) -> str:
+        if not self.start and not self.end:
+            return ""
+        start_str = str(self.start) if self.start else "-∞"
+        end_str = str(self.end) if self.end else "∞"
+        end_bracket = "]" if self.end_included else ")"
+        return f"[{start_str}, {end_str}{end_bracket}"
+
 
 @dataclass
 class TerminationCriterion(MatchCriteria[TerminationInfo]):
@@ -441,6 +503,9 @@ class TerminationCriterion(MatchCriteria[TerminationInfo]):
 
     def __bool__(self):
         return self.outcome != Outcome.ANY
+
+    def __str__(self) -> str:
+        return f"[outcome={self.outcome.name}]" if self.outcome != Outcome.ANY else "[]"
 
 
 def parse_criteria(pattern: str, strategy: MatchingStrategy = MatchingStrategy.EXACT) -> 'JobRunCriteria':
@@ -593,6 +658,34 @@ class JobRunCriteria(MatchCriteria[JobRun]):
                 or bool(self.phase_criteria)
                 or bool(self.termination_criteria)
                 or bool(self.jobs))
+
+    def __str__(self) -> str:
+        parts = []
+
+        if self.metadata_criteria:
+            criteria_strs = [str(c) for c in self.metadata_criteria if bool(c)]
+            if criteria_strs:
+                parts.append(f"metadata={''.join(criteria_strs)}")
+
+        if self.interval_criteria:
+            criteria_strs = [str(c) for c in self.interval_criteria if bool(c)]
+            if criteria_strs:
+                parts.append(f"interval={''.join(criteria_strs)}")
+
+        if self.phase_criteria:
+            criteria_strs = [str(c) for c in self.phase_criteria if bool(c)]
+            if criteria_strs:
+                parts.append(f"phase={''.join(criteria_strs)}")
+
+        if self.termination_criteria:
+            criteria_strs = [str(c) for c in self.termination_criteria if bool(c)]
+            if criteria_strs:
+                parts.append(f"termination={''.join(criteria_strs)}")
+
+        if self.jobs:
+            parts.append(f"jobs={self.jobs}")
+
+        return f"{' | '.join(parts)}" if parts else ""
 
     def __repr__(self):
         return (f"{self.__class__.__name__}("

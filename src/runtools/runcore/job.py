@@ -475,7 +475,7 @@ class JobRun:
     def job_id(self) -> str:
         """
         Returns:
-            str: Job part of the instance identifier.
+            str: Job part of the job instance full identifier.
         """
         return self.metadata.job_id
 
@@ -483,9 +483,17 @@ class JobRun:
     def run_id(self) -> str:
         """
         Returns:
-            str: Run part of the instance identifier.
+            str: Run part of the job instance full identifier.
         """
         return self.metadata.run_id
+
+    @property
+    def instance_id(self) -> str:
+        """
+        Returns:
+            str: Instance part of the instance full identifier.
+        """
+        return self.metadata.instance_id
 
     @property
     def phases(self) -> Tuple[PhaseInfo, ...]:
