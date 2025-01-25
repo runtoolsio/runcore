@@ -10,6 +10,7 @@ from json import JSONDecodeError
 from typing import List, Any, Dict, Optional, TypeVar, Generic, Callable
 
 from runtools.runcore import paths
+from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.job import JobRun, JobInstanceMetadata
 from runtools.runcore.output import OutputLine
 from runtools.runcore.util.socket import SocketClient, ServerResponse
@@ -225,8 +226,8 @@ class APIClient(SocketClient):
         if params is None:
             params = {}
 
-        if run_match and run_match.metadata_criteria:
-            params["run_match"] = run_match.serialize()
+        run_match = run_match or JobRunCriteria.all()
+        params["run_match"] = run_match.serialize()
 
         request = {
             "jsonrpc": "2.0",

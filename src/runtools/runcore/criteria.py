@@ -9,8 +9,7 @@ from abc import abstractmethod, ABC
 from dataclasses import dataclass, field
 from typing import Dict, Any, Set, Optional, TypeVar, Generic
 
-from runtools.runcore import JobRun
-from runtools.runcore.job import JobInstanceMetadata
+from runtools.runcore.job import JobInstanceMetadata, JobRun
 from runtools.runcore.run import Outcome, Lifecycle, TerminationInfo, RunState, \
     PhaseInfo
 from runtools.runcore.util import MatchingStrategy, parse, single_day_range, days_range, \
