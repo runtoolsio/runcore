@@ -10,7 +10,9 @@ by orchestrating the given phase phases.
 """
 
 import datetime
+import inspect
 import traceback
+import weakref
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from copy import copy
@@ -387,14 +389,19 @@ def control_api(func):
 
 
 class PhaseControl:
+
     def __init__(self, phase):
-        self._phase = phase
+        self._phase = weakref.proxy(phase)
+
+        self._allowed_methods = {}
+        for name, attr in inspect.getmembers(phase.__class__):
+            if getattr(attr, '_expose_to_control', False):
+                self._allowed_methods[name] = attr
 
     def __getattr__(self, name):
-        phase_attr = getattr(self._phase.__class__, name, None)
-        if phase_attr and getattr(phase_attr, '_expose_to_control', False):
-            return getattr(self._phase, name)
-        raise AttributeError(f"'{self.__class__.__name__}' has no attribute '{name}'")
+        if name not in self._allowed_methods:
+            raise AttributeError(f"'{self.__class__.__name__}' has no attribute '{name}'")
+        return getattr(self._phase, name)
 
 
 class Phase(ABC, Generic[C]):
