@@ -315,9 +315,10 @@ class APIClient(SocketClient):
         """
 
         def resp_mapper(inst_resp: InstanceResult) -> OutputResponse:
-            return OutputResponse(inst_resp.instance, [OutputLine.deserialize(line) for line in inst_resp.result["tail"]])
+            return OutputResponse(inst_resp.instance,
+                                  [OutputLine.deserialize(line) for line in inst_resp.result["tail"]])
 
-        return self.send_request("instances.get_tail", instance_match, resp_mapper=resp_mapper)
+        return self.send_request("instances.output.tail", instance_match, resp_mapper=resp_mapper)
 
     def signal_dispatch(self, instance_match, queue_id) -> CollectedResponses[SignalDispatchResponse]:
         """
@@ -341,3 +342,33 @@ class APIClient(SocketClient):
 
         params = {"queue_id": queue_id}
         return self.send_request("instances.dispatch", instance_match, params, resp_mapper=resp_mapper)
+
+    def phase_control(self, instance_match, phase_id: str, op_name: str, op_args: Optional[list] = None) -> \
+            CollectedResponses[InstanceResult]:
+        """
+        Executes a control operation on a specific phase of matching job instances.
+
+        Args:
+            instance_match: Criteria for matching instances
+            phase_id: ID of the phase to control
+            op_name: Name of the operation to execute
+            op_args: Optional arguments for the operation (dict for named args, list for positional)
+
+        Returns:
+            CollectedResponses containing operation results for each instance
+
+        Raises:
+            ValueError: If required parameters are missing
+        """
+        if not phase_id:
+            raise ValueError('Phase ID is required for control operation')
+        if not op_name:
+            raise ValueError('Operation name is required for control operation')
+
+        params = {
+            "phase_id": phase_id,
+            "op_name": op_name,
+            "op_args": op_args if op_args is not None else []
+        }
+
+        return self.send_request("instances.phase.control", instance_match, params)
