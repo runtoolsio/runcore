@@ -135,14 +135,14 @@ class SocketServer(abc.ABC):
 
 
 class ErrorType(Enum):
-    TIMEOUT = auto()    # Connection timeouts
-    STALE = auto()      # Dead/stale sockets
-    UNKNOWN = auto()    # Unexpected errors
+    TIMEOUT = auto()        # Connection timeouts
+    COMMUNICATION = auto()  # Socket protocol/communication errors other than timeouts and stale sockets
+    STALE = auto()          # Dead/stale sockets
 
 
 class ServerResponse(NamedTuple):
     server_id: str
-    response: Optional[str]
+    api_response: Optional[str]
     error: Optional[Exception] = None
 
     @property
@@ -153,7 +153,7 @@ class ServerResponse(NamedTuple):
             return ErrorType.TIMEOUT
         if isinstance(self.error, ConnectionRefusedError):
             return ErrorType.STALE
-        return ErrorType.UNKNOWN
+        return ErrorType.COMMUNICATION
 
 
 @dataclass
