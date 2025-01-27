@@ -10,9 +10,11 @@ from json import JSONDecodeError
 from typing import List, Any, Dict, Optional, TypeVar, Generic, Callable
 
 from runtools.runcore import paths
+from runtools.runcore.common import RuntoolsException
 from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.job import JobRun, JobInstanceMetadata
 from runtools.runcore.output import OutputLine
+from runtools.runcore.util.json import JsonRpcResponse, JsonRpcParseError, ErrorType, ErrorCode
 from runtools.runcore.util.socket import SocketClient, ServerResponse
 
 log = logging.getLogger(__name__)
@@ -20,6 +22,32 @@ log = logging.getLogger(__name__)
 API_FILE_EXTENSION = '.api'
 
 T = TypeVar('T')
+
+
+class ApiError(RuntoolsException):
+    def __init__(self, server_id: str, message: str = None):
+        self.server_id = server_id
+        super().__init__(f"Server '{server_id}' {message or ''}")
+
+
+class ApiClientError(ApiError):
+    pass
+
+
+class ApiServerError(ApiError):
+
+    def __init__(self, server_id: str, message: str):
+        super().__init__(server_id, message)
+
+
+class InstanceNotFoundError(ApiError):
+    def __init__(self, server_id: str = None):
+        super().__init__(server_id)
+
+
+class PhaseNotFoundError(ApiError):
+    def __init__(self, server_id: str):
+        super().__init__(server_id)
 
 
 @dataclass
@@ -178,6 +206,39 @@ def _no_resp_mapper(instance_result: InstanceResult) -> InstanceResult:
     return instance_result
 
 
+def _parse_success_response_or_raise(resp: ServerResponse) -> JsonRpcResponse:
+    sid = resp.server_id
+    if resp.error:
+        raise ApiServerError(sid, 'Socket based error occurred') from resp.error
+
+    try:
+        response_body = json.loads(resp.api_response)
+    except JSONDecodeError as e:
+        raise ApiServerError(sid, 'Cannot parse API response JSON payload') from e
+
+    try:
+        json_rpc_resp = JsonRpcResponse.deserialize(response_body)
+    except JsonRpcParseError as e:
+        raise ApiServerError(sid, 'Invalid JSON-RPC 2.0 response') from e
+
+    if err := json_rpc_resp.error:
+        if err.code.type == ErrorType.CLIENT:
+            raise ApiClientError(sid, str(err))
+        elif err.code.type == ErrorType.SERVER:
+            raise ApiServerError(sid, str(err))
+        elif err.code.type == ErrorType.SIGNAL:
+            if err.code == ErrorCode.INSTANCE_NOT_FOUND:
+                raise InstanceNotFoundError(sid)
+            elif err.code == ErrorCode.PHASE_NOT_FOUND:
+                raise PhaseNotFoundError(sid)
+            else:
+                raise ApiClientError(sid, f"Unknown signaling error: {err.code}")
+        else:
+            raise ApiClientError(sid, f"Unknown error type: {err.code.type}")
+
+    return json_rpc_resp
+
+
 class APIClient(SocketClient):
     """
     Client for communicating with job instances using JSON-RPC 2.0 protocol.
@@ -203,6 +264,25 @@ class APIClient(SocketClient):
     def _next_request_id(self) -> int:
         self._request_id += 1
         return self._request_id
+
+    def send_single_instance_request(
+            self,
+            server_id: str,
+            method: str,
+            *params: Optional[List],
+            response_mapper: Callable[[Any], T] = _no_resp_mapper):
+        request = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+            "id": self._next_request_id()
+        }
+        server_responses: List[ServerResponse] = self.communicate(json.dumps(request), [server_id])
+        if not server_responses:
+            raise InstanceNotFoundError
+
+        json_rpc_resp: JsonRpcResponse = _parse_success_response_or_raise(server_responses[0])
+        return response_mapper(json_rpc_resp.result)
 
     def send_request(
             self,
@@ -282,26 +362,24 @@ class APIClient(SocketClient):
         params = {"phase_id": phase_id} if phase_id else {}
         return self.send_request("instances.approve", run_match, params, approve_resp_mapper)
 
-    def stop_instances(self, instance_match) -> CollectedResponses[StopResponse]:
+    def stop_instances(self, server_id, instance_id) -> None:
         """
         Stops job instances that match the provided criteria.
 
         Args:
-            instance_match: Criteria for matching instances to stop
+            server_id: Server to send the request to
+            instance_id: Criteria for matching instances to stop
 
         Returns:
-            CollectedResponses containing StopResponse objects for each instance
+            None
 
         Raises:
             ValueError: If instance_match is not provided
         """
-        if not instance_match:
-            raise ValueError('Instance matching criteria is mandatory for the stop operation')
+        if not instance_id:
+            raise ValueError('Instance ID is mandatory for the stop operation')
 
-        def resp_mapper(inst_resp: InstanceResult) -> StopResponse:
-            return StopResponse(inst_resp.instance, StopResult[inst_resp.result["stop_result"]])
-
-        return self.send_request("instances.stop", instance_match, resp_mapper=resp_mapper)
+        self.send_single_instance_request(server_id, "stop_instance", instance_id)
 
     def get_tail(self, instance_match=None) -> CollectedResponses[OutputResponse]:
         """
