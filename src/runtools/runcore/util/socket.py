@@ -37,6 +37,7 @@ class SocketServer(abc.ABC):
         self._socket_path_provider = socket_path_provider
         self._allow_ping = allow_ping
         self._server: socket = None
+        self._socket_path = None
         self._serving_thread = Thread(target=self._serve, name='Thread-ApiServer')
         self._lock = RLock()
         self._stopped = False
@@ -46,15 +47,19 @@ class SocketServer(abc.ABC):
             raise SocketServerStoppedAlready
 
         try:
-            socket_path = self._socket_path_provider()
+            self._socket_path = self._socket_path_provider()
         except FileNotFoundError as e:
             raise SocketCreationException(e.filename) from e
 
         self._server = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         try:
-            self._server.bind(str(socket_path))
+            self._server.bind(str(self._socket_path))
         except PermissionError as e:
-            raise SocketCreationException(socket_path) from e
+            raise SocketCreationException(self._socket_path) from e
+
+    @property
+    def server_id(self) -> str:
+        return str(self._socket_path) if self._socket_path else None
 
     def start(self):
         with self._lock:
@@ -193,7 +198,7 @@ class SocketClient:
         resp = None
         skip = False
         for server_file in self._servers_provider():
-            server_id = server_file.stem
+            server_id = str(server_file)
             if include and server_id not in include:
                 continue
             while True:
