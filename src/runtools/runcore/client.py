@@ -422,16 +422,17 @@ class APIClient(SocketClient):
         params = {"queue_id": queue_id}
         return self.send_request("instances.dispatch", instance_match, params, resp_mapper=resp_mapper)
 
-    def phase_control(self, instance_match, phase_id: str, op_name: str, op_args: Optional[list] = None) -> \
+    def exec_phase_op(self, server_address, instance_id, phase_id: str, op_name: str, *op_args) -> \
             CollectedResponses[InstanceResult]:
         """
-        Executes a control operation on a specific phase of matching job instances.
+        Executes an operation on a specific phase of matching job instance.
 
         Args:
-            instance_match: Criteria for matching instances
+            server_address: Address where the instance is located
+            instance_id: Criteria for matching instances
             phase_id: ID of the phase to control
-            op_name: Name of the operation to execute
-            op_args: Optional arguments for the operation (dict for named args, list for positional)
+            op_name: Name of the phase operation to execute
+            op_args: Optional arguments for the operation
 
         Returns:
             CollectedResponses containing operation results for each instance
@@ -444,10 +445,5 @@ class APIClient(SocketClient):
         if not op_name:
             raise ValueError('Operation name is required for control operation')
 
-        params = {
-            "phase_id": phase_id,
-            "op_name": op_name,
-            "op_args": op_args if op_args is not None else []
-        }
-
-        return self.send_request("instances.phase.control", instance_match, params)
+        return self.execute_instance_method(
+            server_address, "exec_phase_op", instance_id, phase_id, op_name, op_args)
