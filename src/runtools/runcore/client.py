@@ -265,11 +265,11 @@ class APIClient(SocketClient):
         self._request_id += 1
         return self._request_id
 
-    def send_single_instance_request(
+    def execute_instance_method(
             self,
             server_id: str,
             method: str,
-            *params: Optional[List],
+            *params: Any,
             response_mapper: Callable[[Any], T] = _no_resp_mapper):
         request = {
             "jsonrpc": "2.0",
@@ -362,14 +362,13 @@ class APIClient(SocketClient):
         params = {"phase_id": phase_id} if phase_id else {}
         return self.send_request("instances.approve", run_match, params, approve_resp_mapper)
 
-    def stop_instances(self, server_id, instance_id) -> None:
+    def stop_instances(self, server_address, instance_id) -> None:
         """
         Stops job instances that match the provided criteria.
 
         Args:
-            server_id: Server to send the request to
-            instance_id: Criteria for matching instances to stop
-
+            server_address: Server to send the request to
+            instance_id: ID of the instance to stop
         Returns:
             None
 
@@ -379,24 +378,26 @@ class APIClient(SocketClient):
         if not instance_id:
             raise ValueError('Instance ID is mandatory for the stop operation')
 
-        self.send_single_instance_request(server_id, "stop_instance", instance_id)
+        self.execute_instance_method(server_address, "stop_instance", instance_id)
 
-    def get_tail(self, instance_match=None) -> CollectedResponses[OutputResponse]:
+    def get_output_tail(self, server_address, instance_id, max_lines=100) -> List[OutputLine]:
         """
         Retrieves the output from job instances that match the provided criteria.
 
         Args:
-            instance_match: Optional criteria for matching instances
+            server_address (str): Server to send the request to
+            instance_id (str): ID of the instance to read the output
+            max_lines (int): Maximum lines to get
 
         Returns:
             CollectedResponses containing OutputResponse objects for each instance
         """
 
-        def resp_mapper(inst_resp: InstanceResult) -> OutputResponse:
-            return OutputResponse(inst_resp.instance,
-                                  [OutputLine.deserialize(line) for line in inst_resp.result["tail"]])
+        def resp_mapper(result: Any) -> List[OutputLine]:
+            return [OutputLine.deserialize(line) for line in result["retval"]]
 
-        return self.send_request("instances.output.tail", instance_match, resp_mapper=resp_mapper)
+        return self.execute_instance_method(server_address, "get_output_tail", instance_id, max_lines,
+                                            response_mapper=resp_mapper)
 
     def signal_dispatch(self, instance_match, queue_id) -> CollectedResponses[SignalDispatchResponse]:
         """

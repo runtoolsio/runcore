@@ -146,7 +146,7 @@ def get_tail(run_match=None) -> CollectedResponses[OutputResponse]:
     """
 
     with api_client() as c:
-        return c.get_tail(run_match)
+        return c.get_output_tail(run_match)
 
 
 def signal_dispatch(instance_match, queue_id) -> CollectedResponses[SignalDispatchResponse]:

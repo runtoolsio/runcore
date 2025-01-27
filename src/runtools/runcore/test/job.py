@@ -72,7 +72,7 @@ class BasicOutput(Output):
         self.lines.append(output_line)
 
     def tail(self, mode: Mode = Mode.TAIL, max_lines: int = 0):
-        return self.lines
+        return self.lines[:max_lines] if max_lines else self.lines
 
 
 class FakeJobInstance(JobInstance):
