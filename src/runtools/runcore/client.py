@@ -5,7 +5,6 @@ This module provides classes and functions for communicating with active job ins
 import json
 import logging
 from dataclasses import dataclass
-from enum import Enum, auto
 from json import JSONDecodeError
 from typing import List, Any, Dict, Optional, TypeVar, Generic, Callable
 
@@ -14,7 +13,7 @@ from runtools.runcore.common import RuntoolsException
 from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.job import JobRun, JobInstanceMetadata
 from runtools.runcore.output import OutputLine
-from runtools.runcore.util.json import JsonRpcResponse, JsonRpcParseError, ErrorType, ErrorCode
+from runtools.runcore.util.json import JsonRpcResponse, JsonRpcParseError, ErrorType, ErrorCode, JsonRpcError
 from runtools.runcore.util.socket import SocketClient, ServerResponse
 
 log = logging.getLogger(__name__)
@@ -48,21 +47,6 @@ class InstanceNotFoundError(ApiError):
 class PhaseNotFoundError(ApiError):
     def __init__(self, server_id: str):
         super().__init__(server_id)
-
-
-@dataclass
-class JsonRpcError:
-    code: int
-    message: str
-    data: Optional[Any] = None
-
-    @classmethod
-    def from_dict(cls, error_dict: dict) -> 'JsonRpcError':
-        return cls(
-            code=error_dict['code'],
-            message=error_dict['message'],
-            data=error_dict.get('data')
-        )
 
 
 @dataclass
@@ -110,38 +94,6 @@ class JobInstanceResponse:
     instance_metadata: JobInstanceMetadata
 
 
-class ApprovalResult(Enum):
-    APPROVED = auto()
-    NOT_APPLICABLE = auto()
-    UNKNOWN = auto()
-
-
-@dataclass
-class ApprovalResponse(JobInstanceResponse):
-    release_result: ApprovalResult
-
-
-class StopResult(Enum):
-    STOP_INITIATED = auto()
-    NOT_APPLICABLE = auto()
-    UNKNOWN = auto()
-
-
-@dataclass
-class StopResponse(JobInstanceResponse):
-    stop_result: StopResult
-
-
-@dataclass
-class OutputResponse(JobInstanceResponse):
-    output: List[OutputLine]
-
-
-@dataclass
-class SignalDispatchResponse(JobInstanceResponse):
-    dispatched: bool
-
-
 def process_multi_server_responses(
         server_responses: List[ServerResponse],
         resp_mapper: Callable[[InstanceResult], T]
@@ -183,7 +135,7 @@ def process_multi_server_responses(
         if 'error' in response:
             errors.append(APIError(
                 server_id=server_id,
-                response_error=JsonRpcError.from_dict(response['error'])
+                response_error=JsonRpcError.deserialize(response['error'])
             ))
             continue
 
@@ -335,34 +287,7 @@ class APIClient(SocketClient):
 
         return self.send_request("instances.get", run_match, resp_mapper=resp_mapper)
 
-    def approve_pending_instances(self, run_match, phase_id=None) -> CollectedResponses[ApprovalResponse]:
-        """
-        Approves job instances that are pending in the provided phase and match the criteria.
-
-        Args:
-            run_match: Criteria for matching instances to approve
-            phase_id: Optional ID of the approval phase
-
-        Returns:
-            CollectedResponses containing ApprovalResponse objects for each instance
-
-        Raises:
-            ValueError: If run_match is not provided
-        """
-        if run_match is None:
-            raise ValueError("Missing run criteria (match)")
-
-        def approve_resp_mapper(inst_resp: InstanceResult) -> ApprovalResponse:
-            return ApprovalResponse(
-                instance_metadata=inst_resp.instance,
-                release_result=ApprovalResult.APPROVED if inst_resp.result[
-                    "approved"] else ApprovalResult.NOT_APPLICABLE
-            )
-
-        params = {"phase_id": phase_id} if phase_id else {}
-        return self.send_request("instances.approve", run_match, params, approve_resp_mapper)
-
-    def stop_instances(self, server_address, instance_id) -> None:
+    def stop_instance(self, server_address, instance_id) -> None:
         """
         Stops job instances that match the provided criteria.
 
@@ -398,29 +323,6 @@ class APIClient(SocketClient):
 
         return self.execute_instance_method(server_address, "get_output_tail", instance_id, max_lines,
                                             response_mapper=resp_mapper)
-
-    def signal_dispatch(self, instance_match, queue_id) -> CollectedResponses[SignalDispatchResponse]:
-        """
-        Signals dispatch for instances matching the criteria in the specified queue.
-
-        Args:
-            instance_match: Criteria for matching instances
-            queue_id: ID of the queue to dispatch from
-
-        Returns:
-            CollectedResponses containing SignalDispatchResponse objects for each instance
-
-        Raises:
-            ValueError: If queue_id is not provided
-        """
-        if not queue_id:
-            raise ValueError('Queue ID is required for dispatch operation')
-
-        def resp_mapper(inst_resp: InstanceResult) -> SignalDispatchResponse:
-            return SignalDispatchResponse(inst_resp.instance, inst_resp.result["dispatched"])
-
-        params = {"queue_id": queue_id}
-        return self.send_request("instances.dispatch", instance_match, params, resp_mapper=resp_mapper)
 
     def exec_phase_op(self, server_address, instance_id, phase_id: str, op_name: str, *op_args) -> \
             CollectedResponses[InstanceResult]:

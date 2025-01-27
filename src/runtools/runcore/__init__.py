@@ -7,8 +7,7 @@ __version__ = "0.1.1"
 from types import MappingProxyType
 
 from runtools.runcore import db
-from runtools.runcore.client import CollectedResponses, APIClient, ApprovalResponse, StopResponse, OutputResponse, \
-    SignalDispatchResponse
+from runtools.runcore.client import CollectedResponses, APIClient
 from runtools.runcore.common import RuntoolsException
 from runtools.runcore.db import Persistence, SortCriteria
 from runtools.runcore.job import JobRun
@@ -89,70 +88,7 @@ def get_active_runs(run_match=None) -> CollectedResponses[JobRun]:
         return c.get_active_runs(run_match)
 
 
-def approve_pending_instances(run_match, phase_id=None) -> CollectedResponses[ApprovalResponse]:
-    """
-    This function releases job instances that are pending in the provided group
-    and optionally match the provided criteria.
 
-    Args:
-        run_match (InstanceMatchCriteria, mandatory):
-            The operation will affect only instances matching these criteria or all instances if not provided.
-        phase_id (str, optional):
-            ID of the approval phase.
-
-    Returns:
-        A container holding :class:`ReleaseResponse` objects, each representing the result of the release operation
-        for a respective job instance.
-        It also includes any errors that may have happened, each one related to a specific server API.
-    """
-
-    with api_client() as c:
-        return c.approve_pending_instances(run_match, phase_id)
-
-
-def stop_instances(run_match) -> CollectedResponses[StopResponse]:
-    """
-    This function stops job instances that match the provided criteria.
-
-    Args:
-        run_match (JobRunCriteria, mandatory):
-            The operation will affect only instances matching these criteria.
-
-    Returns:
-        A container holding :class:`StopResponse` objects, each representing the result of the stop operation
-        for a respective job instance.
-        It also includes any errors that may have happened, each one related to a specific server API.
-
-    Note:
-        The stop operation might not succeed if the instance doesn't correctly handle stop/terminate signals.
-    """
-
-    with api_client() as c:
-        return c.stop_instances(run_match)
-
-
-def get_tail(run_match=None) -> CollectedResponses[OutputResponse]:
-    """
-    This function requests the last lines of the output from job instances that optionally match the provided criteria.
-
-    Args:
-        run_match (JobMatchCriteria, optional):
-            The operation will affect only instances matching these criteria.
-            If not provided, the tail of all instances is read.
-
-    Returns:
-        A container holding :class:`OutputResponse` objects, each containing last lines for a respective job instance.
-        It also includes any errors that may have happened, each one related to a specific server API.
-    """
-
-    with api_client() as c:
-        return c.get_output_tail(run_match)
-
-
-def signal_dispatch(instance_match, queue_id) -> CollectedResponses[SignalDispatchResponse]:
+def signal_dispatch(instance_match, queue_id):
     with api_client() as c:
         return c.signal_dispatch(instance_match, queue_id)
-
-
-def instance_transition_receiver(instance_match=None, phases=(), run_states=()):
-    return InstanceTransitionReceiver(instance_match, phases, run_states)
