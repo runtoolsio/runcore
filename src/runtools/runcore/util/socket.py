@@ -140,14 +140,14 @@ class SocketServer(abc.ABC):
 
 
 class ErrorType(Enum):
-    TIMEOUT = auto()        # Connection timeouts
     COMMUNICATION = auto()  # Socket protocol/communication errors other than timeouts and stale sockets
+    TIMEOUT = auto()        # Connection timeouts
     STALE = auto()          # Dead/stale sockets
 
 
-class ServerResponse(NamedTuple):
-    server_id: str
-    api_response: Optional[str]
+class RequestResult(NamedTuple):
+    server_address: str
+    response: Optional[str]
     error: Optional[Exception] = None
 
     @property
@@ -195,7 +195,7 @@ class SocketClient:
         :raises PayloadTooLarge: when request payload is too large
         """
         req_body = '_'  # Dummy initialization to remove warnings
-        resp = None
+        res = None
         skip = False
         for server_file in self._servers_provider():
             server_id = str(server_file)
@@ -203,7 +203,7 @@ class SocketClient:
                 continue
             while True:
                 if not skip:
-                    req_body = yield resp
+                    req_body = yield res
                 skip = False  # reset
                 if not req_body:
                     break  # next(this) called -> proceed to the next server
@@ -213,10 +213,10 @@ class SocketClient:
                     self._client.sendto(encoded, str(server_file))
                     if self._client_addr:
                         datagram = self._client.recv(RECV_BUFFER_LENGTH)
-                        resp = ServerResponse(server_id, datagram.decode())
+                        res = RequestResult(server_id, datagram.decode())
                 except (socket.timeout, TimeoutError) as e:
                     log.warning('event=[socket_timeout] socket=[{}]'.format(server_file))
-                    resp = ServerResponse(server_id, None, e)
+                    res = RequestResult(server_id, None, e)
                 except ConnectionRefusedError:
                     log.debug('event=[stale_socket] socket=[{}]'.format(server_file))
                     skip = True  # Ignore this one and continue with another one
@@ -226,9 +226,9 @@ class SocketClient:
                         continue  # The server closed meanwhile
                     if e.errno == errno.EMSGSIZE:
                         raise PayloadTooLarge(len(encoded))
-                    resp = ServerResponse(server_id, None, e)
+                    res = RequestResult(server_id, None, e)
 
-    def communicate(self, req: str, include=()) -> List[ServerResponse]:
+    def communicate(self, req: str, include=()) -> List[RequestResult]:
         server = self.servers(include=include)
         responses = []
         while True:
@@ -254,13 +254,13 @@ class SocketClient:
 
         for resp in responses:
             if resp.error_type is None:
-                active.append(resp.server_id)
+                active.append(resp.server_address)
             elif resp.error_type == ErrorType.TIMEOUT:
-                timed_out.append(resp.server_id)
+                timed_out.append(resp.server_address)
             elif resp.error_type == ErrorType.STALE:
-                stale.append(Path(resp.server_id))
+                stale.append(Path(resp.server_address))
             else:
-                failed.append(resp.server_id)
+                failed.append(resp.server_address)
 
         return PingResult(active, timed_out, failed, stale)
 

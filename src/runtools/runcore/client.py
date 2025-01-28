@@ -14,7 +14,7 @@ from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.job import JobRun, JobInstanceMetadata
 from runtools.runcore.output import OutputLine
 from runtools.runcore.util.json import JsonRpcResponse, JsonRpcParseError, ErrorType, ErrorCode, JsonRpcError
-from runtools.runcore.util.socket import SocketClient, ServerResponse
+from runtools.runcore.util.socket import SocketClient, RequestResult
 
 log = logging.getLogger(__name__)
 
@@ -35,18 +35,18 @@ class ApiClientError(ApiError):
 
 class ApiServerError(ApiError):
 
-    def __init__(self, server_id: str, message: str):
-        super().__init__(server_id, message)
+    def __init__(self, server_address: str, message: str):
+        super().__init__(server_address, message)
 
 
 class InstanceNotFoundError(ApiError):
-    def __init__(self, server_id: str = None):
-        super().__init__(server_id)
+    def __init__(self, server_address: str = None):
+        super().__init__(server_address)
 
 
 class PhaseNotFoundError(ApiError):
-    def __init__(self, server_id: str):
-        super().__init__(server_id)
+    def __init__(self, server_address: str):
+        super().__init__(server_address)
 
 
 @dataclass
@@ -95,7 +95,7 @@ class JobInstanceResponse:
 
 
 def process_multi_server_responses(
-        server_responses: List[ServerResponse],
+        server_responses: List[RequestResult],
         resp_mapper: Callable[[InstanceResult], T]
 ) -> CollectedResponses[T]:
     """
@@ -154,17 +154,17 @@ def process_multi_server_responses(
     return CollectedResponses(successful, errors)
 
 
-def _no_resp_mapper(instance_result: InstanceResult) -> InstanceResult:
-    return instance_result
+def _no_retval_mapper(retval: Any) -> Any:
+    return retval
 
 
-def _parse_success_response_or_raise(resp: ServerResponse) -> JsonRpcResponse:
-    sid = resp.server_id
+def _parse_retval_or_raise_error(resp: RequestResult) -> Any:
+    sid = resp.server_address
     if resp.error:
         raise ApiServerError(sid, 'Socket based error occurred') from resp.error
 
     try:
-        response_body = json.loads(resp.api_response)
+        response_body = json.loads(resp.response)
     except JSONDecodeError as e:
         raise ApiServerError(sid, 'Cannot parse API response JSON payload') from e
 
@@ -188,7 +188,9 @@ def _parse_success_response_or_raise(resp: ServerResponse) -> JsonRpcResponse:
         else:
             raise ApiClientError(sid, f"Unknown error type: {err.code.type}")
 
-    return json_rpc_resp
+    if "retval" not in json_rpc_resp.result:
+        raise ApiServerError(sid, f"Retval is missing in JSON-RPC result: {json_rpc_resp.result}")
+    return json_rpc_resp.result["retval"]
 
 
 class APIClient(SocketClient):
@@ -219,29 +221,29 @@ class APIClient(SocketClient):
 
     def execute_instance_method(
             self,
-            server_id: str,
+            server_address: str,
             method: str,
             *params: Any,
-            response_mapper: Callable[[Any], T] = _no_resp_mapper):
+            response_mapper: Callable[[Any], T] = _no_retval_mapper):
         request = {
             "jsonrpc": "2.0",
             "method": method,
             "params": params,
             "id": self._next_request_id()
         }
-        server_responses: List[ServerResponse] = self.communicate(json.dumps(request), [server_id])
-        if not server_responses:
+        request_results: List[RequestResult] = self.communicate(json.dumps(request), [server_address])
+        if not request_results:
             raise InstanceNotFoundError
 
-        json_rpc_resp: JsonRpcResponse = _parse_success_response_or_raise(server_responses[0])
-        return response_mapper(json_rpc_resp.result)
+        json_rpc_res = _parse_retval_or_raise_error(request_results[0])
+        return response_mapper(json_rpc_res)
 
     def send_request(
             self,
             method: str,
             run_match=None,
             params: Optional[dict] = None,
-            resp_mapper: Callable[[InstanceResult], T] = _no_resp_mapper
+            resp_mapper: Callable[[InstanceResult], T] = _no_retval_mapper
     ) -> CollectedResponses[T]:
         """
         Send a JSON-RPC request to all available servers.
@@ -318,8 +320,8 @@ class APIClient(SocketClient):
             CollectedResponses containing OutputResponse objects for each instance
         """
 
-        def resp_mapper(result: Any) -> List[OutputLine]:
-            return [OutputLine.deserialize(line) for line in result["retval"]]
+        def resp_mapper(retval: Any) -> List[OutputLine]:
+            return [OutputLine.deserialize(line) for line in retval]
 
         return self.execute_instance_method(server_address, "get_output_tail", instance_id, max_lines,
                                             response_mapper=resp_mapper)
