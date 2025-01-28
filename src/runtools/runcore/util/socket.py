@@ -145,7 +145,7 @@ class ErrorType(Enum):
     STALE = auto()          # Dead/stale sockets
 
 
-class RequestResult(NamedTuple):
+class SocketRequestResult(NamedTuple):
     server_address: str
     response: Optional[str]
     error: Optional[Exception] = None
@@ -213,10 +213,10 @@ class SocketClient:
                     self._client.sendto(encoded, str(server_file))
                     if self._client_addr:
                         datagram = self._client.recv(RECV_BUFFER_LENGTH)
-                        res = RequestResult(server_id, datagram.decode())
+                        res = SocketRequestResult(server_id, datagram.decode())
                 except (socket.timeout, TimeoutError) as e:
                     log.warning('event=[socket_timeout] socket=[{}]'.format(server_file))
-                    res = RequestResult(server_id, None, e)
+                    res = SocketRequestResult(server_id, None, e)
                 except ConnectionRefusedError:
                     log.debug('event=[stale_socket] socket=[{}]'.format(server_file))
                     skip = True  # Ignore this one and continue with another one
@@ -226,9 +226,9 @@ class SocketClient:
                         continue  # The server closed meanwhile
                     if e.errno == errno.EMSGSIZE:
                         raise PayloadTooLarge(len(encoded))
-                    res = RequestResult(server_id, None, e)
+                    res = SocketRequestResult(server_id, None, e)
 
-    def communicate(self, req: str, include=()) -> List[RequestResult]:
+    def communicate(self, req: str, include=()) -> List[SocketRequestResult]:
         server = self.servers(include=include)
         responses = []
         while True:

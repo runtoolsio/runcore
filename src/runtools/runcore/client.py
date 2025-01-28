@@ -14,7 +14,7 @@ from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.job import JobRun, JobInstanceMetadata
 from runtools.runcore.output import OutputLine
 from runtools.runcore.util.json import JsonRpcResponse, JsonRpcParseError, ErrorType, ErrorCode, JsonRpcError
-from runtools.runcore.util.socket import SocketClient, RequestResult
+from runtools.runcore.util.socket import SocketClient, SocketRequestResult
 
 log = logging.getLogger(__name__)
 
@@ -95,7 +95,7 @@ class JobInstanceResponse:
 
 
 def process_multi_server_responses(
-        server_responses: List[RequestResult],
+        server_responses: List[SocketRequestResult],
         resp_mapper: Callable[[InstanceResult], T]
 ) -> CollectedResponses[T]:
     """
@@ -158,7 +158,7 @@ def _no_retval_mapper(retval: Any) -> Any:
     return retval
 
 
-def _parse_retval_or_raise_error(resp: RequestResult) -> Any:
+def _parse_retval_or_raise_error(resp: SocketRequestResult) -> Any:
     sid = resp.server_address
     if resp.error:
         raise ApiServerError(sid, 'Socket based error occurred') from resp.error
@@ -231,7 +231,7 @@ class APIClient(SocketClient):
             "params": params,
             "id": self._next_request_id()
         }
-        request_results: List[RequestResult] = self.communicate(json.dumps(request), [server_address])
+        request_results: List[SocketRequestResult] = self.communicate(json.dumps(request), [server_address])
         if not request_results:
             raise InstanceNotFoundError
 
