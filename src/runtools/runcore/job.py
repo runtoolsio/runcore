@@ -453,7 +453,7 @@ class JobRun:
     status: Optional[Status] = None
 
     @classmethod
-    def deserialize(cls, as_dict: Dict[str, Any]):
+    def deserialize(cls, as_dict: Dict[str, Any]) -> 'JobRun':
         return cls(
             metadata=JobInstanceMetadata.deserialize(as_dict['metadata']),
             _run=Run.deserialize(as_dict['run']),

@@ -6,14 +6,13 @@ import json
 import logging
 from dataclasses import dataclass
 from json import JSONDecodeError
-from typing import List, Any, Dict, Optional, TypeVar, Generic, Callable
+from typing import List, Any, Optional, TypeVar, Generic, Callable, Iterable
 
 from runtools.runcore import paths
 from runtools.runcore.common import RuntoolsException
-from runtools.runcore.criteria import JobRunCriteria
-from runtools.runcore.job import JobRun, JobInstanceMetadata
+from runtools.runcore.job import JobRun
 from runtools.runcore.output import OutputLine
-from runtools.runcore.util.json import JsonRpcResponse, JsonRpcParseError, ErrorType, ErrorCode, JsonRpcError
+from runtools.runcore.util.json import JsonRpcResponse, JsonRpcParseError, ErrorType, ErrorCode
 from runtools.runcore.util.socket import SocketClient, SocketRequestResult
 
 log = logging.getLogger(__name__)
@@ -49,113 +48,14 @@ class PhaseNotFoundError(ApiError):
         super().__init__(server_address)
 
 
-@dataclass
-class InstanceResult:
-    """
-    Represents data for a single job instance from a JSON-RPC response.
-
-    Attributes:
-        instance: Metadata about the job instance.
-        result: The JSON body of the response for this instance.
-    """
-    instance: JobInstanceMetadata
-    result: Dict[str, Any]
+R = TypeVar("R")
 
 
 @dataclass
-class APIError:
-    server_id: str
-    socket_error: Optional[Exception] = None
-    response_error: Optional[JsonRpcError] = None
-    parse_error: Optional[str] = None
-
-
-@dataclass
-class CollectedResponses(Generic[T]):
-    """
-    Represents responses and errors collected from multiple API endpoints.
-
-    This class handles responses from multiple API calls by collecting both
-    successful responses and any errors into separate lists.
-
-    Attributes:
-        successful: A list of responses of type T that completed without error.
-        errors: A list of APIError instances representing errors that occurred during the API calls.
-    """
-    successful: List[T]
-    errors: List[APIError]
-
-    def __iter__(self):
-        return iter((self.successful, self.errors))
-
-
-@dataclass
-class JobInstanceResponse:
-    instance_metadata: JobInstanceMetadata
-
-
-def process_multi_server_responses(
-        server_responses: List[SocketRequestResult],
-        resp_mapper: Callable[[InstanceResult], T]
-) -> CollectedResponses[T]:
-    """
-    Process JSON-RPC 2.0 responses from multiple servers.
-
-    Args:
-        server_responses: List of responses from different servers
-        resp_mapper: Function to map each instance result to the desired type
-
-    Returns:
-        CollectedResponses containing successful responses and errors
-    """
-    successful: List[T] = []
-    errors: List[APIError] = []
-
-    for server_id, resp, error in server_responses:
-        # Handle socket communication errors
-        if error:
-            errors.append(APIError(server_id=server_id, socket_error=error))
-            continue
-
-        try:
-            response = json.loads(resp)
-        except JSONDecodeError as e:
-            errors.append(APIError(server_id=server_id, parse_error=str(e)))
-            continue
-
-        # Validate JSON-RPC 2.0 response structure
-        if not isinstance(response, dict) or 'jsonrpc' not in response or response['jsonrpc'] != '2.0':
-            errors.append(APIError(
-                server_id=server_id,
-                parse_error="Invalid JSON-RPC 2.0 response format"
-            ))
-            continue
-
-        # Handle JSON-RPC errors
-        if 'error' in response:
-            errors.append(APIError(
-                server_id=server_id,
-                response_error=JsonRpcError.deserialize(response['error'])
-            ))
-            continue
-
-        # Process successful responses for each instance
-        try:
-            for instance_data in response['result']:
-                instance_metadata = JobInstanceMetadata.deserialize(instance_data['instance_metadata'])
-                instance_result = InstanceResult(instance=instance_metadata, result=instance_data)
-                successful.append(resp_mapper(instance_result))
-        except Exception as e:
-            errors.append(APIError(
-                server_id=server_id,
-                parse_error=f"Error mapping result: {str(e)}"
-            ))
-
-    return CollectedResponses(successful, errors)
-
-
-def _no_retval_mapper(retval: Any) -> Any:
-    return retval
+class RemoteCallResult(Generic[R]):
+    server_address: str
+    retval: Optional[R]
+    error: Optional[ApiError] = None
 
 
 def _parse_retval_or_raise_error(resp: SocketRequestResult) -> Any:
@@ -193,6 +93,19 @@ def _parse_retval_or_raise_error(resp: SocketRequestResult) -> Any:
     return json_rpc_resp.result["retval"]
 
 
+def _convert_result(resp: SocketRequestResult, retval_mapper: Callable[[Any], R]) -> RemoteCallResult:
+    """Parse JSON-RPC response into RemoteCallResult without raising exceptions"""
+    try:
+        retval = _parse_retval_or_raise_error(resp)
+        return RemoteCallResult(resp.server_address, retval_mapper(retval))
+    except ApiError as e:
+        return RemoteCallResult(resp.server_address, None, e)
+
+
+def _no_retval_mapper(retval: Any) -> Any:
+    return retval
+
+
 class APIClient(SocketClient):
     """
     Client for communicating with job instances using JSON-RPC 2.0 protocol.
@@ -219,61 +132,49 @@ class APIClient(SocketClient):
         self._request_id += 1
         return self._request_id
 
-    def execute_instance_method(
+    def call_method(
             self,
             server_address: str,
             method: str,
             *params: Any,
-            response_mapper: Callable[[Any], T] = _no_retval_mapper):
-        request = {
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-            "id": self._next_request_id()
-        }
-        request_results: List[SocketRequestResult] = self.communicate(json.dumps(request), [server_address])
+            retval_mapper: Callable[[Any], R] = _no_retval_mapper) -> R:
+        request_results = self._send_requests(method, *params, server_addresses=[server_address])
         if not request_results:
             raise InstanceNotFoundError
 
         json_rpc_res = _parse_retval_or_raise_error(request_results[0])
-        return response_mapper(json_rpc_res)
+        return retval_mapper(json_rpc_res)
 
-    def send_request(
-            self,
-            method: str,
-            run_match=None,
-            params: Optional[dict] = None,
-            resp_mapper: Callable[[InstanceResult], T] = _no_retval_mapper
-    ) -> CollectedResponses[T]:
+    def broadcast_method(self, method: str, *params: Any, retval_mapper: Callable[[Any], R] = _no_retval_mapper) \
+            -> List[RemoteCallResult[R]]:
         """
         Send a JSON-RPC request to all available servers.
 
         Args:
             method: The JSON-RPC method name
-            run_match: Optional criteria for matching job instances
             params: Optional additional parameters for the request
-            resp_mapper: Function to map instance responses to desired type
+            retval_mapper: Function to map instance responses to desired type
 
         Returns:
             CollectedResponses containing successful responses and any errors
         """
-        if params is None:
-            params = {}
+        request_results: List[SocketRequestResult] = self._send_requests(method, *params)
+        return [_convert_result(req_res, retval_mapper) for req_res in request_results]
 
-        run_match = run_match or JobRunCriteria.all()
-        params["run_match"] = run_match.serialize()
-
+    def _send_requests(
+            self,
+            method: str,
+            *params: Any,
+            server_addresses: Iterable[str] = ()) -> List[SocketRequestResult]:
         request = {
             "jsonrpc": "2.0",
             "method": method,
             "params": params,
             "id": self._next_request_id()
         }
+        return self.communicate(json.dumps(request), server_addresses)
 
-        server_responses = self.communicate(json.dumps(request))
-        return process_multi_server_responses(server_responses, resp_mapper)
-
-    def get_active_runs(self, run_match=None) -> CollectedResponses[JobRun]:
+    def get_all_active_runs(self, run_match=None) -> List[RemoteCallResult[List[JobRun]]]:
         """
         Retrieves instance information for all active job instances for the current user.
 
@@ -284,10 +185,25 @@ class APIClient(SocketClient):
             CollectedResponses containing JobRun objects for matching instances.
         """
 
-        def resp_mapper(inst_resp: InstanceResult) -> JobRun:
-            return JobRun.deserialize(inst_resp.result["job_run"])
+        def retval_mapper(retval: Any) -> List[JobRun]:
+            return [JobRun.deserialize(job_run) for job_run in retval]
 
-        return self.send_request("instances.get", run_match, resp_mapper=resp_mapper)
+        return self.broadcast_method("instances.get", run_match, retval_mapper=retval_mapper)
+
+    def get_active_runs(self, server_address, run_match) -> List[JobRun]:
+        """
+        Retrieves instance information for all active job instances for the current user.
+
+        Args:
+
+        Returns:
+            CollectedResponses containing JobRun objects for matching instances.
+        """
+
+        def retval_mapper(retval: Any) -> List[JobRun]:
+            return [JobRun.deserialize(job_run) for job_run in retval]
+
+        return self.call_method(server_address, "get_active_runs", run_match, retval_mapper=retval_mapper)
 
     def stop_instance(self, server_address, instance_id) -> None:
         """
@@ -305,7 +221,7 @@ class APIClient(SocketClient):
         if not instance_id:
             raise ValueError('Instance ID is mandatory for the stop operation')
 
-        self.execute_instance_method(server_address, "stop_instance", instance_id)
+        self.call_method(server_address, "stop_instance", instance_id)
 
     def get_output_tail(self, server_address, instance_id, max_lines=100) -> List[OutputLine]:
         """
@@ -323,11 +239,10 @@ class APIClient(SocketClient):
         def resp_mapper(retval: Any) -> List[OutputLine]:
             return [OutputLine.deserialize(line) for line in retval]
 
-        return self.execute_instance_method(server_address, "get_output_tail", instance_id, max_lines,
-                                            response_mapper=resp_mapper)
+        return self.call_method(server_address, "get_output_tail", instance_id, max_lines,
+                                retval_mapper=resp_mapper)
 
-    def exec_phase_op(self, server_address, instance_id, phase_id: str, op_name: str, *op_args) -> \
-            CollectedResponses[InstanceResult]:
+    def exec_phase_op(self, server_address, instance_id, phase_id: str, op_name: str, *op_args) -> Any:
         """
         Executes an operation on a specific phase of matching job instance.
 
@@ -349,5 +264,5 @@ class APIClient(SocketClient):
         if not op_name:
             raise ValueError('Operation name is required for control operation')
 
-        return self.execute_instance_method(
+        return self.call_method(
             server_address, "exec_phase_op", instance_id, phase_id, op_name, op_args)
