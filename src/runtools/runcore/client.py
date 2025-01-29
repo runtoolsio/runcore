@@ -17,33 +17,35 @@ from runtools.runcore.util.socket import SocketClient, SocketRequestResult
 
 log = logging.getLogger(__name__)
 
-API_FILE_EXTENSION = '.api'
+RPC_FILE_EXTENSION = '.rpc'
 
 T = TypeVar('T')
 
 
-class ApiError(RuntoolsException):
-    def __init__(self, server_id: str, message: str = None):
+class RemoteCallError(RuntoolsException):
+    def __init__(self, server_id: str, message: Optional[str] = None):
         self.server_id = server_id
         super().__init__(f"Server '{server_id}' {message or ''}")
 
 
-class ApiClientError(ApiError):
-    pass
+class RemoteCallClientError(RemoteCallError):
 
-
-class ApiServerError(ApiError):
-
-    def __init__(self, server_address: str, message: str):
+    def __init__(self, server_address: str, message: Optional[str] = None):
         super().__init__(server_address, message)
 
 
-class InstanceNotFoundError(ApiError):
+class RemoteCallServerError(RemoteCallError):
+
+    def __init__(self, server_address: str, message: Optional[str] = None):
+        super().__init__(server_address, message)
+
+
+class TargetNotFoundError(RemoteCallError):
     def __init__(self, server_address: str = None):
         super().__init__(server_address)
 
 
-class PhaseNotFoundError(ApiError):
+class PhaseNotFoundError(RemoteCallError):
     def __init__(self, server_address: str):
         super().__init__(server_address)
 
@@ -55,41 +57,41 @@ R = TypeVar("R")
 class RemoteCallResult(Generic[R]):
     server_address: str
     retval: Optional[R]
-    error: Optional[ApiError] = None
+    error: Optional[RemoteCallError] = None
 
 
 def _parse_retval_or_raise_error(resp: SocketRequestResult) -> Any:
     sid = resp.server_address
     if resp.error:
-        raise ApiServerError(sid, 'Socket based error occurred') from resp.error
+        raise RemoteCallServerError(sid, 'Socket based error occurred') from resp.error
 
     try:
         response_body = json.loads(resp.response)
     except JSONDecodeError as e:
-        raise ApiServerError(sid, 'Cannot parse API response JSON payload') from e
+        raise RemoteCallServerError(sid, 'Cannot parse API response JSON payload') from e
 
     try:
         json_rpc_resp = JsonRpcResponse.deserialize(response_body)
     except JsonRpcParseError as e:
-        raise ApiServerError(sid, 'Invalid JSON-RPC 2.0 response') from e
+        raise RemoteCallServerError(sid, 'Invalid JSON-RPC 2.0 response') from e
 
     if err := json_rpc_resp.error:
         if err.code.type == ErrorType.CLIENT:
-            raise ApiClientError(sid, str(err))
+            raise RemoteCallClientError(sid, str(err))
         elif err.code.type == ErrorType.SERVER:
-            raise ApiServerError(sid, str(err))
+            raise RemoteCallServerError(sid, str(err))
         elif err.code.type == ErrorType.SIGNAL:
-            if err.code == ErrorCode.INSTANCE_NOT_FOUND:
-                raise InstanceNotFoundError(sid)
+            if err.code == ErrorCode.TARGET_NOT_FOUND:
+                raise TargetNotFoundError(sid)
             elif err.code == ErrorCode.PHASE_NOT_FOUND:
                 raise PhaseNotFoundError(sid)
             else:
-                raise ApiClientError(sid, f"Unknown signaling error: {err.code}")
+                raise RemoteCallClientError(sid, f"Unknown signaling error: {err.code}")
         else:
-            raise ApiClientError(sid, f"Unknown error type: {err.code.type}")
+            raise RemoteCallClientError(sid, f"Unknown error type: {err.code.type}")
 
     if "retval" not in json_rpc_resp.result:
-        raise ApiServerError(sid, f"Retval is missing in JSON-RPC result: {json_rpc_resp.result}")
+        raise RemoteCallServerError(sid, f"Retval is missing in JSON-RPC result: {json_rpc_resp.result}")
     return json_rpc_resp.result["retval"]
 
 
@@ -98,7 +100,7 @@ def _convert_result(resp: SocketRequestResult, retval_mapper: Callable[[Any], R]
     try:
         retval = _parse_retval_or_raise_error(resp)
         return RemoteCallResult(resp.server_address, retval_mapper(retval))
-    except ApiError as e:
+    except RemoteCallError as e:
         return RemoteCallResult(resp.server_address, None, e)
 
 
@@ -106,7 +108,11 @@ def _no_retval_mapper(retval: Any) -> Any:
     return retval
 
 
-class APIClient(SocketClient):
+def _job_runs_retval_mapper(retval: Any) -> List[JobRun]:
+    return [JobRun.deserialize(job_run) for job_run in retval]
+
+
+class RemoteCallClient(SocketClient):
     """
     Client for communicating with job instances using JSON-RPC 2.0 protocol.
 
@@ -117,7 +123,7 @@ class APIClient(SocketClient):
 
     def __init__(self):
         super().__init__(
-            paths.socket_files_provider(API_FILE_EXTENSION),
+            paths.socket_files_provider(RPC_FILE_EXTENSION),
             client_address=str(paths.socket_path_client(True))
         )
         self._request_id = 0
@@ -140,7 +146,7 @@ class APIClient(SocketClient):
             retval_mapper: Callable[[Any], R] = _no_retval_mapper) -> R:
         request_results = self._send_requests(method, *params, server_addresses=[server_address])
         if not request_results:
-            raise InstanceNotFoundError
+            raise TargetNotFoundError
 
         json_rpc_res = _parse_retval_or_raise_error(request_results[0])
         return retval_mapper(json_rpc_res)
@@ -174,7 +180,7 @@ class APIClient(SocketClient):
         }
         return self.communicate(json.dumps(request), server_addresses)
 
-    def get_all_active_runs(self, run_match=None) -> List[RemoteCallResult[List[JobRun]]]:
+    def collect_active_runs(self, run_match=None) -> List[RemoteCallResult[List[JobRun]]]:
         """
         Retrieves instance information for all active job instances for the current user.
 
@@ -184,11 +190,7 @@ class APIClient(SocketClient):
         Returns:
             CollectedResponses containing JobRun objects for matching instances.
         """
-
-        def retval_mapper(retval: Any) -> List[JobRun]:
-            return [JobRun.deserialize(job_run) for job_run in retval]
-
-        return self.broadcast_method("instances.get", run_match, retval_mapper=retval_mapper)
+        return self.broadcast_method("get_active_runs", run_match, retval_mapper=_job_runs_retval_mapper)
 
     def get_active_runs(self, server_address, run_match) -> List[JobRun]:
         """
@@ -199,11 +201,8 @@ class APIClient(SocketClient):
         Returns:
             CollectedResponses containing JobRun objects for matching instances.
         """
-
-        def retval_mapper(retval: Any) -> List[JobRun]:
-            return [JobRun.deserialize(job_run) for job_run in retval]
-
-        return self.call_method(server_address, "get_active_runs", run_match, retval_mapper=retval_mapper)
+        return self.call_method(
+            server_address, "get_active_runs", run_match, retval_mapper=_job_runs_retval_mapper)
 
     def stop_instance(self, server_address, instance_id) -> None:
         """

@@ -15,14 +15,17 @@ class ErrorCode(Enum):
     INVALID_REQUEST = (-32600, ErrorType.CLIENT)
     METHOD_NOT_FOUND = (-32601, ErrorType.CLIENT)
     INVALID_PARAMS = (-32602, ErrorType.CLIENT)
+
     INTERNAL_ERROR = (-32603, ErrorType.SERVER)
 
     # Custom error codes
     UNKNOWN = (0, ErrorType.CLIENT)
     PHASE_OP_NOT_FOUND = (1, ErrorType.CLIENT)
     PHASE_OP_INVALID_ARGS = (2, ErrorType.CLIENT)
+
     METHOD_EXECUTION_ERROR = (100, ErrorType.SERVER)
-    INSTANCE_NOT_FOUND = (200, ErrorType.SIGNAL)
+
+    TARGET_NOT_FOUND = (200, ErrorType.SIGNAL)
     PHASE_NOT_FOUND = (201, ErrorType.SIGNAL)
 
     @property
@@ -46,7 +49,7 @@ class JsonRpcParseError(Exception):
 
 
 @dataclass
-class JsonRpcError:
+class JsonRpcError(Exception):
     code: ErrorCode
     message: str
     data: Optional[Any] = None

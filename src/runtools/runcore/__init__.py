@@ -7,7 +7,7 @@ __version__ = "0.1.1"
 from types import MappingProxyType
 
 from runtools.runcore import db
-from runtools.runcore.client import CollectedResponses, APIClient
+from runtools.runcore.client import CollectedResponses, RemoteCallClient
 from runtools.runcore.common import RuntoolsException
 from runtools.runcore.db import Persistence, SortCriteria
 from runtools.runcore.job import JobRun
@@ -65,7 +65,7 @@ def read_history_stats(run_match=None):
 
 
 def api_client():
-    return APIClient()
+    return RemoteCallClient()
 
 
 def get_active_runs(run_match=None) -> CollectedResponses[JobRun]:

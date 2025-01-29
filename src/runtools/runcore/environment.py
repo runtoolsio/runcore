@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from threading import Event
 
-from runtools.runcore import APIClient, InstanceTransitionReceiver
+from runtools.runcore import RemoteCallClient, InstanceTransitionReceiver
 from runtools.runcore.db import SortCriteria, sqlite
 from runtools.runcore.job import JobInstanceObservable
 from runtools.runcore.listening import InstanceOutputReceiver
@@ -108,7 +108,7 @@ class LocalEnvironment(JobInstanceObservable, PersistingEnvironment, Environment
     def __init__(self, persistence):
         JobInstanceObservable.__init__(self)
         PersistingEnvironment.__init__(self, persistence)
-        self._client = APIClient()
+        self._client = RemoteCallClient()
         self._transition_receiver = InstanceTransitionReceiver()
         self._output_receiver = InstanceOutputReceiver()
 

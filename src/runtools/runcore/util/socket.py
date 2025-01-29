@@ -58,7 +58,7 @@ class SocketServer(abc.ABC):
             raise SocketCreationException(self._socket_path) from e
 
     @property
-    def server_id(self) -> str:
+    def server_address(self) -> str:
         return str(self._socket_path) if self._socket_path else None
 
     def start(self):
