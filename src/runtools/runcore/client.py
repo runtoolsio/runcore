@@ -294,24 +294,24 @@ class RemoteCallClient(SocketClient):
         }
         return self.communicate(json.dumps(request), server_addresses)
 
-    def collect_active_runs(self, run_match=None) -> List[RemoteCallResult[List[JobRun]]]:
+    def collect_active_runs(self, run_match) -> List[RemoteCallResult[List[JobRun]]]:
         """Retrieves information about all active job instances from all available servers.
 
         Args:
-            run_match: Optional filter criteria for matching specific instances
+            run_match: Filter criteria for matching specific instances
 
         Returns:
             List of RemoteCallResult containing JobRun objects for matching instances
             from each responding server
         """
-        return self.broadcast_method("get_active_runs", run_match, retval_mapper=_job_runs_retval_mapper)
+        return self.broadcast_method("get_active_runs", run_match.serialize(), retval_mapper=_job_runs_retval_mapper)
 
     def get_active_runs(self, server_address: str, run_match) -> List[JobRun]:
         """Retrieves information about active job instances from a specific server.
 
         Args:
             server_address: Address of the target server
-            run_match: Optional filter criteria for matching specific instances
+            run_match: Filter criteria for matching specific instances
 
         Returns:
             List of JobRun objects for matching instances
@@ -320,7 +320,7 @@ class RemoteCallClient(SocketClient):
             TargetNotFoundError: If the specified server or the target instance is not found
         """
         return self.call_method(
-            server_address, "get_active_runs", run_match, retval_mapper=_job_runs_retval_mapper)
+            server_address, "get_active_runs", run_match.serialize(), retval_mapper=_job_runs_retval_mapper)
 
     def stop_instance(self, server_address: str, instance_id: str) -> None:
         """Stops a specific job instance.

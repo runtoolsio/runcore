@@ -5,9 +5,10 @@ This is the core component of runtools defining the main constructs like run, ph
 __version__ = "0.1.1"
 
 from types import MappingProxyType
+from typing import List
 
 from runtools.runcore import db
-from runtools.runcore.client import CollectedResponses, RemoteCallClient
+from runtools.runcore.client import RemoteCallClient, RemoteCallResult
 from runtools.runcore.common import RuntoolsException
 from runtools.runcore.db import Persistence, SortCriteria
 from runtools.runcore.job import JobRun
@@ -68,7 +69,7 @@ def api_client():
     return RemoteCallClient()
 
 
-def get_active_runs(run_match=None) -> CollectedResponses[JobRun]:
+def get_active_runs(run_match=None) -> List[RemoteCallResult[List[JobRun]]]:
     """
     Retrieves instance information for all active job instances for the current user.
 
@@ -85,7 +86,7 @@ def get_active_runs(run_match=None) -> CollectedResponses[JobRun]:
     """
 
     with api_client() as c:
-        return c.get_active_runs(run_match)
+        return c.collect_active_runs(run_match)
 
 
 
