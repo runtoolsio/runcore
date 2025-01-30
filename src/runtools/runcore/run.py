@@ -478,7 +478,7 @@ class Fault:
         )
 
     @classmethod
-    def from_exception(cls, category: str, exception: Exception) -> 'Fault':
+    def from_exception(cls, category: str, exception: BaseException) -> 'Fault':
         stack_trace = ''.join(traceback.format_exception(type(exception), exception, exception.__traceback__))
         return cls(
             category=category,
@@ -501,24 +501,21 @@ class FailedRun(Exception):
 class TerminationInfo:
     status: TerminationStatus
     terminated_at: datetime.datetime
-    failure: Optional[Fault] = None
-    error: Optional[Fault] = None
+    fault: Optional[Fault] = None
 
     @classmethod
     def deserialize(cls, as_dict: Dict[str, Any]):
         return cls(
             status=TerminationStatus[as_dict['termination_status']],
             terminated_at=util.parse_datetime(as_dict['terminated_at']),
-            failure=Fault.deserialize(as_dict['failure']) if as_dict.get('failure') else None,
-            error=Fault.deserialize(as_dict['error']) if as_dict.get('error') else None
+            fault=Fault.deserialize(as_dict['fault']) if as_dict.get('fault') else None,
         )
 
     def serialize(self) -> Dict[str, Any]:
         return {
             "termination_status": self.status.name,
             "terminated_at": format_dt_iso(self.terminated_at),
-            "failure": self.failure.serialize() if self.failure else None,
-            "error": self.error.serialize() if self.error else None
+            "fault": self.fault.serialize() if self.fault else None,
         }
 
 

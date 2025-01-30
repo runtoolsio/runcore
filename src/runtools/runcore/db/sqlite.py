@@ -392,7 +392,7 @@ class SQLite(Persistence):
                     json.dumps([p.serialize() for p in r.phases]),
                     json.dumps(r.lifecycle.serialize()),
                     r.termination.status.value,
-                    json.dumps(r.termination.failure.serialize()) if r.termination.failure else None,
+                    json.dumps(r.termination.fault.serialize()) if r.termination.fault else None,
                     json.dumps(r.termination.error.serialize()) if r.termination.error else None,
                     json.dumps(r.status.serialize()) if r.status else None,
                     None,  # TODO Warnings as a separate column?
