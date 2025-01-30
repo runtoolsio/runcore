@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from threading import Event
 
 from runtools.runcore import RemoteCallClient, InstanceTransitionReceiver
+from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.db import SortCriteria, sqlite
 from runtools.runcore.job import JobInstanceObservable
 from runtools.runcore.listening import InstanceOutputReceiver
@@ -25,6 +26,11 @@ class Environment(ABC):
     @abstractmethod
     def get_active_runs(self, run_match=None):
         pass
+
+    def get_instance(self, instance_id):
+        """TODO Abstract"""
+        inst = self.get_instances(JobRunCriteria.instance_match(instance_id))
+        return inst[0] if inst else None
 
     @abstractmethod
     def get_instances(self, run_match=None):
@@ -122,7 +128,7 @@ class LocalEnvironment(JobInstanceObservable, PersistingEnvironment, Environment
         self._output_receiver.start()
 
     def get_active_runs(self, run_match=None):
-        return self._client.get_active_runs(run_match).successful
+        return [run for res in self._client.collect_active_runs(run_match) if not res.error for run in res.retval]
 
     def get_instances(self, run_match=None):
         pass
