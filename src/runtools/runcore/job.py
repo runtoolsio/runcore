@@ -15,8 +15,8 @@ from enum import Enum, auto
 from typing import Dict, Any, List, Optional, Tuple
 
 from runtools.runcore.output import OutputLine
-from runtools.runcore.run import TerminationStatus, RunState, Run, PhaseRun, PhaseInfo, \
-    Lifecycle, TerminationInfo, Fault
+from runtools.runcore.run import TerminationStatus, RunState, PhaseRun, PhaseInfo, \
+    Fault, PhaseDetail
 from runtools.runcore.status import Status
 from runtools.runcore.util import MatchingStrategy, format_dt_iso
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
@@ -283,6 +283,12 @@ class JobInstanceMetadata(ABC):
         return f"{self.job_id}@{self.run_id}:{self.instance_id}"
 
 
+class Stage(Enum):
+    CREATED = auto()
+    RUNNING = auto()
+    ENDED = auto()
+
+
 class JobInstance(abc.ABC):
     """
     The `JobInstance` class is a central component of this package. It denotes a single occurrence of a job.
@@ -448,27 +454,29 @@ class JobRun:
     Immutable snapshot of job instance
     """
     metadata: JobInstanceMetadata
-    _run: Run  # private field
-    faults: Optional[JobFaults]
+    phase: PhaseDetail
+    faults: Optional[JobFaults] = None
     status: Optional[Status] = None
 
     @classmethod
     def deserialize(cls, as_dict: Dict[str, Any]) -> 'JobRun':
         return cls(
             metadata=JobInstanceMetadata.deserialize(as_dict['metadata']),
-            _run=Run.deserialize(as_dict['run']),
+            phase=PhaseDetail.deserialize(as_dict['phase']),
             faults=JobFaults.deserialize(as_dict['faults']) if as_dict.get('faults') else None,
-            status=Status.deserialize(as_dict['task']) if as_dict.get('task') else None,
+            status=Status.deserialize(as_dict['status']) if as_dict.get('status') else None,
         )
 
     def serialize(self) -> Dict[str, Any]:
         d = {
             "metadata": self.metadata.serialize(),
-            "run": self._run.serialize(),
-            "task": self.status.serialize() if self.status else None,
+            "phase": self.phase.serialize(),
         }
         if self.faults:
             d["faults"] = self.faults.serialize()
+
+        if self.status:
+            d["status"] = self.status.serialize()
         return d
 
     @property
@@ -494,28 +502,6 @@ class JobRun:
             str: Instance part of the instance full identifier.
         """
         return self.metadata.instance_id
-
-    @property
-    def phases(self) -> Tuple[PhaseInfo, ...]:
-        return self._run.phases
-
-    @property
-    def current_phase(self) -> Optional[PhaseInfo]:
-        return self._run.current_phase
-
-    def find_phase(self, criterion):
-        return self._run.find_phase(criterion)
-
-    def phase_after(self, phase: PhaseInfo):
-        return self._run.phase_after(phase)
-
-    @property
-    def lifecycle(self) -> Lifecycle:
-        return self._run.lifecycle
-
-    @property
-    def termination(self) -> Optional[TerminationInfo]:
-        return self._run.termination
 
 
 class JobRuns(list):

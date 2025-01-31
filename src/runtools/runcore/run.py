@@ -18,9 +18,10 @@ from collections import OrderedDict
 from copy import copy
 from dataclasses import dataclass
 from enum import Enum, EnumMeta
-from typing import Optional, List, Dict, Any, Tuple, TypeVar, Generic
+from typing import Optional, List, Dict, Any, Tuple, TypeVar, Generic, Callable
 
 from runtools.runcore import util
+from runtools.runcore.job import Stage
 from runtools.runcore.util import format_dt_iso, is_empty
 
 
@@ -39,12 +40,13 @@ class RunStateMeta(EnumMeta):
 class RunState(Enum, metaclass=RunStateMeta):
     NONE = 0
     UNKNOWN = -1
-    CREATED = 1
+    CREATED = 1  # TBD
     PENDING = 2
     WAITING = 3
     EVALUATING = 4
     IN_QUEUE = 5
     EXECUTING = 6
+    EXECUTING_CHILDREN = 7
     ENDED = 100
 
 
@@ -89,6 +91,58 @@ class TerminationStatus(Enum):
 
     def __bool__(self):
         return self != TerminationStatus.NONE
+
+
+@dataclass
+class Fault:
+    category: str
+    reason: str
+    stack_trace: Optional[str] = None
+
+    def serialize(self):
+        data = {"cat": self.category, "reason": self.reason}
+        if self.stack_trace:
+            data["stack_trace"] = self.stack_trace
+        return data
+
+    @classmethod
+    def deserialize(cls, as_dict):
+        return cls(
+            as_dict["cat"],
+            as_dict["reason"],
+            as_dict.get("stack_trace")
+        )
+
+    @classmethod
+    def from_exception(cls, category: str, exception: BaseException) -> 'Fault':
+        stack_trace = ''.join(traceback.format_exception(type(exception), exception, exception.__traceback__))
+        return cls(
+            category=category,
+            reason=f"{exception.__class__.__name__}: {exception}",
+            stack_trace=stack_trace
+        )
+
+
+@dataclass(frozen=True)
+class TerminationInfo:
+    status: TerminationStatus
+    terminated_at: datetime.datetime
+    fault: Optional[Fault] = None
+
+    @classmethod
+    def deserialize(cls, as_dict: Dict[str, Any]):
+        return cls(
+            status=TerminationStatus[as_dict['termination_status']],
+            terminated_at=util.parse_datetime(as_dict['terminated_at']),
+            fault=Fault.deserialize(as_dict['fault']) if as_dict.get('fault') else None,
+        )
+
+    def serialize(self) -> Dict[str, Any]:
+        return {
+            "termination_status": self.status.name,
+            "terminated_at": format_dt_iso(self.terminated_at),
+            "fault": self.fault.serialize() if self.fault else None,
+        }
 
 
 @dataclass
@@ -365,6 +419,173 @@ class PhaseInfo:
         return d
 
 
+@dataclass(frozen=True)
+class PhaseDetail:
+    """
+    A complete immutable view of a Phase instance, containing all state and metadata.
+    Provides a snapshot of the phase's current state including runtime information.
+    """
+    # Core phase information
+    phase_id: str
+    phase_type: str
+    run_state: RunState
+    phase_name: Optional[str]
+    attributes: Optional[Dict[str, Any]]
+
+    # Runtime information
+    stage: Stage
+    started_at: Optional[datetime]
+    termination: Optional[TerminationInfo]
+
+    # Hierarchical information
+    children: List['PhaseDetail']
+
+    @classmethod
+    def from_phase(cls, phase) -> 'PhaseDetail':
+        """
+        Creates a PhaseView from a PhaseV2 instance.
+
+        Args:
+            phase: A PhaseV2 instance
+
+        Returns:
+            PhaseDetail: An immutable view of the phase's current state
+        """
+        return cls(
+            phase_id=phase.id,
+            phase_type=phase.type,
+            run_state=phase.run_state,
+            phase_name=phase.name,
+            attributes=phase.attributes,
+            started_at=phase.started_at,
+            termination=phase.termination,
+            children=[cls.from_phase(child) for child in phase.children] if phase.children else []
+        )
+
+    @classmethod
+    def deserialize(cls, as_dict: Dict[str, Any]) -> 'PhaseDetail':
+        """
+        Creates a PhaseView from a dictionary representation.
+
+        Args:
+            as_dict: Dictionary containing serialized phase data
+
+        Returns:
+            PhaseDetail: The deserialized phase view
+        """
+        children = [
+            cls.deserialize(child)
+            for child in as_dict.get('children', [])
+        ]
+
+        return cls(
+            phase_id=as_dict['phase_id'],
+            phase_type=as_dict['phase_type'],
+            run_state=RunState[as_dict['run_state']],
+            phase_name=as_dict.get('phase_name'),
+            attributes=as_dict.get('attributes'),
+            started_at=util.parse_datetime(as_dict['started_at']) if as_dict.get('started_at') else None,
+            termination=TerminationInfo.deserialize(as_dict['termination']) if as_dict.get('termination') else None,
+            children=children,
+        )
+
+    def serialize(self) -> Dict[str, Any]:
+        """
+        Creates a dictionary representation of this PhaseView.
+
+        Returns:
+            Dict[str, Any]: The serialized phase view
+        """
+        result = {
+            'phase_id': self.phase_id,
+            'phase_type': self.phase_type,
+            'run_state': self.run_state.name,
+        }
+
+        if self.phase_name:
+            result['phase_name'] = self.phase_name
+        if self.attributes:
+            result['attributes'] = self.attributes
+        if self.started_at:
+            result['started_at'] = format_dt_iso(self.started_at)
+        if self.termination:
+            result['termination'] = self.termination.serialize()
+        if self.children:
+            result['children'] = [child.serialize() for child in self.children]
+
+        return result
+
+    def descendants(self, predicate: Optional[Callable[['PhaseDetail'], bool]] = None) -> List['PhaseDetail']:
+        """
+        Returns all descendant phases in depth-first order.
+        Includes children, grandchildren, and so on.
+
+        Args:
+            predicate: Optional function to filter phases.
+
+        Returns:
+            List of descendant phase snapshots, optionally filtered
+        """
+        result = []
+        for child in self.children or []:
+            if not predicate or predicate(child):
+                result.append(child)
+            result.extend(child.descendants(predicate))
+        return result
+
+    def find_first_phase(self, predicate: Callable[['PhaseDetail'], bool]) -> Optional['PhaseDetail']:
+        """
+        Finds a phase in this view's hierarchy that matches the given predicate.
+
+        Args:
+            predicate: A function that takes a PhaseView and returns bool
+
+        Returns:
+            Optional[PhaseDetail]: The matching phase view or None if not found
+        """
+        if predicate(self):
+            return self
+
+        if self.children:
+            for child in self.children:
+                result = child.find_first_phase(predicate)
+                if result:
+                    return result
+
+        return None
+
+    def is_running(self) -> bool:
+        """
+        Returns True if this phase is currently running.
+        """
+        return self.stage == Stage.RUNNING
+
+    def is_ended(self) -> bool:
+        """
+        Returns True if this phase has ended execution (successfully or not).
+        """
+        return self.stage == Stage.ENDED
+
+    def completed_successfully(self) -> bool:
+        """
+        Returns True if this phase completed successfully.
+        """
+        return self.termination is not None and self.termination.status == TerminationStatus.COMPLETED
+
+
+@dataclass
+class PhaseUpdateEvent:
+    new_stage: Stage
+    phase_detail: PhaseDetail
+
+
+class PhaseObserver(ABC):
+
+    @abstractmethod
+    def new_phase_update(self, event: PhaseUpdateEvent):
+        pass
+
+
 class TerminateRun(Exception):
     def __init__(self, term_status: TerminationStatus):
         if term_status.value <= 1:
@@ -457,36 +678,6 @@ class Phase(ABC, Generic[C]):
         pass
 
 
-@dataclass
-class Fault:
-    category: str
-    reason: str
-    stack_trace: Optional[str] = None
-
-    def serialize(self):
-        data = {"cat": self.category, "reason": self.reason}
-        if self.stack_trace:
-            data["stack_trace"] = self.stack_trace
-        return data
-
-    @classmethod
-    def deserialize(cls, as_dict):
-        return cls(
-            as_dict["cat"],
-            as_dict["reason"],
-            as_dict.get("stack_trace")
-        )
-
-    @classmethod
-    def from_exception(cls, category: str, exception: BaseException) -> 'Fault':
-        stack_trace = ''.join(traceback.format_exception(type(exception), exception, exception.__traceback__))
-        return cls(
-            category=category,
-            reason=f"{exception.__class__.__name__}: {exception}",
-            stack_trace=stack_trace
-        )
-
-
 class FailedRun(Exception):
     """
     This exception is used to provide additional information about a run failure.
@@ -495,28 +686,6 @@ class FailedRun(Exception):
     def __init__(self, fault):
         super().__init__(fault.reason)
         self.fault = fault
-
-
-@dataclass(frozen=True)
-class TerminationInfo:
-    status: TerminationStatus
-    terminated_at: datetime.datetime
-    fault: Optional[Fault] = None
-
-    @classmethod
-    def deserialize(cls, as_dict: Dict[str, Any]):
-        return cls(
-            status=TerminationStatus[as_dict['termination_status']],
-            terminated_at=util.parse_datetime(as_dict['terminated_at']),
-            fault=Fault.deserialize(as_dict['fault']) if as_dict.get('fault') else None,
-        )
-
-    def serialize(self) -> Dict[str, Any]:
-        return {
-            "termination_status": self.status.name,
-            "terminated_at": format_dt_iso(self.terminated_at),
-            "fault": self.fault.serialize() if self.fault else None,
-        }
 
 
 @dataclass(frozen=True)
