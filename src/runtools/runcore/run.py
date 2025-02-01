@@ -17,12 +17,17 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from copy import copy
 from dataclasses import dataclass
-from enum import Enum, EnumMeta
+from enum import Enum, EnumMeta, auto
 from typing import Optional, List, Dict, Any, Tuple, TypeVar, Generic, Callable
 
 from runtools.runcore import util
-from runtools.runcore.job import Stage
 from runtools.runcore.util import format_dt_iso, is_empty
+
+
+class Stage(Enum):
+    CREATED = auto()
+    RUNNING = auto()
+    ENDED = auto()
 
 
 class RunStateMeta(EnumMeta):

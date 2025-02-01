@@ -15,8 +15,7 @@ from enum import Enum, auto
 from typing import Dict, Any, List, Optional, Tuple
 
 from runtools.runcore.output import OutputLine
-from runtools.runcore.run import TerminationStatus, RunState, PhaseRun, PhaseInfo, \
-    Fault, PhaseDetail
+from runtools.runcore.run import TerminationStatus, RunState, PhaseRun, Fault, PhaseDetail, Stage
 from runtools.runcore.status import Status
 from runtools.runcore.util import MatchingStrategy, format_dt_iso
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
@@ -281,12 +280,6 @@ class JobInstanceMetadata(ABC):
 
     def __repr__(self) -> str:
         return f"{self.job_id}@{self.run_id}:{self.instance_id}"
-
-
-class Stage(Enum):
-    CREATED = auto()
-    RUNNING = auto()
-    ENDED = auto()
 
 
 class JobInstance(abc.ABC):

@@ -13,9 +13,9 @@ from typing import List
 from runtools.runcore import paths
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.db import SortCriteria, Persistence
-from runtools.runcore.job import JobStats, JobRun, JobRuns, JobInstanceMetadata
+from runtools.runcore.job import JobStats, JobRun, JobRuns, JobInstanceMetadata, JobFaults
 from runtools.runcore.run import Lifecycle, PhaseInfo, Fault, Run, TerminationInfo, \
-    TerminationStatus, Outcome
+    TerminationStatus, Outcome, PhaseDetail
 from runtools.runcore.status import Status
 from runtools.runcore.util import MatchingStrategy, format_dt_sql, parse_dt_sql
 
@@ -202,15 +202,14 @@ class SQLite(Persistence):
                          instance_id text,
                          user_params text,
                          created timestamp,
+                         started timestamp,
                          ended timestamp,
                          exec_time real,
-                         phases text,
-                         lifecycle text,
+                         phase text,
                          termination_status int,
-                         failure text,
-                         error text,
+                         faults text,
                          status text,
-                         warnings text,
+                         warnings int,
                          misc text)
                          ''')
             c.execute('''CREATE INDEX job_id_index ON history (job_id)''')
@@ -266,16 +265,10 @@ class SQLite(Persistence):
 
         def to_job_run(t):
             metadata = JobInstanceMetadata(t[0], t[1], t[2], {}, json.loads(t[3]) if t[3] else dict())
-            ended_at = parse_dt_sql(t[5])
-            phases = tuple(PhaseInfo.deserialize(p) for p in json.loads(t[7]))
-            lifecycle = Lifecycle.deserialize(json.loads(t[8]))
-            term_status = TerminationStatus.from_code(t[9])
-            failure = Fault.deserialize(json.loads(t[10])) if t[10] else None
-            error = Fault.deserialize(json.loads(t[11])) if t[11] else None
-            status = Status.deserialize(json.loads(t[12])) if t[12] else None
-            run = Run(phases, lifecycle, TerminationInfo(term_status, ended_at, failure, error))
-
-            return JobRun(metadata, run, status)
+            phase = PhaseDetail.deserialize(json.loads(t[8]))
+            faults = JobFaults.deserialize(json.loads(t[10]))
+            status = Status.deserialize(json.loads(t[11])) if t[11] else None
+            return JobRun(metadata, phase, faults, status)
 
         return JobRuns((to_job_run(row) for row in c.fetchall()))
 
@@ -338,7 +331,7 @@ class SQLite(Persistence):
                 last.exec_time AS "last_time",
                 last.termination_status AS "last_term_status",
                 COUNT(CASE WHEN h.termination_status BETWEEN {Outcome.FAULT.value.start} AND {Outcome.FAULT.value.stop} THEN 1 ELSE NULL END) AS failed,
-                COUNT(h.warnings) AS warnings
+                h.warnings
             FROM
                 history h
             INNER JOIN
@@ -381,22 +374,20 @@ class SQLite(Persistence):
         """
 
         def to_tuple(r):
-            return (r.job_id,
-                    r.run_id,
+            return (r.metadata.job_id,
+                    r.metadata.run_id,
                     r.metadata.instance_id,
                     json.dumps(r.metadata.user_params) if r.metadata.user_params else None,
-                    format_dt_sql(r.lifecycle.created_at),
-                    format_dt_sql(r.lifecycle.ended_at),
-                    round(r.lifecycle.total_executing_time.total_seconds(), 3) if r.lifecycle.total_executing_time
-                    else None,
-                    json.dumps([p.serialize() for p in r.phases]),
-                    json.dumps(r.lifecycle.serialize()),
-                    r.termination.status.value,
-                    json.dumps(r.termination.fault.serialize()) if r.termination.fault else None,
-                    json.dumps(r.termination.error.serialize()) if r.termination.error else None,
+                    format_dt_sql(r.phase.created_at),
+                    format_dt_sql(r.phase.started_at),
+                    format_dt_sql(r.phase.ended_at),
+                    round(r.phase.total_executing_time.total_seconds(), 3) if r.phase.total_executing_time else None,
+                    json.dumps(r.phase.serialize()),
+                    r.phase.termination.status.value if r.phase.termination else None,
+                    json.dumps(r.faults.serialize()) if r.faults else None,
                     json.dumps(r.status.serialize()) if r.status else None,
-                    None,  # TODO Warnings as a separate column?
-                    None
+                    len(r.status.warnings) if r.status else None,
+                    None  # misc
                     )
 
         jobs = [to_tuple(j) for j in job_runs]
