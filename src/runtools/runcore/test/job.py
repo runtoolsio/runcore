@@ -110,12 +110,12 @@ class FakeJobInstance(JobInstance):
 
     @property
     def current_phase(self):
-        if 0 <= self._current_phase_index < len(self.phases):
-            return self.phases[self._current_phase_index].id
+        if 0 <= self._current_phase_index < len(self.phase):
+            return self.phase[self._current_phase_index].id
         return None
 
     @property
-    def phases(self):
+    def phase(self):
         return self._phases
 
     @property
@@ -126,14 +126,14 @@ class FakeJobInstance(JobInstance):
         """
         Retrieve a phase by its ID and optionally verify its type.
         """
-        for phase in self.phases:
+        for phase in self.phase:
             if phase.id == phase_id:
                 if phase_type and phase.type != phase_type:
                     raise ValueError(f"Phase '{phase_id}' has type '{phase.type}' but '{phase_type}' was expected")
                 return phase
         raise KeyError(f"Phase '{phase_id}' not found")
 
-    def get_phase_control(self, phase_id: str, phase_type: str = None):
+    def find_phase_control(self, phase_id: str, phase_type: str = None):
         return self.get_phase(phase_id, phase_type).control
 
     def snapshot(self) -> JobRun:
@@ -141,7 +141,7 @@ class FakeJobInstance(JobInstance):
                       self._status_tracker.to_status() if self._status_tracker else None)
 
     def _create_run_info(self) -> Run:
-        phases = tuple(p.info for p in self.phases)
+        phases = tuple(p.info for p in self.phase)
         return Run(phases, self.lifecycle, self.termination)
 
     def prime(self):
@@ -151,11 +151,11 @@ class FakeJobInstance(JobInstance):
 
     def next_phase(self):
         self._current_phase_index += 1
-        if self._current_phase_index >= len(self.phases):
+        if self._current_phase_index >= len(self.phase):
             self._next_phase(FakePhase('term', RunState.ENDED))
             self.termination = TerminationInfo(TerminationStatus.COMPLETED, utc_now())
         else:
-            self._next_phase(self.phases[self._current_phase_index])
+            self._next_phase(self.phase[self._current_phase_index])
 
     def _next_phase(self, phase):
         """

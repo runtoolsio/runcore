@@ -596,7 +596,7 @@ class PhaseUpdateEvent:
     timestamp: datetime
 
 
-class PhaseObserver(ABC):
+class PhaseUpdateObserver(ABC):
 
     @abstractmethod
     def new_phase_update(self, event: PhaseUpdateEvent):

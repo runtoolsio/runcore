@@ -330,16 +330,8 @@ class JobInstance(abc.ABC):
         """
         return self.metadata.run_id
 
-    @property
     @abc.abstractmethod
-    def phases(self):
-        """
-        Returns:
-            List[PhaseInfo]: Phases in the order as defined in the instance
-        """
-
-    @abc.abstractmethod
-    def get_phase_control(self, phase_id: str, phase_type: str = None):
+    def find_phase_control(self, phase_id: str, phase_type: str = None):
         """
         TODO
         """
@@ -381,12 +373,6 @@ class JobInstance(abc.ABC):
     def interrupted(self):
         """
         TODO: Notify about keyboard interruption signal
-        """
-
-    @abc.abstractmethod
-    def wait_for_transition(self, phase_name=None, run_state=RunState.NONE, *, timeout=None):
-        """
-        TODO
         """
 
     @abc.abstractmethod
@@ -566,6 +552,22 @@ class InstanceTransitionObserver(abc.ABC):
             new_phase (TerminationStatus): The new/current phase state of the job instance.
             ordinal (int): The number of the current phase.
         """
+
+
+@dataclass
+class InstancePhaseUpdateEvent:
+    instance: JobInstanceMetadata
+    is_root_phase: bool
+    phase_detail: PhaseDetail
+    new_stage: Stage
+    timestamp: datetime
+
+
+class InstancePhaseUpdateObserver(abc.ABC):
+
+    @abstractmethod
+    def new_instance_phase_update(self, event: InstancePhaseUpdateEvent):
+        pass
 
 
 class InstanceOutputObserver(abc.ABC):
