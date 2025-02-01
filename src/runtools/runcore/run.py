@@ -433,7 +433,7 @@ class PhaseDetail:
     attributes: Optional[Dict[str, Any]]
 
     # Runtime information
-    stage: Stage
+    created_at: datetime
     started_at: Optional[datetime]
     termination: Optional[TerminationInfo]
 
@@ -457,6 +457,7 @@ class PhaseDetail:
             run_state=phase.run_state,
             phase_name=phase.name,
             attributes=phase.attributes,
+            created_at=phase.created_at,
             started_at=phase.started_at,
             termination=phase.termination,
             children=[cls.from_phase(child) for child in phase.children] if phase.children else []
@@ -484,6 +485,7 @@ class PhaseDetail:
             run_state=RunState[as_dict['run_state']],
             phase_name=as_dict.get('phase_name'),
             attributes=as_dict.get('attributes'),
+            created_at=as_dict['created_at'],
             started_at=util.parse_datetime(as_dict['started_at']) if as_dict.get('started_at') else None,
             termination=TerminationInfo.deserialize(as_dict['termination']) if as_dict.get('termination') else None,
             children=children,
@@ -554,6 +556,20 @@ class PhaseDetail:
 
         return None
 
+    @property
+    def stage(self):
+        if self.termination:
+            return Stage.ENDED
+        if self.started_at:
+            return Stage.RUNNING
+        return Stage.CREATED
+
+    @property
+    def last_change_at(self):
+        if self.termination:
+            return self.termination.terminated_at
+        return self.started_at or self.created_at
+
     def is_running(self) -> bool:
         """
         Returns True if this phase is currently running.
@@ -575,8 +591,9 @@ class PhaseDetail:
 
 @dataclass
 class PhaseUpdateEvent:
-    new_stage: Stage
     phase_detail: PhaseDetail
+    new_stage: Stage
+    timestamp: datetime
 
 
 class PhaseObserver(ABC):
