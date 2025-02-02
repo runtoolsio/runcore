@@ -6,6 +6,7 @@ TODO: Remove immutable properties
 
 from abc import abstractmethod, ABC
 from dataclasses import dataclass
+from enum import Enum
 from typing import Dict, Any, Optional, TypeVar, Generic
 
 from runtools.runcore.job import JobInstanceMetadata, JobRun
@@ -298,10 +299,38 @@ class TerminationCriteria(MatchCriteria[TerminationInfo]):
         return f"[{', '.join(fields)}]" if fields else "[]"
 
 
+class PhaseMatch(Enum):
+    """
+    Enum controlling how phases are matched in the criteria.
+
+    Attributes:
+        ROOT: Match only the root phase, ignoring descendants
+        ALL: Match the phase and all its descendants (default behavior)
+        DESCENDANTS_ONLY: Match only the descendant phases, ignoring the phase itself
+    """
+    ROOT = "ROOT"
+    ALL = "ALL"
+    DESCENDANTS_ONLY = "DESCENDANTS_ONLY"
+
+
 @dataclass
 class PhaseCriterion(MatchCriteria[PhaseDetail]):
     """
     Criteria for matching phase details, incorporating phase-specific and temporal criteria.
+
+    Attributes:
+        phase_type: Phase type to match. If None, type is not considered.
+        phase_id: Phase ID to match. If None, ID is not considered.
+        run_state: Run state to match. If None, state is not considered.
+        phase_name: Phase name to match. If None, name is not considered.
+        attributes: Dictionary of attributes to match. If None, attributes are not considered.
+                  If empty dict, matches phases with no attributes.
+        created_range: Time range to match creation time. If None, creation time is not considered.
+        started_range: Time range to match start time. If None, start time is not considered.
+        ended_range: Time range to match end time. If None, end time is not considered.
+        termination: Termination criteria to match. If None, termination is not considered.
+        match_type: Controls how phases are matched (EXACT, ALL, or DESCENDANTS_ONLY).
+                   Defaults to ALL.
     """
     phase_type: Optional[str] = None
     phase_id: Optional[str] = None
@@ -312,13 +341,19 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
     started_range: Optional[DateTimeRange] = None
     ended_range: Optional[DateTimeRange] = None
     termination: Optional[TerminationCriteria] = None
-
-    def __post_init__(self):
-        if self.attributes is None:
-            self.attributes = {}
+    match_type: PhaseMatch = PhaseMatch.ROOT
 
     @classmethod
     def deserialize(cls, data: Dict[str, Any]) -> 'PhaseCriterion':
+        """
+        Deserialize a dictionary into a PhaseCriterion instance.
+
+        Args:
+            data: Dictionary containing the serialized criterion data
+
+        Returns:
+            A new PhaseCriterion instance
+        """
         return cls(
             phase_type=data.get('phase_type'),
             phase_id=data.get('phase_id'),
@@ -328,16 +363,24 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
             created_range=DateTimeRange.deserialize(data['created_range']) if data.get('created_range') else None,
             started_range=DateTimeRange.deserialize(data['started_range']) if data.get('started_range') else None,
             ended_range=DateTimeRange.deserialize(data['ended_range']) if data.get('ended_range') else None,
-            termination=TerminationCriteria.deserialize(data['termination']) if data.get('termination') else None
+            termination=TerminationCriteria.deserialize(data['termination']) if data.get('termination') else None,
+            match_type=PhaseMatch[data.get('match_type', PhaseMatch.ALL.name)]
         )
 
     def serialize(self) -> Dict[str, Any]:
+        """
+        Serialize this criterion into a dictionary.
+
+        Returns:
+            Dictionary containing the serialized criterion data
+        """
         data = {
             'phase_type': self.phase_type,
             'phase_id': self.phase_id,
             'run_state': self.run_state.name if self.run_state else None,
             'phase_name': self.phase_name,
-            'attributes': self.attributes
+            'attributes': self.attributes,
+            'match_type': self.match_type.name
         }
         if self.created_range:
             data['created_range'] = self.created_range.serialize()
@@ -350,7 +393,15 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
         return data
 
     def matches_phase(self, phase_detail: PhaseDetail) -> bool:
-        """Check if a single phase matches this criterion."""
+        """
+        Check if a single phase matches this criterion, without considering descendants.
+
+        Args:
+            phase_detail: The phase to check against the criteria
+
+        Returns:
+            True if the phase matches all specified criteria, False otherwise
+        """
         if self.phase_type and phase_detail.phase_type != self.phase_type:
             return False
 
@@ -387,19 +438,42 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
 
         return True
 
-    def matches(self, phase_detail: PhaseDetail) -> bool:
-        """Check if phase or any of its children match this criterion."""
-        if self.matches_phase(phase_detail):
-            return True
+    def matches(self, phase: PhaseDetail) -> bool:
+        """
+        Check if phase or any of its children match this criterion based on the match_type.
 
-        return any(self.matches(child) for child in phase_detail.children)
+        Args:
+            phase: The phase to check against the criteria
+
+        Returns:
+            bool: True if the phase matches according to the match_type rules, False otherwise
+        """
+        match self.match_type:
+            case PhaseMatch.ROOT:
+                return self.matches_phase(phase)
+            case PhaseMatch.ALL:
+                return self.matches_phase(phase) or any(self.matches_phase(c) for c in phase.children)
+            case PhaseMatch.DESCENDANTS_ONLY:
+                return any(self.matches_phase(c) for c in phase.children)
 
     def __bool__(self) -> bool:
+        """
+        Check if this criterion has any constraints set.
+
+        Returns:
+            True if any matching criteria are set, False if all are None
+        """
         return bool(self.phase_type or self.phase_id or self.run_state or
                     self.phase_name or self.attributes or self.created_range or
                     self.started_range or self.ended_range or self.termination)
 
     def __str__(self) -> str:
+        """
+        Create a string representation of this criterion.
+
+        Returns:
+            A string showing all non-None criteria values
+        """
         fields = []
         if self.phase_type:
             fields.append(f"type='{self.phase_type}'")
@@ -419,6 +493,8 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
             fields.append(f"ended{self.ended_range}")
         if self.termination:
             fields.append(f"termination{self.termination}")
+        if self.match_type != PhaseMatch.ALL:
+            fields.append(f"match_type={self.match_type.name}")
         return f"[{', '.join(fields)}]" if fields else "[]"
 
 
@@ -431,11 +507,10 @@ class JobRunCriteria(MatchCriteria[JobRun]):
     Criteria for querying and matching job instances.
     """
 
-    def __init__(self, *, jobs=None, metadata_criteria=None, phase_criteria=None, termination_criteria=None):
+    def __init__(self, *, jobs=None, metadata_criteria=None, phase_criteria=None):
         self.jobs = to_list(jobs) or []
         self.metadata_criteria = to_list(metadata_criteria)
         self.phase_criteria = to_list(phase_criteria)
-        self.termination_criteria = to_list(termination_criteria)
 
     @classmethod
     def all(cls):
@@ -447,7 +522,6 @@ class JobRunCriteria(MatchCriteria[JobRun]):
         new.jobs = as_dict.get('jobs', [])
         new.metadata_criteria = [MetadataCriterion.deserialize(c) for c in as_dict.get('metadata_criteria', ())]
         new.phase_criteria = [PhaseCriterion.deserialize(c) for c in as_dict.get('phase_criteria', ())]
-        new.termination_criteria = [TerminationCriteria.deserialize(c) for c in as_dict.get('termination_criteria', ())]
         return new
 
     def serialize(self):
@@ -455,7 +529,6 @@ class JobRunCriteria(MatchCriteria[JobRun]):
             'jobs': self.jobs,
             'metadata_criteria': [c.serialize() for c in self.metadata_criteria],
             'phase_criteria': [c.serialize() for c in self.phase_criteria],
-            'termination_criteria': [c.serialize() for c in self.termination_criteria],
         }
 
     @classmethod
@@ -499,8 +572,6 @@ class JobRunCriteria(MatchCriteria[JobRun]):
                 self.metadata_criteria.append(criterion)
             case PhaseCriterion():
                 self.phase_criteria.append(criterion)
-            case TerminationCriteria():
-                self.termination_criteria.append(criterion)
             case _:
                 raise ValueError(f"Invalid criterion type: {type(criterion)}")
         return self
@@ -510,12 +581,7 @@ class JobRunCriteria(MatchCriteria[JobRun]):
 
     def match_phases(self, job_run):
         """Check if any phase in the job run matches any of the phase criteria."""
-        return not self.phase_criteria or any(c.matches(job_run.root_phase) for c in self.phase_criteria)
-
-    def matches_termination(self, job_run):
-        """Check root phase termination against termination criteria."""
-        return not self.termination_criteria or any(
-            c(job_run.root_phase.termination) for c in self.termination_criteria)
+        return not self.phase_criteria or any(c.matches(job_run.phase) for c in self.phase_criteria)
 
     def matches_jobs(self, job_run):
         return not self.jobs or job_run.job_id in self.jobs
@@ -527,13 +593,11 @@ class JobRunCriteria(MatchCriteria[JobRun]):
         """Check if a job run matches all criteria."""
         return (self.matches_metadata(job_run) and
                 self.match_phases(job_run) and
-                self.matches_termination(job_run) and
                 self.matches_jobs(job_run))
 
     def __bool__(self):
         return bool(self.metadata_criteria or
                     self.phase_criteria or
-                    self.termination_criteria or
                     self.jobs)
 
     def __str__(self) -> str:
@@ -546,10 +610,6 @@ class JobRunCriteria(MatchCriteria[JobRun]):
             criteria_strs = [str(c) for c in self.phase_criteria if bool(c)]
             if criteria_strs:
                 parts.append(f"phase={''.join(criteria_strs)}")
-        if self.termination_criteria:
-            criteria_strs = [str(c) for c in self.termination_criteria if bool(c)]
-            if criteria_strs:
-                parts.append(f"termination={''.join(criteria_strs)}")
         if self.jobs:
             parts.append(f"jobs={self.jobs}")
         return f"{' | '.join(parts)}" if parts else ""
