@@ -81,7 +81,6 @@ def _build_where_clause(run_match, alias=''):
 
         id_conditions.append(op.join(conditions))
 
-    int_criteria = run_match.interval_criteria
     int_conditions = []
 
     def dt_conditions(column, dt_range):
@@ -98,7 +97,7 @@ def _build_where_clause(run_match, alias=''):
 
         return conditions_dt
 
-    for c in int_criteria:
+    for c in run_match.interval_criteria:
         conditions = dt_conditions('created', c.created_range) + dt_conditions('ended', c.ended_range)
         if conditions:
             int_conditions.append("(" + " AND ".join(conditions) + ")")
