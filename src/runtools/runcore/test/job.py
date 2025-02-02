@@ -22,7 +22,7 @@ TERM = 'term'
 def test_job_run(job_id, phase, *, instance_id=None, run_id=None, user_params=None):
     instance_id = instance_id or unique_timestamp_hex()
     run_id = run_id or instance_id
-    meta = JobInstanceMetadata(job_id, instance_id, run_id, user_params or {})
+    meta = JobInstanceMetadata(job_id, run_id, instance_id, user_params or {})
     return JobRun(meta, phase, None, None)  # TODO Faults and status
 
 
@@ -35,7 +35,7 @@ def job_run(job_id, run_id='r1', *, offset_min=0, term_status=TerminationStatus.
         program_term = term(term_status, start_time + timedelta(minutes=3),
                             Fault('err1', 'reason') if term_status == TerminationStatus.FAILED else None)
     else:
-        program_term = term(term_status)
+        program_term = term(term_status, start_time + timedelta(minutes=3))
 
     builder = FakePhaseDetailBuilder.root(base_ts=start_time)
     builder.add_phase(APPROVAL, RunState.PENDING, term(TerminationStatus.COMPLETED))
