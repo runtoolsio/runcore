@@ -3,7 +3,7 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone, date, time, timedelta
 from enum import Enum
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from dateutil.relativedelta import relativedelta
 
@@ -22,12 +22,21 @@ def utc_now() -> datetime:
 
 @dataclass
 class DateTimeRange:
+    """
+    Represents a range of time with optional start and end points.
+    By default, uses half-open intervals [start, end) where end is excluded.
+
+    Attributes:
+        start (Optional[datetime]): Start of the range, inclusive
+        end (Optional[datetime]): End of the range
+        end_excluded (bool): Whether the end point is excluded from the range (default True)
+    """
     start: Optional[datetime] = None
     end: Optional[datetime] = None
-    end_included: bool = True
+    end_excluded: bool = True
 
     def __iter__(self):
-        return iter((self.start, self.end, self.end_included))
+        return iter((self.start, self.end, self.end_excluded))
 
     def __bool__(self):
         return bool(self.start) or bool(self.end)
@@ -36,20 +45,69 @@ class DateTimeRange:
         return self.matches(tested_dt)
 
     def matches(self, tested_dt):
+        """
+        Check if a datetime falls within this range.
+
+        Args:
+            tested_dt: Datetime to test
+
+        Returns:
+            bool: True if the datetime is within the range
+        """
         if not tested_dt:
             return not bool(self)
 
         if self.start and tested_dt < self.start:
             return False
+
         if self.end:
-            if self.end_included:
-                if tested_dt > self.end:
+            if self.end_excluded:
+                if tested_dt >= self.end:
                     return False
             else:
-                if tested_dt >= self.end:
+                if tested_dt > self.end:
                     return False
 
         return True
+
+    @classmethod
+    def deserialize(cls, data: Dict[str, Any]) -> 'DateTimeRange':
+        """
+        Create a DateTimeRange from a dictionary representation.
+
+        Args:
+            data: Dictionary containing serialized range data
+
+        Returns:
+            DateTimeRange: The deserialized range
+        """
+        return cls(
+            start=parse(data['start']) if data.get('start') else None,
+            end=parse(data['end']) if data.get('end') else None,
+            end_excluded=data.get('end_excluded', True)
+        )
+
+    def serialize(self) -> Dict[str, Any]:
+        """
+        Convert this range to a dictionary representation.
+
+        Returns:
+            Dict[str, Any]: The serialized range
+        """
+        return {
+            'start': format_dt_iso(self.start) if self.start else None,
+            'end': format_dt_iso(self.end) if self.end else None,
+            'end_excluded': self.end_excluded
+        }
+
+    def __str__(self) -> str:
+        """String representation of the range using mathematical interval notation."""
+        if not self.start and not self.end:
+            return ""
+        start_str = str(self.start) if self.start else "-∞"
+        end_str = str(self.end) if self.end else "∞"
+        end_bracket = "]" if not self.end_excluded else ")"
+        return f"[{start_str}, {end_str}{end_bracket}"
 
 
 def parse_range_to_utc(from_val, to_val):

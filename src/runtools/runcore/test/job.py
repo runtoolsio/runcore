@@ -19,29 +19,30 @@ PROGRAM = 'program'
 TERM = 'term'
 
 
-def test_job_run(job_id, phase, *, instance_id=None, run_id=None, user_params=None):
+def job_run(job_id, phase, *, instance_id=None, run_id=None, user_params=None):
     instance_id = instance_id or unique_timestamp_hex()
     run_id = run_id or instance_id
     meta = JobInstanceMetadata(job_id, run_id, instance_id, user_params or {})
     return JobRun(meta, phase, None, None)  # TODO Faults and status
 
 
-def job_run(job_id, run_id='r1', *, offset_min=0, term_status=TerminationStatus.COMPLETED) -> JobRun:
-    start_time = datetime.now().replace(microsecond=0) + timedelta(minutes=offset_min)
+def test_job_run(job_id, run_id='r1', *, created_at=None, offset_min=0, ended_at=None, term_status=TerminationStatus.COMPLETED) -> JobRun:
+    start_time = created_at or datetime.now().replace(microsecond=0)
+    start_time = start_time + timedelta(minutes=offset_min)
 
     if not term_status:
         program_term = None
     elif term_status == TerminationStatus.FAILED:
-        program_term = term(term_status, start_time + timedelta(minutes=3),
+        program_term = term(term_status, ended_at or (start_time + timedelta(minutes=3)),
                             Fault('err1', 'reason') if term_status == TerminationStatus.FAILED else None)
     else:
-        program_term = term(term_status, start_time + timedelta(minutes=3))
+        program_term = term(term_status, ended_at or (start_time + timedelta(minutes=3)))
 
     builder = FakePhaseDetailBuilder.root(base_ts=start_time)
     builder.add_phase(APPROVAL, RunState.PENDING, term(TerminationStatus.COMPLETED))
     builder.add_phase(PROGRAM, RunState.EXECUTING, program_term)
 
-    return test_job_run(job_id, builder.build(), run_id=run_id, user_params={'name': 'value'})
+    return job_run(job_id, builder.build(), run_id=run_id, user_params={'name': 'value'})
 
 
 class FakePhase(Phase):
