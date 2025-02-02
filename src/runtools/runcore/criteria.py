@@ -12,7 +12,7 @@ from typing import Dict, Any, Optional, TypeVar, Generic
 from runtools.runcore.job import JobInstanceMetadata, JobRun
 from runtools.runcore.run import Outcome, TerminationInfo, RunState, \
     PhaseDetail, TerminationStatus
-from runtools.runcore.util import MatchingStrategy, to_list, DateTimeRange
+from runtools.runcore.util import MatchingStrategy, to_list, DateTimeRange, TimeRange
 
 T = TypeVar('T')
 
@@ -301,12 +301,12 @@ class TerminationCriteria(MatchCriteria[TerminationInfo]):
 
 class PhaseMatch(Enum):
     """
-    Enum controlling how phases are matched in the criteria.
+    Controls how phases are matched in the criteria.
 
     Attributes:
         ROOT: Match only the root phase, ignoring descendants
-        ALL: Match the phase and all its descendants (default behavior)
-        DESCENDANTS_ONLY: Match only the descendant phases, ignoring the phase itself
+        ALL: Match any phase in the hierarchy (root or descendants)
+        DESCENDANTS_ONLY: Match only non-root phases
     """
     ROOT = "ROOT"
     ALL = "ALL"
@@ -318,19 +318,21 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
     """
     Criteria for matching phase details, incorporating phase-specific and temporal criteria.
 
+    For criteria that target only the root phase (e.g., execution time), ensure match_type=PhaseMatch.ROOT.
+    When using PhaseMatch.ALL or DESCENDANTS_ONLY, only non-root fields will be considered.
+
     Attributes:
-        phase_type: Phase type to match. If None, type is not considered.
-        phase_id: Phase ID to match. If None, ID is not considered.
-        run_state: Run state to match. If None, state is not considered.
-        phase_name: Phase name to match. If None, name is not considered.
-        attributes: Dictionary of attributes to match. If None, attributes are not considered.
-                  If empty dict, matches phases with no attributes.
-        created_range: Time range to match creation time. If None, creation time is not considered.
-        started_range: Time range to match start time. If None, start time is not considered.
-        ended_range: Time range to match end time. If None, end time is not considered.
-        termination: Termination criteria to match. If None, termination is not considered.
-        match_type: Controls how phases are matched (EXACT, ALL, or DESCENDANTS_ONLY).
-                   Defaults to ALL.
+        phase_type: Phase type to match
+        phase_id: Phase ID to match
+        run_state: Run state to match
+        phase_name: Phase name to match
+        attributes: Dictionary of attributes to match. None = no attribute matching
+        created_range: Time range to match creation time. For root phase only.
+        started_range: Time range to match start time. For root phase only.
+        ended_range: Time range to match end time. For root phase only.
+        exec_range: Time range to match execution duration. For root phase only.
+        termination: Termination criteria to match. For root phase only.
+        match_type: How phases are matched. Defaults to ROOT.
     """
     phase_type: Optional[str] = None
     phase_id: Optional[str] = None
@@ -340,20 +342,13 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
     created_range: Optional[DateTimeRange] = None
     started_range: Optional[DateTimeRange] = None
     ended_range: Optional[DateTimeRange] = None
+    exec_range: Optional[TimeRange] = None
     termination: Optional[TerminationCriteria] = None
     match_type: PhaseMatch = PhaseMatch.ROOT
 
     @classmethod
     def deserialize(cls, data: Dict[str, Any]) -> 'PhaseCriterion':
-        """
-        Deserialize a dictionary into a PhaseCriterion instance.
-
-        Args:
-            data: Dictionary containing the serialized criterion data
-
-        Returns:
-            A new PhaseCriterion instance
-        """
+        """Deserialize a dictionary into a PhaseCriterion instance."""
         return cls(
             phase_type=data.get('phase_type'),
             phase_id=data.get('phase_id'),
@@ -363,17 +358,13 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
             created_range=DateTimeRange.deserialize(data['created_range']) if data.get('created_range') else None,
             started_range=DateTimeRange.deserialize(data['started_range']) if data.get('started_range') else None,
             ended_range=DateTimeRange.deserialize(data['ended_range']) if data.get('ended_range') else None,
+            exec_range=TimeRange.deserialize(data['exec_range']) if data.get('exec_range') else None,
             termination=TerminationCriteria.deserialize(data['termination']) if data.get('termination') else None,
-            match_type=PhaseMatch[data.get('match_type', PhaseMatch.ALL.name)]
+            match_type=PhaseMatch[data.get('match_type', PhaseMatch.ROOT.name)]
         )
 
     def serialize(self) -> Dict[str, Any]:
-        """
-        Serialize this criterion into a dictionary.
-
-        Returns:
-            Dictionary containing the serialized criterion data
-        """
+        """Serialize this criterion into a dictionary."""
         data = {
             'phase_type': self.phase_type,
             'phase_id': self.phase_id,
@@ -388,20 +379,19 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
             data['started_range'] = self.started_range.serialize()
         if self.ended_range:
             data['ended_range'] = self.ended_range.serialize()
+        if self.exec_range:
+            data['exec_range'] = self.exec_range.serialize()
         if self.termination:
             data['termination'] = self.termination.serialize()
         return data
 
     def matches_phase(self, phase_detail: PhaseDetail) -> bool:
         """
-        Check if a single phase matches this criterion, without considering descendants.
+        Check if a single phase matches this criterion.
 
-        Args:
-            phase_detail: The phase to check against the criteria
-
-        Returns:
-            True if the phase matches all specified criteria, False otherwise
+        Root-only fields (timing, termination) are only checked for ROOT match_type.
         """
+        # Check basic fields for all match types
         if self.phase_type and phase_detail.phase_type != self.phase_type:
             return False
 
@@ -427,6 +417,12 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
         if self.started_range and (not phase_detail.started_at or not self.started_range(phase_detail.started_at)):
             return False
 
+        if self.exec_range:
+            if not phase_detail.total_run_time:
+                return False
+            if not self.exec_range(phase_detail.total_run_time):
+                return False
+
         if not phase_detail.termination:
             return not (self.ended_range or self.termination)
 
@@ -439,15 +435,7 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
         return True
 
     def matches(self, phase: PhaseDetail) -> bool:
-        """
-        Check if phase or any of its children match this criterion based on the match_type.
-
-        Args:
-            phase: The phase to check against the criteria
-
-        Returns:
-            bool: True if the phase matches according to the match_type rules, False otherwise
-        """
+        """Check if phase or its children match based on match_type."""
         match self.match_type:
             case PhaseMatch.ROOT:
                 return self.matches_phase(phase)
@@ -457,23 +445,14 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
                 return any(self.matches_phase(c) for c in phase.children)
 
     def __bool__(self) -> bool:
-        """
-        Check if this criterion has any constraints set.
-
-        Returns:
-            True if any matching criteria are set, False if all are None
-        """
+        """Check if any criteria are set."""
         return bool(self.phase_type or self.phase_id or self.run_state or
                     self.phase_name or self.attributes or self.created_range or
-                    self.started_range or self.ended_range or self.termination)
+                    self.started_range or self.ended_range or self.exec_range or
+                    self.termination)
 
     def __str__(self) -> str:
-        """
-        Create a string representation of this criterion.
-
-        Returns:
-            A string showing all non-None criteria values
-        """
+        """Create a string representation showing non-None criteria."""
         fields = []
         if self.phase_type:
             fields.append(f"type='{self.phase_type}'")
@@ -491,9 +470,11 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
             fields.append(f"started{self.started_range}")
         if self.ended_range:
             fields.append(f"ended{self.ended_range}")
+        if self.exec_range:
+            fields.append(f"exec{self.exec_range}")
         if self.termination:
             fields.append(f"termination{self.termination}")
-        if self.match_type != PhaseMatch.ALL:
+        if self.match_type != PhaseMatch.ROOT:
             fields.append(f"match_type={self.match_type.name}")
         return f"[{', '.join(fields)}]" if fields else "[]"
 

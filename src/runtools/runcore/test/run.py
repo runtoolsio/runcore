@@ -11,10 +11,10 @@ def term(status=TerminationStatus.COMPLETED, ended_at=None, fault=None):
 
 
 def phase_detail(phase_id, run_state=RunState.EXECUTING, children=None,
-                 *, phase_type='test', created_at=None, started_at=None, term):
+                 *, phase_type='test', created_at=None, started_at=None, termination):
     if not created_at:
         created_at = utc_now().replace(microsecond=0)
-    return PhaseDetail(phase_id, phase_type, run_state, '', None, created_at, started_at, term, children or [])
+    return PhaseDetail(phase_id, phase_type, run_state, '', None, created_at, started_at, termination, children or [])
 
 
 def _determine_container_state(children: List[PhaseDetail]) -> tuple[bool, Optional[TerminationInfo]]:
@@ -85,10 +85,7 @@ class FakePhaseDetailBuilder:
             _base_ts=base_ts,
             _next_offset=0,
             _started=True,  # Root phase is started by default
-            _termination=TerminationInfo(  # And completed
-                status=TerminationStatus.COMPLETED,
-                terminated_at=base_ts + timedelta(minutes=1)
-            ),
+            _termination=None,  # Termination determined by children
             _is_container=True
         )
 
@@ -153,7 +150,7 @@ class FakePhaseDetailBuilder:
         offset = self._next_offset - 3
         created_at = self._base_ts + timedelta(minutes=offset)
 
-        # For containers, determine state based on children
+        # For containers (including root), determine state based on children
         if self._is_container:
             self._started, self._termination = _determine_container_state(built_children)
 

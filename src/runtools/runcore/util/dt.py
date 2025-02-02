@@ -17,7 +17,79 @@ def unique_timestamp_hex(random_suffix_length=4):
 
 
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+@dataclass
+class TimeRange:
+    """
+    Represents a time duration range with optional minimum and maximum bounds.
+    Used for matching execution time durations.
+
+    Attributes:
+        min: Minimum duration (inclusive)
+        max: Maximum duration (inclusive)
+    """
+    min: Optional[timedelta] = None
+    max: Optional[timedelta] = None
+
+    def __call__(self, duration: timedelta) -> bool:
+        """
+        Check if a duration falls within this range.
+
+        Args:
+            duration: The duration to check
+
+        Returns:
+            True if duration is within range, False otherwise
+        """
+        if self.min is not None and duration < self.min:
+            return False
+
+        if self.max is not None and duration > self.max:
+            return False
+
+        return True
+
+    @classmethod
+    def deserialize(cls, data: Dict[str, Any]) -> 'TimeRange':
+        """
+        Deserialize from a dictionary representation.
+
+        Args:
+            data: Dictionary with serialized range data.
+                 Duration values should be in seconds.
+
+        Returns:
+            TimeRange: The deserialized range
+        """
+        return cls(
+            min=timedelta(seconds=data['min']) if data.get('min') is not None else None,
+            max=timedelta(seconds=data['max']) if data.get('max') is not None else None
+        )
+
+    def serialize(self) -> Dict[str, Any]:
+        """
+        Serialize to a dictionary representation.
+
+        Returns:
+            Dictionary with range data. Durations are converted to seconds.
+        """
+        data = {}
+        if self.min is not None:
+            data['min'] = self.min.total_seconds()
+        if self.max is not None:
+            data['max'] = self.max.total_seconds()
+        return data
+
+    def __str__(self) -> str:
+        """String representation showing the range bounds."""
+        parts = []
+        if self.min is not None:
+            parts.append(f">={self.min}")
+        if self.max is not None:
+            parts.append(f"<={self.max}")
+        return f"[{' AND '.join(parts)}]" if parts else "[]"
 
 
 @dataclass

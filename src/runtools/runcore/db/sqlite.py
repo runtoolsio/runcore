@@ -12,6 +12,7 @@ from typing import List
 
 from runtools.runcore import paths
 from runtools.runcore.common import InvalidStateError
+from runtools.runcore.criteria import PhaseMatch
 from runtools.runcore.db import SortCriteria, Persistence
 from runtools.runcore.job import JobStats, JobRun, JobRuns, JobInstanceMetadata, JobFaults
 from runtools.runcore.run import TerminationStatus, Outcome, PhaseDetail
@@ -40,90 +41,141 @@ def create_database(db_conf):
 
 
 def _build_where_clause(run_match, alias=''):
+    """
     # TODO Post fetch filter for criteria not supported in WHERE (instance parameters, etc.)
+
+    Builds a SQL WHERE clause from the provided run match criteria.
+    Only root phase details are stored as direct fields in the database.
+    Phase criteria are only applied if they target the root phase.
+    Other phase criteria require post-fetch filtering.
+
+    Args:
+        run_match: The run match criteria
+        alias: Optional table alias prefix
+
+    Returns:
+        str: The WHERE clause, or empty string if no criteria
+    """
     if not run_match:
         return ""
 
     if alias and not alias.endswith('.'):
         alias = alias + "."
 
-    job_conditions = [f'{alias}job_id = "{j}"' for j in run_match.jobs]
+    conditions = []
 
-    id_conditions = []
+    # Handle job ID direct matches
+    if run_match.jobs:
+        job_conditions = [f'{alias}job_id = "{j}"' for j in run_match.jobs]
+        if job_conditions:
+            conditions.append('(' + ' OR '.join(job_conditions) + ')')
+
+    # Handle metadata criteria
+    metadata_conditions = []
     for c in run_match.metadata_criteria:
         if c.strategy == MatchingStrategy.ALWAYS_TRUE:
-            id_conditions.clear()
+            metadata_conditions.clear()
             break
         if c.strategy == MatchingStrategy.ALWAYS_FALSE:
-            id_conditions = ['1=0']
-            break
+            return " WHERE 1=0"  # Early return as nothing can match
 
-        conditions = []
-        op = ' OR ' if c.match_any_id else ' AND '
+        id_conditions = []
         if c.job_id:
-            if c.strategy == MatchingStrategy.PARTIAL:
-                conditions.append(f'{alias}job_id GLOB "*{c.job_id}*"')
-            elif c.strategy == MatchingStrategy.FN_MATCH:
-                conditions.append(f'{alias}job_id GLOB "{c.job_id}"')
-            elif c.strategy == MatchingStrategy.EXACT:
-                conditions.append(f'{alias}job_id = "{c.job_id}"')
-            else:
-                raise ValueError(f"Matching strategy {c.strategy} is not supported")
+            match c.strategy:
+                case MatchingStrategy.PARTIAL:
+                    id_conditions.append(f'{alias}job_id GLOB "*{c.job_id}*"')
+                case MatchingStrategy.FN_MATCH:
+                    id_conditions.append(f'{alias}job_id GLOB "{c.job_id}"')
+                case MatchingStrategy.EXACT:
+                    id_conditions.append(f'{alias}job_id = "{c.job_id}"')
+                case _:
+                    continue
+
         if c.run_id:
-            if c.strategy == MatchingStrategy.PARTIAL:
-                conditions.append(f'{alias}run_id GLOB "*{c.run_id}*"')
-            elif c.strategy == MatchingStrategy.FN_MATCH:
-                conditions.append(f'{alias}run_id GLOB "{c.run_id}"')
-            elif c.strategy == MatchingStrategy.EXACT:
-                conditions.append(f'{alias}run_id = "{c.run_id}"')
-            else:
-                raise ValueError(f"Matching strategy {c.strategy} is not supported")
+            match c.strategy:
+                case MatchingStrategy.PARTIAL:
+                    id_conditions.append(f'{alias}run_id GLOB "*{c.run_id}*"')
+                case MatchingStrategy.FN_MATCH:
+                    id_conditions.append(f'{alias}run_id GLOB "{c.run_id}"')
+                case MatchingStrategy.EXACT:
+                    id_conditions.append(f'{alias}run_id = "{c.run_id}"')
+                case _:
+                    continue
 
-        id_conditions.append(op.join(conditions))
+        if c.instance_id:
+            match c.strategy:
+                case MatchingStrategy.PARTIAL:
+                    id_conditions.append(f'{alias}instance_id GLOB "*{c.instance_id}*"')
+                case MatchingStrategy.FN_MATCH:
+                    id_conditions.append(f'{alias}instance_id GLOB "{c.instance_id}"')
+                case MatchingStrategy.EXACT:
+                    id_conditions.append(f'{alias}instance_id = "{c.instance_id}"')
+                case _:
+                    continue
 
-    int_conditions = []
+        if id_conditions:
+            join_op = ' OR ' if c.match_any_id else ' AND '
+            metadata_conditions.append('(' + join_op.join(id_conditions) + ')')
 
-    def dt_conditions(column, dt_range):
-        conditions_dt = []
+    if metadata_conditions:
+        conditions.append('(' + ' OR '.join(metadata_conditions) + ')')
+
+    def add_datetime_conditions(column: str, dt_range) -> list:
+        dt_conditions = []
         if not dt_range:
-            return conditions_dt
+            return dt_conditions
+
         if dt_range.start:
-            conditions_dt.append(f"{alias}{column} >= '{format_dt_sql(dt_range.start)}'")
+            dt_conditions.append(f"{alias}{column} >= '{format_dt_sql(dt_range.start)}'")
         if dt_range.end:
-            if dt_range.end_included:
-                conditions_dt.append(f"{alias}{column} <= '{format_dt_sql(dt_range.end)}'")
+            if dt_range.end_excluded:
+                dt_conditions.append(f"{alias}{column} < '{format_dt_sql(dt_range.end)}'")
             else:
-                conditions_dt.append(f"{alias}{column} < '{format_dt_sql(dt_range.end)}'")
+                dt_conditions.append(f"{alias}{column} <= '{format_dt_sql(dt_range.end)}'")
+        return dt_conditions
 
-        return conditions_dt
+    def add_time_range_conditions(time_range) -> list:
+        """Add SQL conditions for TimeRange on exec_time column."""
+        conditions_ = []
+        if time_range.min is not None:
+            conditions_.append(f"{alias}exec_time >= {time_range.min.total_seconds()}")
+        if time_range.max is not None:
+            conditions_.append(f"{alias}exec_time <= {time_range.max.total_seconds()}")
+        return conditions_
 
-    for c in run_match.interval_criteria:
-        conditions = dt_conditions('created', c.created_range) + dt_conditions('ended', c.ended_range)
-        if conditions:
-            int_conditions.append("(" + " AND ".join(conditions) + ")")
+    # Handle phase criteria that target root phase
+    for phase in run_match.phase_criteria:
+        # Skip non-root phase criteria
+        if phase.match_type != PhaseMatch.ROOT:
+            continue
 
-    term_conditions = []
-    if run_match.termination_criteria:
-        term_conditions = []
+        phase_conditions = []
 
-        range_conditions = []
-        for c in run_match.termination_criteria:
-            start, end = c.outcome.value.start, c.outcome.value.stop
-            range_condition = f"({alias}termination_status BETWEEN {start} AND {end})"
-            range_conditions.append(range_condition)
+        if phase.created_range:
+            phase_conditions.extend(add_datetime_conditions('created', phase.created_range))
+        if phase.started_range:
+            phase_conditions.extend(add_datetime_conditions('started', phase.started_range))
+        if phase.ended_range:
+            phase_conditions.extend(add_datetime_conditions('ended', phase.ended_range))
 
-        if range_conditions:
-            combined_condition = " OR ".join(range_conditions)
-            term_conditions.append(f"({combined_condition})")
+        if phase.exec_range:
+            phase_conditions.extend(add_time_range_conditions(phase.exec_range))
 
-    all_conditions_list = (job_conditions, id_conditions, int_conditions, term_conditions)
-    all_conditions_str = ["(" + " OR ".join(c_list) + ")" for c_list in all_conditions_list if c_list]
+        if phase.termination:
+            if phase.termination.status:
+                phase_conditions.append(f"{alias}termination_status = '{phase.termination.status.name}'")
 
-    if all_conditions_str:
-        return " WHERE {conditions}".format(conditions=" AND ".join(all_conditions_str))
-    else:
-        return ""
+            if phase.termination.outcome != Outcome.ANY:
+                start, end = phase.termination.outcome.value.start, phase.termination.outcome.value.stop
+                phase_conditions.append(f"({alias}termination_status BETWEEN {start} AND {end})")
 
+            if phase.termination.ended_range:
+                phase_conditions.extend(add_datetime_conditions('ended', phase.termination.ended_range))
+
+        if phase_conditions:
+            conditions.append('(' + ' AND '.join(phase_conditions) + ')')
+
+    return " WHERE " + " AND ".join(conditions) if conditions else ""
 
 def create(database=None, *,
            timeout=5.0,
@@ -259,6 +311,7 @@ class SQLite(Persistence):
         statement += " ORDER BY " + sort_exp() + (" ASC" if asc else " DESC") + " LIMIT ? OFFSET ?"
 
         log.debug("event=[executing_query] statement=[%s]", statement)
+        print(statement)
         c = self._conn.execute(statement, (limit, offset))
 
         def to_job_run(t):
