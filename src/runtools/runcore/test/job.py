@@ -26,23 +26,23 @@ def job_run(job_id, phase, *, instance_id=None, run_id=None, user_params=None):
     return JobRun(meta, phase, None, None)  # TODO Faults and status
 
 
-def test_job_run(job_id, run_id='r1', *, created_at=None, offset_min=0, ended_at=None, term_status=TerminationStatus.COMPLETED) -> JobRun:
-    start_time = created_at or utc_now().replace(microsecond=0)
-    start_time = start_time + timedelta(minutes=offset_min)
+def test_job_run(job_id, run_id='r1', *, created_at=None, offset_min=0, ended_at=None,
+                 term_status=TerminationStatus.COMPLETED) -> JobRun:
+    start_time = (created_at or utc_now().replace(microsecond=0)) + timedelta(minutes=offset_min)
+    phase_builder = FakePhaseDetailBuilder.root(base_ts=start_time)
+    phase_builder.add_phase(APPROVAL, RunState.PENDING, TerminationStatus.COMPLETED)
 
     if not term_status:
-        program_term = None
+        phase_builder.add_phase(PROGRAM, RunState.EXECUTING)
     elif term_status == TerminationStatus.FAILED:
-        program_term = term(term_status, ended_at or (start_time + timedelta(minutes=3)),
-                            Fault('err1', 'reason') if term_status == TerminationStatus.FAILED else None)
+        phase_builder.add_phase(
+            PROGRAM, RunState.EXECUTING, term_status, term_ts=ended_at or (start_time + timedelta(minutes=5)),
+            fault=Fault('err1', 'reason'))
     else:
-        program_term = term(term_status, ended_at or (start_time + timedelta(minutes=3)))
+        phase_builder.add_phase(
+            PROGRAM, RunState.EXECUTING, term_status, term_ts=ended_at or (start_time + timedelta(minutes=5)))
 
-    builder = FakePhaseDetailBuilder.root(base_ts=start_time)
-    builder.add_phase(APPROVAL, RunState.PENDING, term(TerminationStatus.COMPLETED))
-    builder.add_phase(PROGRAM, RunState.EXECUTING, program_term)
-
-    return job_run(job_id, builder.build(), run_id=run_id, user_params={'name': 'value'})
+    return job_run(job_id, phase_builder.build(), run_id=run_id, user_params={'name': 'value'})
 
 
 class FakePhase(Phase):

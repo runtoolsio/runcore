@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import List, Optional
 
-from runtools.runcore.run import PhaseDetail, RunState, TerminationInfo, TerminationStatus
+from runtools.runcore.run import PhaseDetail, RunState, TerminationInfo, TerminationStatus, Fault
 from runtools.runcore.util import utc_now
 
 
@@ -89,15 +89,48 @@ class FakePhaseDetailBuilder:
             _is_container=True
         )
 
-    def add_phase(self, phase_id: str, run_state: RunState = RunState.EXECUTING,
-                  termination_info: Optional[TerminationInfo] = None,
-                  *, phase_type: str = "test", started: bool = False) -> 'FakePhaseDetailBuilder':
-        """Add a child phase and return self for chaining"""
+    def add_phase(
+            self,
+            phase_id: str,
+            run_state: RunState = RunState.EXECUTING,
+            term_status: Optional[TerminationStatus] = None,
+            *,
+            phase_type: str = "test",
+            started: bool = False,
+            fault: Optional[Fault] = None,
+            term_ts: Optional[datetime] = None
+    ) -> 'FakePhaseDetailBuilder':
+        """
+        Add a child phase with flexible termination configuration
+
+        Args:
+            phase_id: Unique identifier for the phase
+            run_state: Current execution state
+            phase_type: Type of the phase
+            started: Whether the phase has started
+            term_status: Optional termination status
+            fault: Optional fault information
+            term_ts: Optional specific termination date (if None, uses offset-based timing)
+
+        Returns:
+            Self for method chaining
+        """
         offset = self._next_offset
         self._next_offset = offset + 3
 
-        if termination_info:
+        if term_status is not None:
             started = True
+
+        # Calculate termination info if status is provided
+        termination_info = None
+        if term_status is not None:
+            # Use provided term_date if available, otherwise calculate based on offset
+            terminated_at = term_ts if term_ts is not None else (self._base_ts + timedelta(minutes=offset + 2))
+            termination_info = TerminationInfo(
+                status=term_status,
+                terminated_at=terminated_at,
+                fault=fault
+            )
 
         child = FakePhaseDetailBuilder(
             phase_id=phase_id,
@@ -114,47 +147,23 @@ class FakePhaseDetailBuilder:
         self.children.append(child)
         return self
 
-    def add_container_phase(self, phase_id: str, run_state: RunState = RunState.EXECUTING_CHILDREN,
-                            *, phase_type: str = "test") -> 'FakePhaseDetailBuilder':
-        """Add a container phase and return the new builder for adding children to it"""
-        offset = self._next_offset
-        self._next_offset = offset + 3
-
-        child = FakePhaseDetailBuilder(
-            phase_id=phase_id,
-            run_state=run_state,
-            phase_type=phase_type,
-            parent=self,
-            children=[],
-            _base_ts=self._base_ts,
-            _next_offset=offset + 3,
-            _started=False,  # Will be determined by children
-            _termination=None,  # Will be determined by children
-            _is_container=True
-        )
-        self.children.append(child)
-        return child
-
-    def end(self) -> 'FakePhaseDetailBuilder':
-        """Return to parent builder for chaining"""
-        if self.parent:
-            self.parent._next_offset = max(self.parent._next_offset, self._next_offset)
-            return self.parent
-        return self
-
     def build(self) -> PhaseDetail:
         """Build the PhaseDetail hierarchy with sequential timestamps"""
         # Build children first to determine container state
         built_children = [child.build() for child in self.children]
 
-        offset = self._next_offset - 3
-        created_at = self._base_ts + timedelta(minutes=offset)
+        # For root, use base_ts directly. For others, calculate offset
+        if self.parent is None:  # Root phase
+            created_at = self._base_ts
+            started_at = self._base_ts
+        else:
+            offset = self._next_offset - 3
+            created_at = self._base_ts + timedelta(minutes=offset)
+            started_at = created_at + timedelta(minutes=1) if self._started else None
 
-        # For containers (including root), determine state based on children
+        # For containers, determine state based on children
         if self._is_container:
             self._started, self._termination = _determine_container_state(built_children)
-
-        started_at = created_at + timedelta(minutes=1) if self._started else None
 
         return PhaseDetail(
             phase_id=self.phase_id,
