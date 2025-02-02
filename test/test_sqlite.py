@@ -2,12 +2,11 @@ from datetime import datetime as dt
 
 import pytest
 
-from runtools.runcore.criteria import LifecycleCriterion, JobRunCriteria, \
-    parse_criteria
+from runtools.runcore.criteria import JobRunCriteria, parse_criteria, PhaseCriterion
 from runtools.runcore.db import sqlite
 from runtools.runcore.run import TerminationStatus
 from runtools.runcore.test.job import test_job_run
-from runtools.runcore.util import parse_iso8601_duration, MatchingStrategy
+from runtools.runcore.util import parse_iso8601_duration, MatchingStrategy, DateTimeRange
 
 
 @pytest.fixture
@@ -100,18 +99,25 @@ def test_interval(sut):
     sut.store_job_runs(test_job_run('j2', created_at=dt(2023, 4, 22), ended_at=dt(2023, 4, 22, 23, 59, 59)))
     sut.store_job_runs(test_job_run('j3', created_at=dt(2023, 4, 22), ended_at=dt(2023, 4, 22, 23, 59, 58)))
 
-    ic = LifecycleCriterion(ended_from=dt(2023, 4, 23))
-    jobs = sut.read_history_runs(JobRunCriteria(interval_criteria=ic))
+    # Test ended_from
+    phase_criteria = PhaseCriterion(ended_range=DateTimeRange(start=dt(2023, 4, 23)))
+    jobs = sut.read_history_runs(JobRunCriteria(phase_criteria=phase_criteria))
     assert jobs.job_ids == ['j1']
 
-    ic = LifecycleCriterion(ended_to=dt(2023, 4, 22, 23, 59, 59))
-    jobs = sut.read_history_runs(JobRunCriteria(interval_criteria=ic))
+    # Test ended_to inclusive
+    phase_criteria = PhaseCriterion(ended_range=DateTimeRange(end=dt(2023, 4, 22, 23, 59, 59), end_excluded=False))
+    jobs = sut.read_history_runs(JobRunCriteria(phase_criteria=phase_criteria))
     assert sorted(jobs.job_ids) == ['j2', 'j3']
 
-    ic = LifecycleCriterion(ended_to=dt(2023, 4, 22, 23, 59, 59), ended_to_included=False)
-    jobs = sut.read_history_runs(JobRunCriteria(interval_criteria=ic))
+    # Test ended_to exclusive
+    phase_criteria = PhaseCriterion(ended_range=DateTimeRange(end=dt(2023, 4, 22, 23, 59, 59)))
+    jobs = sut.read_history_runs(JobRunCriteria(phase_criteria=phase_criteria))
     assert jobs.job_ids == ['j3']
 
-    ic = LifecycleCriterion(ended_from=dt(2023, 4, 22, 23, 59, 59), created_to=dt(2023, 4, 23))
-    jobs = sut.read_history_runs(JobRunCriteria(interval_criteria=ic))
+    # Test combined ended_from (incl) and created_to
+    phase_criteria = PhaseCriterion(
+        ended_range=DateTimeRange(start=dt(2023, 4, 22, 23, 59, 59)),
+        created_range=DateTimeRange(end=dt(2023, 4, 23), end_excluded=False)
+    )
+    jobs = sut.read_history_runs(JobRunCriteria(phase_criteria=phase_criteria))
     assert sorted(jobs.job_ids) == ['j1', 'j2']
