@@ -8,14 +8,40 @@ from runtools.runcore.job import JobInstance, JobRun, InstanceTransitionObserver
     InstanceOutputObserver, JobInstanceMetadata
 from runtools.runcore.output import Output, Mode
 from runtools.runcore.run import Phase, PhaseRun, TerminationInfo, Run, RunState, \
-    TerminationStatus, PhaseInfo, Fault, Lifecycle, control_api
-from runtools.runcore.util import utc_now
+    TerminationStatus, PhaseInfo, Fault, Lifecycle, control_api, PhaseDetail
+from runtools.runcore.test.run import FakePhaseDetailBuilder, term
+from runtools.runcore.util import utc_now, unique_timestamp_hex
 from runtools.runcore.util.observer import ObservableNotification, DEFAULT_OBSERVER_PRIORITY
 
 INIT = 'init'
 APPROVAL = 'approval'
 PROGRAM = 'program'
 TERM = 'term'
+
+
+def test_job_run(job_id, phase, *, instance_id=None, run_id=None, user_params=None):
+    instance_id = instance_id or unique_timestamp_hex()
+    run_id = run_id or instance_id
+    meta = JobInstanceMetadata(job_id, instance_id, run_id, user_params or {})
+    return JobRun(meta, phase, None, None)  # TODO Faults and status
+
+
+def job_run(job_id, run_id='r1', *, offset_min=0, term_status=TerminationStatus.COMPLETED) -> JobRun:
+    start_time = datetime.now().replace(microsecond=0) + timedelta(minutes=offset_min)
+
+    if not term_status:
+        program_term = None
+    elif term_status == TerminationStatus.FAILED:
+        program_term = term(term_status, start_time + timedelta(minutes=3),
+                            Fault('err1', 'reason') if term_status == TerminationStatus.FAILED else None)
+    else:
+        program_term = term(term_status)
+
+    builder = FakePhaseDetailBuilder.root(base_ts=start_time)
+    builder.add_phase(APPROVAL, RunState.PENDING, term(TerminationStatus.COMPLETED))
+    builder.add_phase(PROGRAM, RunState.EXECUTING, program_term)
+
+    return test_job_run(job_id, builder.build(), run_id=run_id, user_params={'name': 'value'})
 
 
 class FakePhase(Phase):
@@ -242,25 +268,28 @@ class FakeJobInstanceBuilder:
 
 class TestJobRunBuilder:
 
-    def __init__(self, job_id='j1', run_id=None, system_params=None, user_params=None):
+    def __init__(self, job_id='j1', init_ts=None, *, instance_id=None, run_id=None, user_params=None):
         instance_id = util.unique_timestamp_hex()
         run_id = run_id or instance_id
-        self.metadata = JobInstanceMetadata(job_id, run_id, instance_id, system_params or {}, user_params or {})
-        self.phase_runs = []
+        self.metadata = JobInstanceMetadata(job_id, run_id, instance_id, user_params or {})
+        self.phases = []
         self.tracker = None
+        self.created_at = None
         self.termination_info = None
-        self.current_ts = datetime.now(UTC).replace(microsecond=0)
+        self.current_ts = init_ts or datetime.now(UTC).replace(microsecond=0)
 
     def add_phase(self, phase_id, state, start=None, end=None):
         if not start:
             start = self.current_ts
             end = start + timedelta(minutes=1)
 
-        if phase_id != INIT and not self.phase_runs:
-            self.add_phase(INIT, RunState.CREATED, start - timedelta(minutes=2), start - timedelta(minutes=1))
+        if not self.created_at:
+            self.created_at = start - timedelta(minutes=2)
 
-        phase_run = PhaseRun(phase_id, state, start, end)
-        self.phase_runs.append(phase_run)
+        termination = TerminationInfo(TerminationStatus.COMPLETED, end) if end else None
+        phase_detail = PhaseDetail(phase_id, 'test', state, '', None, start - timedelta(minutes=1), start, termination,
+                                   [])
+        self.phases.append(phase_detail)
         return self
 
     def with_termination_info(self, status, time, failure=None):
@@ -268,27 +297,9 @@ class TestJobRunBuilder:
         return self
 
     def build(self):
-        meta = [PhaseInfo(p.phase_id, 'TEST', p.run_state) for p in self.phase_runs]
-        lifecycle = Lifecycle(*self.phase_runs)
+        meta = [PhaseInfo(p.phase_id, 'TEST', p.run_state) for p in self.phases]
+        lifecycle = Lifecycle(*self.phases)
         run = Run(tuple(meta), lifecycle, self.termination_info)
-        return JobRun(self.metadata, run, None, self.tracker.to_status() if self.tracker else None)
-
-
-def ended_run(job_id, run_id='r1', *, offset_min=0, term_status=TerminationStatus.COMPLETED, created=None,
-              completed=None) -> JobRun:
-    start_time = datetime.now().replace(microsecond=0) + timedelta(minutes=offset_min)
-
-    builder = TestJobRunBuilder(job_id, run_id, user_params={'name': 'value'})
-
-    builder.add_phase(INIT, RunState.CREATED, created or start_time,
-                      start_time + timedelta(minutes=1))
-    builder.add_phase(APPROVAL, RunState.EXECUTING, start_time + timedelta(minutes=1),
-                      start_time + timedelta(minutes=2))
-    builder.add_phase(PROGRAM, RunState.EXECUTING, start_time + timedelta(minutes=2),
-                      start_time + timedelta(minutes=3))
-    builder.add_phase(TERM, RunState.ENDED, completed or start_time + timedelta(minutes=3), None)
-
-    failure = Fault('err1', 'reason') if term_status == TerminationStatus.FAILED else None
-    builder.with_termination_info(term_status, start_time + timedelta(minutes=3), failure)
-
-    return builder.build()
+        root_phase = PhaseDetail('root', 'root_test', RunState.EXECUTING_CHILDREN, '', None, self.created_at,
+                                 self.created_at, self.termination_info, self.phases)
+        return JobRun(self.metadata, root_phase, None, self.tracker.to_status() if self.tracker else None)

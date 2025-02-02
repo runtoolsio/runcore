@@ -490,7 +490,7 @@ class PhaseDetail:
             run_state=RunState[as_dict['run_state']],
             phase_name=as_dict.get('phase_name'),
             attributes=as_dict.get('attributes'),
-            created_at=as_dict['created_at'],
+            created_at=util.parse_datetime(as_dict['created_at']),
             started_at=util.parse_datetime(as_dict['started_at']) if as_dict.get('started_at') else None,
             termination=TerminationInfo.deserialize(as_dict['termination']) if as_dict.get('termination') else None,
             children=children,
@@ -503,24 +503,25 @@ class PhaseDetail:
         Returns:
             Dict[str, Any]: The serialized phase view
         """
-        result = {
+        dto = {
             'phase_id': self.phase_id,
             'phase_type': self.phase_type,
             'run_state': self.run_state.name,
+            'created_at': format_dt_iso(self.created_at),
         }
 
         if self.phase_name:
-            result['phase_name'] = self.phase_name
+            dto['phase_name'] = self.phase_name
         if self.attributes:
-            result['attributes'] = self.attributes
+            dto['attributes'] = self.attributes
         if self.started_at:
-            result['started_at'] = format_dt_iso(self.started_at)
+            dto['started_at'] = format_dt_iso(self.started_at)
         if self.termination:
-            result['termination'] = self.termination.serialize()
+            dto['termination'] = self.termination.serialize()
         if self.children:
-            result['children'] = [child.serialize() for child in self.children]
+            dto['children'] = [child.serialize() for child in self.children]
 
-        return result
+        return dto
 
     def descendants(self, predicate: Optional[Callable[['PhaseDetail'], bool]] = None) -> List['PhaseDetail']:
         """
@@ -592,6 +593,19 @@ class PhaseDetail:
         Returns True if this phase completed successfully.
         """
         return self.termination is not None and self.termination.status == TerminationStatus.COMPLETED
+
+    @property
+    def total_run_time(self) -> Optional[datetime.timedelta]:
+        """
+        Calculates the total runtime of the phase.
+
+        Returns:
+            Optional[timedelta]: Time between phase start and termination if both exist, otherwise None
+        """
+        if not self.started_at or not self.termination:
+            return None
+
+        return self.termination.terminated_at - self.started_at
 
 
 @dataclass

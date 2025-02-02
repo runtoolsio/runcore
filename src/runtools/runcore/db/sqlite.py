@@ -14,8 +14,7 @@ from runtools.runcore import paths
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.db import SortCriteria, Persistence
 from runtools.runcore.job import JobStats, JobRun, JobRuns, JobInstanceMetadata, JobFaults
-from runtools.runcore.run import Lifecycle, PhaseInfo, Fault, Run, TerminationInfo, \
-    TerminationStatus, Outcome, PhaseDetail
+from runtools.runcore.run import TerminationStatus, Outcome, PhaseDetail
 from runtools.runcore.status import Status
 from runtools.runcore.util import MatchingStrategy, format_dt_sql, parse_dt_sql
 
@@ -264,9 +263,9 @@ class SQLite(Persistence):
         c = self._conn.execute(statement, (limit, offset))
 
         def to_job_run(t):
-            metadata = JobInstanceMetadata(t[0], t[1], t[2], {}, json.loads(t[3]) if t[3] else dict())
+            metadata = JobInstanceMetadata(t[0], t[1], t[2], json.loads(t[3]) if t[3] else dict())
             phase = PhaseDetail.deserialize(json.loads(t[8]))
-            faults = JobFaults.deserialize(json.loads(t[10]))
+            faults = JobFaults.deserialize(json.loads(t[10])) if t[10] else None
             status = Status.deserialize(json.loads(t[11])) if t[11] else None
             return JobRun(metadata, phase, faults, status)
 
@@ -380,8 +379,8 @@ class SQLite(Persistence):
                     json.dumps(r.metadata.user_params) if r.metadata.user_params else None,
                     format_dt_sql(r.phase.created_at),
                     format_dt_sql(r.phase.started_at),
-                    format_dt_sql(r.phase.ended_at),
-                    round(r.phase.total_executing_time.total_seconds(), 3) if r.phase.total_executing_time else None,
+                    format_dt_sql(r.phase.termination.terminated_at) if r.phase.termination else None,
+                    round(r.phase.total_run_time.total_seconds(), 3) if r.phase.total_run_time else None,
                     json.dumps(r.phase.serialize()),
                     r.phase.termination.status.value if r.phase.termination else None,
                     json.dumps(r.faults.serialize()) if r.faults else None,
@@ -392,7 +391,7 @@ class SQLite(Persistence):
 
         jobs = [to_tuple(j) for j in job_runs]
         self._conn.executemany(
-            "INSERT INTO history VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO history VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             jobs
         )
         self._conn.commit()

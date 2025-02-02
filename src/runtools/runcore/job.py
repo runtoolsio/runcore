@@ -242,10 +242,6 @@ class JobInstanceMetadata(ABC):
             The unique identifier of the job instance run.
         instance_id (str):
             The reference identifier of the job instance.
-        system_parameters (Dict[str, Any]):
-            A dictionary containing system parameters for the job instance.
-            These parameters are implementation-specific and contain information needed by the system to
-            perform certain tasks or enable specific features.
         user_params (Dict[str, Any]):
             A dictionary containing user-defined parameters associated with the instance.
             These are arbitrary parameters set by the user, and they do not affect the functionality.
@@ -253,7 +249,6 @@ class JobInstanceMetadata(ABC):
     job_id: str
     run_id: str
     instance_id: str
-    system_parameters: Dict[str, Any]
     user_params: Dict[str, Any]
 
     def serialize(self) -> Dict[str, Any]:
@@ -261,7 +256,6 @@ class JobInstanceMetadata(ABC):
             "job_id": self.job_id,
             "run_id": self.run_id,
             "instance_id": self.instance_id,
-            "system_parameters": self.system_parameters,
             "user_params": self.user_params,
         }
 
@@ -271,12 +265,8 @@ class JobInstanceMetadata(ABC):
             as_dict['job_id'],
             as_dict['run_id'],
             as_dict['instance_id'],
-            as_dict['system_parameters'],
             as_dict['user_params'],
         )
-
-    def contains_system_parameters(self, *params):
-        return all(param in self.system_parameters for param in params)
 
     def __repr__(self) -> str:
         return f"{self.job_id}@{self.run_id}:{self.instance_id}"

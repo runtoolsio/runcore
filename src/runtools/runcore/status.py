@@ -101,6 +101,7 @@ class Operation:
             parts.append(self.result)
         return f"[{' '.join(parts)}]"
 
+
 @dataclass(frozen=True)
 class Status:
     last_event: Optional[Event]
