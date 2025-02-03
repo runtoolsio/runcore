@@ -11,7 +11,7 @@ from typing import Dict, Any, Optional, TypeVar, Generic
 
 from runtools.runcore.job import JobInstanceMetadata, JobRun
 from runtools.runcore.run import Outcome, TerminationInfo, RunState, \
-    PhaseDetail, TerminationStatus
+    PhaseDetail, TerminationStatus, RunLifecycle
 from runtools.runcore.util import MatchingStrategy, to_list, DateTimeRange, TimeRange
 
 T = TypeVar('T')
@@ -314,11 +314,93 @@ class PhaseMatch(Enum):
 
 
 @dataclass
+class LifecycleCriterion(MatchCriteria[RunLifecycle]):
+    """
+    Criteria for matching run lifecycle information.
+    """
+    created: Optional[DateTimeRange] = None
+    started: Optional[DateTimeRange] = None
+    ended: Optional[DateTimeRange] = None
+    total_run_time: Optional[TimeRange] = None
+    termination: Optional[TerminationCriteria] = None
+
+    def matches(self, lifecycle: RunLifecycle) -> bool:
+        """Check if the lifecycle matches all specified criteria."""
+        if self.created and not self.created(lifecycle.created_at):
+            return False
+
+        if self.started and (not lifecycle.started_at or not self.started(lifecycle.started_at)):
+            return False
+
+        if self.total_run_time:
+            if not lifecycle.total_run_time or not self.total_run_time(lifecycle.total_run_time):
+                return False
+
+        if not lifecycle.termination:
+            return not (self.ended or self.termination)
+
+        if self.ended and not self.ended(lifecycle.termination.terminated_at):
+            return False
+
+        if self.termination and not self.termination(lifecycle.termination):
+            return False
+
+        return True
+
+    def serialize(self) -> Dict[str, Any]:
+        """Serialize to a dictionary."""
+        data = {}
+        if self.created:
+            data['created_range'] = self.created.serialize()
+        if self.started:
+            data['started_range'] = self.started.serialize()
+        if self.ended:
+            data['ended_range'] = self.ended.serialize()
+        if self.total_run_time:
+            data['exec_range'] = self.total_run_time.serialize()
+        if self.termination:
+            data['termination'] = self.termination.serialize()
+        return data
+
+    @classmethod
+    def deserialize(cls, data: Dict[str, Any]) -> 'LifecycleCriterion':
+        """Deserialize from a dictionary."""
+        return cls(
+            created=DateTimeRange.deserialize(data['created_range']) if data.get('created_range') else None,
+            started=DateTimeRange.deserialize(data['started_range']) if data.get('started_range') else None,
+            ended=DateTimeRange.deserialize(data['ended_range']) if data.get('ended_range') else None,
+            total_run_time=TimeRange.deserialize(data['exec_range']) if data.get('exec_range') else None,
+            termination=TerminationCriteria.deserialize(data['termination']) if data.get('termination') else None
+        )
+
+    def __bool__(self) -> bool:
+        """Check if any criteria are set."""
+        return bool(self.created or self.started or self.ended or
+                    self.total_run_time or self.termination)
+
+    def __str__(self) -> str:
+        """String representation showing non-None criteria."""
+        fields = []
+        if self.created:
+            fields.append(f"created{self.created}")
+        if self.started:
+            fields.append(f"started{self.started}")
+        if self.ended:
+            fields.append(f"ended{self.ended}")
+        if self.total_run_time:
+            fields.append(f"exec{self.total_run_time}")
+        if self.termination:
+            fields.append(f"termination{self.termination}")
+        return f"[{', '.join(fields)}]" if fields else "[]"
+
+
+@dataclass
 class PhaseCriterion(MatchCriteria[PhaseDetail]):
     """
-    Criteria for matching phase details, incorporating phase-specific and temporal criteria.
+    Criteria for matching phase details, incorporating phase-specific and lifecycle criteria.
 
-    For criteria that target only the root phase (e.g., execution time), ensure match_type=PhaseMatch.ROOT.
+    For criteria that target only the root phase (e.g., lifecycle information),
+    ensure match_type=PhaseMatch.ROOT.
     When using PhaseMatch.ALL or DESCENDANTS_ONLY, only non-root fields will be considered.
 
     Attributes:
@@ -327,11 +409,7 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
         run_state: Run state to match
         phase_name: Phase name to match
         attributes: Dictionary of attributes to match. None = no attribute matching
-        created: Time range to match creation time. For root phase only.
-        started: Time range to match start time. For root phase only.
-        ended: Time range to match end time. For root phase only.
-        exec_time: Time range to match execution duration. For root phase only.
-        termination: Termination criteria to match. For root phase only.
+        lifecycle: Criteria for matching lifecycle information. For root phase only.
         match_type: How phases are matched. Defaults to ROOT.
     """
     phase_type: Optional[str] = None
@@ -339,57 +417,40 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
     run_state: Optional[RunState] = None
     phase_name: Optional[str] = None
     attributes: Optional[Dict[str, Any]] = None
-    created: Optional[DateTimeRange] = None
-    started: Optional[DateTimeRange] = None
-    ended: Optional[DateTimeRange] = None
-    exec_time: Optional[TimeRange] = None
-    termination: Optional[TerminationCriteria] = None
+    lifecycle: Optional[LifecycleCriterion] = None
     match_type: PhaseMatch = PhaseMatch.ROOT
 
     @classmethod
     def deserialize(cls, data: Dict[str, Any]) -> 'PhaseCriterion':
         """Deserialize a dictionary into a PhaseCriterion instance."""
+        # Create a LifecycleCriterion from the legacy fields if present
         return cls(
             phase_type=data.get('phase_type'),
             phase_id=data.get('phase_id'),
             run_state=RunState[data['run_state']] if data.get('run_state') else None,
             phase_name=data.get('phase_name'),
             attributes=data.get('attributes'),
-            created=DateTimeRange.deserialize(data['created_range']) if data.get('created_range') else None,
-            started=DateTimeRange.deserialize(data['started_range']) if data.get('started_range') else None,
-            ended=DateTimeRange.deserialize(data['ended_range']) if data.get('ended_range') else None,
-            exec_time=TimeRange.deserialize(data['exec_range']) if data.get('exec_range') else None,
-            termination=TerminationCriteria.deserialize(data['termination']) if data.get('termination') else None,
+            lifecycle=LifecycleCriterion.deserialize(data.get('lifecycle')) if data.get('lifecycle') else None,
             match_type=PhaseMatch[data.get('match_type', PhaseMatch.ROOT.name)]
         )
 
     def serialize(self) -> Dict[str, Any]:
         """Serialize this criterion into a dictionary."""
-        data = {
+        return {
             'phase_type': self.phase_type,
             'phase_id': self.phase_id,
             'run_state': self.run_state.name if self.run_state else None,
             'phase_name': self.phase_name,
             'attributes': self.attributes,
+            'lifecycle': self.lifecycle.serialize() if self.lifecycle else None,
             'match_type': self.match_type.name
         }
-        if self.created:
-            data['created_range'] = self.created.serialize()
-        if self.started:
-            data['started_range'] = self.started.serialize()
-        if self.ended:
-            data['ended_range'] = self.ended.serialize()
-        if self.exec_time:
-            data['exec_range'] = self.exec_time.serialize()
-        if self.termination:
-            data['termination'] = self.termination.serialize()
-        return data
 
     def matches_phase(self, phase_detail: PhaseDetail) -> bool:
         """
         Check if a single phase matches this criterion.
 
-        Root-only fields (timing, termination) are only checked for ROOT match_type.
+        Lifecycle fields are only checked for ROOT match_type.
         """
         # Check basic fields for all match types
         if self.phase_type and phase_detail.phase_type != self.phase_type:
@@ -411,25 +472,7 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
                 if phase_detail.attributes.get(key) != value:
                     return False
 
-        if self.created and not self.created(phase_detail.created_at):
-            return False
-
-        if self.started and (not phase_detail.started_at or not self.started(phase_detail.started_at)):
-            return False
-
-        if self.exec_time:
-            if not phase_detail.total_run_time:
-                return False
-            if not self.exec_time(phase_detail.total_run_time):
-                return False
-
-        if not phase_detail.termination:
-            return not (self.ended or self.termination)
-
-        if self.ended and not self.ended(phase_detail.termination.terminated_at):
-            return False
-
-        if self.termination and not self.termination(phase_detail.termination):
+        if self.lifecycle and not self.lifecycle.matches(phase_detail.lifecycle):
             return False
 
         return True
@@ -447,9 +490,7 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
     def __bool__(self) -> bool:
         """Check if any criteria are set."""
         return bool(self.phase_type or self.phase_id or self.run_state or
-                    self.phase_name or self.attributes or self.created or
-                    self.started or self.ended or self.exec_time or
-                    self.termination)
+                    self.phase_name or self.attributes or self.lifecycle)
 
     def __str__(self) -> str:
         """Create a string representation showing non-None criteria."""
@@ -464,16 +505,8 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
             fields.append(f"name='{self.phase_name}'")
         if self.attributes:
             fields.append(f"attrs={self.attributes}")
-        if self.created:
-            fields.append(f"created{self.created}")
-        if self.started:
-            fields.append(f"started{self.started}")
-        if self.ended:
-            fields.append(f"ended{self.ended}")
-        if self.exec_time:
-            fields.append(f"exec{self.exec_time}")
-        if self.termination:
-            fields.append(f"termination{self.termination}")
+        if self.lifecycle:
+            fields.append(f"lifecycle{self.lifecycle}")
         if self.match_type != PhaseMatch.ROOT:
             fields.append(f"match_type={self.match_type.name}")
         return f"[{', '.join(fields)}]" if fields else "[]"

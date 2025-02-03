@@ -12,7 +12,7 @@ from typing import List
 
 from runtools.runcore import paths
 from runtools.runcore.common import InvalidStateError
-from runtools.runcore.criteria import PhaseMatch
+from runtools.runcore.criteria import PhaseMatch, LifecycleCriterion
 from runtools.runcore.db import SortCriteria, Persistence
 from runtools.runcore.job import JobStats, JobRun, JobRuns, JobInstanceMetadata, JobFaults
 from runtools.runcore.run import TerminationStatus, Outcome, PhaseDetail
@@ -42,8 +42,7 @@ def create_database(db_conf):
 
 def _build_where_clause(run_match, alias=''):
     """
-    # TODO Post fetch filter for criteria not supported in WHERE (instance parameters, etc.)
-
+    TODO Post fetch filter for criteria not supported in WHERE (instance parameters, etc.)
     Builds a SQL WHERE clause from the provided run match criteria.
     Only root phase details are stored as direct fields in the database.
     Phase criteria are only applied if they target the root phase.
@@ -143,6 +142,40 @@ def _build_where_clause(run_match, alias=''):
             conditions_.append(f"{alias}exec_time <= {time_range.max.total_seconds()}")
         return conditions_
 
+    def add_lifecycle_conditions(lifecycle_criterion: LifecycleCriterion) -> list:
+        """Add SQL conditions for lifecycle criteria."""
+        if not lifecycle_criterion:
+            return []
+
+        lifecycle_conditions = []
+
+        # Handle datetime ranges
+        if lifecycle_criterion.created:
+            lifecycle_conditions.extend(add_datetime_conditions('created', lifecycle_criterion.created))
+        if lifecycle_criterion.started:
+            lifecycle_conditions.extend(add_datetime_conditions('started', lifecycle_criterion.started))
+        if lifecycle_criterion.ended:
+            lifecycle_conditions.extend(add_datetime_conditions('ended', lifecycle_criterion.ended))
+
+        # Handle execution time
+        if lifecycle_criterion.total_run_time:
+            lifecycle_conditions.extend(add_time_range_conditions(lifecycle_criterion.total_run_time))
+
+        # Handle termination criteria
+        if lifecycle_criterion.termination:
+            term = lifecycle_criterion.termination
+            if term.status:
+                lifecycle_conditions.append(f"{alias}termination_status = '{term.status.name}'")
+
+            if term.outcome != Outcome.ANY:
+                start, end = term.outcome.value.start, term.outcome.value.stop
+                lifecycle_conditions.append(f"({alias}termination_status BETWEEN {start} AND {end})")
+
+            if term.ended_range:
+                lifecycle_conditions.extend(add_datetime_conditions('ended', term.ended_range))
+
+        return lifecycle_conditions
+
     # Handle phase criteria that target root phase
     for phase in run_match.phase_criteria:
         # Skip non-root phase criteria
@@ -151,31 +184,15 @@ def _build_where_clause(run_match, alias=''):
 
         phase_conditions = []
 
-        if phase.created:
-            phase_conditions.extend(add_datetime_conditions('created', phase.created))
-        if phase.started:
-            phase_conditions.extend(add_datetime_conditions('started', phase.started))
-        if phase.ended:
-            phase_conditions.extend(add_datetime_conditions('ended', phase.ended))
-
-        if phase.exec_time:
-            phase_conditions.extend(add_time_range_conditions(phase.exec_time))
-
-        if phase.termination:
-            if phase.termination.status:
-                phase_conditions.append(f"{alias}termination_status = '{phase.termination.status.name}'")
-
-            if phase.termination.outcome != Outcome.ANY:
-                start, end = phase.termination.outcome.value.start, phase.termination.outcome.value.stop
-                phase_conditions.append(f"({alias}termination_status BETWEEN {start} AND {end})")
-
-            if phase.termination.ended:
-                phase_conditions.extend(add_datetime_conditions('ended', phase.termination.ended))
+        # Handle lifecycle criteria if present
+        if phase.lifecycle:
+            phase_conditions.extend(add_lifecycle_conditions(phase.lifecycle))
 
         if phase_conditions:
             conditions.append('(' + ' AND '.join(phase_conditions) + ')')
 
     return " WHERE " + " AND ".join(conditions) if conditions else ""
+
 
 def create(database=None, *,
            timeout=5.0,
@@ -425,16 +442,17 @@ class SQLite(Persistence):
         """
 
         def to_tuple(r):
+            lifecycle = r.phase.lifecycle
             return (r.metadata.job_id,
                     r.metadata.run_id,
                     r.metadata.instance_id,
                     json.dumps(r.metadata.user_params) if r.metadata.user_params else None,
-                    format_dt_sql(r.phase.created_at),
-                    format_dt_sql(r.phase.started_at),
-                    format_dt_sql(r.phase.termination.terminated_at) if r.phase.termination else None,
-                    round(r.phase.total_run_time.total_seconds(), 3) if r.phase.total_run_time else None,
+                    format_dt_sql(lifecycle.created_at),
+                    format_dt_sql(lifecycle.started_at),
+                    format_dt_sql(lifecycle.termination.terminated_at) if lifecycle.termination else None,
+                    round(lifecycle.total_run_time.total_seconds(), 3) if lifecycle.total_run_time else None,
                     json.dumps(r.phase.serialize()),
-                    r.phase.termination.status.value if r.phase.termination else None,
+                    lifecycle.termination.status.value if lifecycle.termination else None,
                     json.dumps(r.faults.serialize()) if r.faults else None,
                     json.dumps(r.status.serialize()) if r.status else None,
                     len(r.status.warnings) if r.status else None,

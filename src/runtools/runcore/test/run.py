@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import List, Optional
 
-from runtools.runcore.run import PhaseDetail, RunState, TerminationInfo, TerminationStatus, Fault
+from runtools.runcore.run import PhaseDetail, RunState, TerminationInfo, TerminationStatus, Fault, RunLifecycle
 from runtools.runcore.util import utc_now
 
 
@@ -14,7 +14,7 @@ def phase_detail(phase_id, run_state=RunState.EXECUTING, children=None,
                  *, phase_type='test', created_at=None, started_at=None, termination):
     if not created_at:
         created_at = utc_now().replace(microsecond=0)
-    return PhaseDetail(phase_id, phase_type, run_state, '', None, created_at, started_at, termination, children or [])
+    return PhaseDetail(phase_id, phase_type, run_state, '', None, RunLifecycle(created_at, started_at, termination), children or [])
 
 
 def _determine_container_state(children: List[PhaseDetail]) -> tuple[bool, Optional[TerminationInfo]]:
@@ -23,17 +23,17 @@ def _determine_container_state(children: List[PhaseDetail]) -> tuple[bool, Optio
         return False, None
 
     # Container is started if any child is started
-    started = any(child.started_at is not None for child in children)
+    started = any(child.lifecycle.started_at is not None for child in children)
 
     # Get termination info only if all children are terminated
-    all_terminated = all(child.termination is not None for child in children)
+    all_terminated = all(child.lifecycle.termination is not None for child in children)
     if not all_terminated:
         return started, None
 
     # Get latest termination time from children, ensuring timezone consistency
     termination_times = []
     for child in children:
-        terminated_at = child.termination.terminated_at
+        terminated_at = child.lifecycle.termination.terminated_at
         # Convert timezone-aware datetimes to naive by removing tzinfo
         if terminated_at.tzinfo is not None:
             terminated_at = terminated_at.replace(tzinfo=None)
@@ -43,11 +43,11 @@ def _determine_container_state(children: List[PhaseDetail]) -> tuple[bool, Optio
 
     # If any child failed/stopped, container gets same status
     for child in children:
-        if child.termination.status != TerminationStatus.COMPLETED:
+        if child.lifecycle.termination.status != TerminationStatus.COMPLETED:
             return started, TerminationInfo(
-                status=child.termination.status,
+                status=child.lifecycle.termination.status,
                 terminated_at=latest_termination,
-                fault=child.termination.fault
+                fault=child.lifecycle.termination.fault
             )
 
     # All children completed successfully
@@ -171,8 +171,6 @@ class FakePhaseDetailBuilder:
             run_state=self.run_state,
             phase_name=self.phase_id,
             attributes=None,
-            created_at=created_at,
-            started_at=started_at,
-            termination=self._termination,
+            lifecycle=RunLifecycle(created_at=created_at, started_at=started_at, termination=self._termination),
             children=built_children
         )

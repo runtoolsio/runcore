@@ -425,10 +425,73 @@ class PhaseInfo:
 
 
 @dataclass(frozen=True)
+class RunLifecycle:
+    """
+    Encapsulates lifecycle information of a runnable unit, tracking its progression through
+    different stages from creation to termination.
+    """
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    termination: Optional[TerminationInfo] = None
+
+    @property
+    def stage(self) -> Stage:
+        """Determines the current stage of the phase in its lifecycle."""
+        if self.termination:
+            return Stage.ENDED
+        if self.started_at:
+            return Stage.RUNNING
+        return Stage.CREATED
+
+    @property
+    def last_transition_at(self) -> datetime:
+        """Returns the timestamp of the last lifecycle transition."""
+        if self.termination:
+            return self.termination.terminated_at
+        return self.started_at or self.created_at
+
+    @property
+    def total_run_time(self) -> Optional[datetime.timedelta]:
+        """Calculates the duration between start and end of the phase."""
+        if not self.started_at or not self.termination:
+            return None
+        return self.termination.terminated_at - self.started_at
+
+    def is_running(self) -> bool:
+        """Returns True if this phase is in the running stage."""
+        return self.stage == Stage.RUNNING
+
+    def is_ended(self) -> bool:
+        """Returns True if this phase has reached its end stage."""
+        return self.stage == Stage.ENDED
+
+    def completed_successfully(self) -> bool:
+        """Returns True if this phase completed its lifecycle successfully."""
+        return self.termination is not None and self.termination.status == TerminationStatus.COMPLETED
+
+    @classmethod
+    def deserialize(cls, as_dict: Dict[str, Any]) -> 'RunLifecycle':
+        return cls(
+            created_at=util.parse_datetime(as_dict['created_at']),
+            started_at=util.parse_datetime(as_dict['started_at']) if as_dict.get('started_at') else None,
+            termination=TerminationInfo.deserialize(as_dict['termination']) if as_dict.get('termination') else None
+        )
+
+    def serialize(self) -> Dict[str, Any]:
+        dto = {
+            'created_at': format_dt_iso(self.created_at),
+        }
+        if self.started_at:
+            dto['started_at'] = format_dt_iso(self.started_at)
+        if self.termination:
+            dto['termination'] = self.termination.serialize()
+        return dto
+
+
+@dataclass(frozen=True)
 class PhaseDetail:
     """
     A complete immutable view of a Phase instance, containing all state and metadata.
-    Provides a snapshot of the phase's current state including runtime information.
     """
     # Core phase information
     phase_id: str
@@ -437,34 +500,25 @@ class PhaseDetail:
     phase_name: Optional[str]
     attributes: Optional[Dict[str, Any]]
 
-    # Runtime information
-    created_at: datetime
-    started_at: Optional[datetime]
-    termination: Optional[TerminationInfo]
+    # Lifecycle information encapsulated in a dedicated class
+    lifecycle: RunLifecycle
 
     # Hierarchical information
     children: List['PhaseDetail']
 
     @classmethod
     def from_phase(cls, phase) -> 'PhaseDetail':
-        """
-        Creates a PhaseView from a PhaseV2 instance.
-
-        Args:
-            phase: A PhaseV2 instance
-
-        Returns:
-            PhaseDetail: An immutable view of the phase's current state
-        """
         return cls(
             phase_id=phase.id,
             phase_type=phase.type,
             run_state=phase.run_state,
             phase_name=phase.name,
             attributes=phase.attributes,
-            created_at=phase.created_at,
-            started_at=phase.started_at,
-            termination=phase.termination,
+            lifecycle=RunLifecycle(
+                created_at=phase.created_at,
+                started_at=phase.started_at,
+                termination=phase.termination
+            ),
             children=[cls.from_phase(child) for child in phase.children] if phase.children else []
         )
 
@@ -490,9 +544,7 @@ class PhaseDetail:
             run_state=RunState[as_dict['run_state']],
             phase_name=as_dict.get('phase_name'),
             attributes=as_dict.get('attributes'),
-            created_at=util.parse_datetime(as_dict['created_at']),
-            started_at=util.parse_datetime(as_dict['started_at']) if as_dict.get('started_at') else None,
-            termination=TerminationInfo.deserialize(as_dict['termination']) if as_dict.get('termination') else None,
+            lifecycle=RunLifecycle.deserialize(as_dict.get('lifecycle')),
             children=children,
         )
 
@@ -507,17 +559,12 @@ class PhaseDetail:
             'phase_id': self.phase_id,
             'phase_type': self.phase_type,
             'run_state': self.run_state.name,
-            'created_at': format_dt_iso(self.created_at),
+            'lifecycle': self.lifecycle.serialize(),
         }
-
         if self.phase_name:
             dto['phase_name'] = self.phase_name
         if self.attributes:
             dto['attributes'] = self.attributes
-        if self.started_at:
-            dto['started_at'] = format_dt_iso(self.started_at)
-        if self.termination:
-            dto['termination'] = self.termination.serialize()
         if self.children:
             dto['children'] = [child.serialize() for child in self.children]
 
@@ -561,51 +608,6 @@ class PhaseDetail:
                     return result
 
         return None
-
-    @property
-    def stage(self):
-        if self.termination:
-            return Stage.ENDED
-        if self.started_at:
-            return Stage.RUNNING
-        return Stage.CREATED
-
-    @property
-    def last_change_at(self):
-        if self.termination:
-            return self.termination.terminated_at
-        return self.started_at or self.created_at
-
-    def is_running(self) -> bool:
-        """
-        Returns True if this phase is currently running.
-        """
-        return self.stage == Stage.RUNNING
-
-    def is_ended(self) -> bool:
-        """
-        Returns True if this phase has ended execution (successfully or not).
-        """
-        return self.stage == Stage.ENDED
-
-    def completed_successfully(self) -> bool:
-        """
-        Returns True if this phase completed successfully.
-        """
-        return self.termination is not None and self.termination.status == TerminationStatus.COMPLETED
-
-    @property
-    def total_run_time(self) -> Optional[datetime.timedelta]:
-        """
-        Calculates the total runtime of the phase.
-
-        Returns:
-            Optional[timedelta]: Time between phase start and termination if both exist, otherwise None
-        """
-        if not self.started_at or not self.termination:
-            return None
-
-        return self.termination.terminated_at - self.started_at
 
 
 @dataclass
