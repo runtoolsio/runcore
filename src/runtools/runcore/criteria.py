@@ -327,10 +327,10 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
         run_state: Run state to match
         phase_name: Phase name to match
         attributes: Dictionary of attributes to match. None = no attribute matching
-        created_range: Time range to match creation time. For root phase only.
-        started_range: Time range to match start time. For root phase only.
-        ended_range: Time range to match end time. For root phase only.
-        exec_range: Time range to match execution duration. For root phase only.
+        created: Time range to match creation time. For root phase only.
+        started: Time range to match start time. For root phase only.
+        ended: Time range to match end time. For root phase only.
+        exec_time: Time range to match execution duration. For root phase only.
         termination: Termination criteria to match. For root phase only.
         match_type: How phases are matched. Defaults to ROOT.
     """
@@ -339,10 +339,10 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
     run_state: Optional[RunState] = None
     phase_name: Optional[str] = None
     attributes: Optional[Dict[str, Any]] = None
-    created_range: Optional[DateTimeRange] = None
-    started_range: Optional[DateTimeRange] = None
-    ended_range: Optional[DateTimeRange] = None
-    exec_range: Optional[TimeRange] = None
+    created: Optional[DateTimeRange] = None
+    started: Optional[DateTimeRange] = None
+    ended: Optional[DateTimeRange] = None
+    exec_time: Optional[TimeRange] = None
     termination: Optional[TerminationCriteria] = None
     match_type: PhaseMatch = PhaseMatch.ROOT
 
@@ -355,10 +355,10 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
             run_state=RunState[data['run_state']] if data.get('run_state') else None,
             phase_name=data.get('phase_name'),
             attributes=data.get('attributes'),
-            created_range=DateTimeRange.deserialize(data['created_range']) if data.get('created_range') else None,
-            started_range=DateTimeRange.deserialize(data['started_range']) if data.get('started_range') else None,
-            ended_range=DateTimeRange.deserialize(data['ended_range']) if data.get('ended_range') else None,
-            exec_range=TimeRange.deserialize(data['exec_range']) if data.get('exec_range') else None,
+            created=DateTimeRange.deserialize(data['created_range']) if data.get('created_range') else None,
+            started=DateTimeRange.deserialize(data['started_range']) if data.get('started_range') else None,
+            ended=DateTimeRange.deserialize(data['ended_range']) if data.get('ended_range') else None,
+            exec_time=TimeRange.deserialize(data['exec_range']) if data.get('exec_range') else None,
             termination=TerminationCriteria.deserialize(data['termination']) if data.get('termination') else None,
             match_type=PhaseMatch[data.get('match_type', PhaseMatch.ROOT.name)]
         )
@@ -373,14 +373,14 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
             'attributes': self.attributes,
             'match_type': self.match_type.name
         }
-        if self.created_range:
-            data['created_range'] = self.created_range.serialize()
-        if self.started_range:
-            data['started_range'] = self.started_range.serialize()
-        if self.ended_range:
-            data['ended_range'] = self.ended_range.serialize()
-        if self.exec_range:
-            data['exec_range'] = self.exec_range.serialize()
+        if self.created:
+            data['created_range'] = self.created.serialize()
+        if self.started:
+            data['started_range'] = self.started.serialize()
+        if self.ended:
+            data['ended_range'] = self.ended.serialize()
+        if self.exec_time:
+            data['exec_range'] = self.exec_time.serialize()
         if self.termination:
             data['termination'] = self.termination.serialize()
         return data
@@ -411,22 +411,22 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
                 if phase_detail.attributes.get(key) != value:
                     return False
 
-        if self.created_range and not self.created_range(phase_detail.created_at):
+        if self.created and not self.created(phase_detail.created_at):
             return False
 
-        if self.started_range and (not phase_detail.started_at or not self.started_range(phase_detail.started_at)):
+        if self.started and (not phase_detail.started_at or not self.started(phase_detail.started_at)):
             return False
 
-        if self.exec_range:
+        if self.exec_time:
             if not phase_detail.total_run_time:
                 return False
-            if not self.exec_range(phase_detail.total_run_time):
+            if not self.exec_time(phase_detail.total_run_time):
                 return False
 
         if not phase_detail.termination:
-            return not (self.ended_range or self.termination)
+            return not (self.ended or self.termination)
 
-        if self.ended_range and not self.ended_range(phase_detail.termination.terminated_at):
+        if self.ended and not self.ended(phase_detail.termination.terminated_at):
             return False
 
         if self.termination and not self.termination(phase_detail.termination):
@@ -447,8 +447,8 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
     def __bool__(self) -> bool:
         """Check if any criteria are set."""
         return bool(self.phase_type or self.phase_id or self.run_state or
-                    self.phase_name or self.attributes or self.created_range or
-                    self.started_range or self.ended_range or self.exec_range or
+                    self.phase_name or self.attributes or self.created or
+                    self.started or self.ended or self.exec_time or
                     self.termination)
 
     def __str__(self) -> str:
@@ -464,14 +464,14 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
             fields.append(f"name='{self.phase_name}'")
         if self.attributes:
             fields.append(f"attrs={self.attributes}")
-        if self.created_range:
-            fields.append(f"created{self.created_range}")
-        if self.started_range:
-            fields.append(f"started{self.started_range}")
-        if self.ended_range:
-            fields.append(f"ended{self.ended_range}")
-        if self.exec_range:
-            fields.append(f"exec{self.exec_range}")
+        if self.created:
+            fields.append(f"created{self.created}")
+        if self.started:
+            fields.append(f"started{self.started}")
+        if self.ended:
+            fields.append(f"ended{self.ended}")
+        if self.exec_time:
+            fields.append(f"exec{self.exec_time}")
         if self.termination:
             fields.append(f"termination{self.termination}")
         if self.match_type != PhaseMatch.ROOT:

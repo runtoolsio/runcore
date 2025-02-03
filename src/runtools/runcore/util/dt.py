@@ -92,6 +92,18 @@ class TimeRange:
         return f"[{' AND '.join(parts)}]" if parts else "[]"
 
 
+def dtrange(since=None, until=None, *, until_incl=False) -> 'DateTimeRange':
+    """
+    Create a datetime range with optional bounds.
+
+    Args:
+        since: Start datetime (inclusive)
+        until: End datetime
+        until_incl: Whether end is inclusive (default: True)
+    """
+    return DateTimeRange(since, until, until_incl)
+
+
 @dataclass
 class DateTimeRange:
     """
@@ -99,19 +111,19 @@ class DateTimeRange:
     By default, uses half-open intervals [start, end) where end is excluded.
 
     Attributes:
-        start (Optional[datetime]): Start of the range, inclusive
-        end (Optional[datetime]): End of the range
-        end_excluded (bool): Whether the end point is excluded from the range (default True)
+        since (Optional[datetime]): Start of the range, inclusive
+        until (Optional[datetime]): End of the range
+        until_included (bool): Whether the end point is excluded from the range (default True)
     """
-    start: Optional[datetime] = None
-    end: Optional[datetime] = None
-    end_excluded: bool = True
+    since: Optional[datetime] = None
+    until: Optional[datetime] = None
+    until_included: bool = False
 
     def __iter__(self):
-        return iter((self.start, self.end, self.end_excluded))
+        return iter((self.since, self.until, self.until_included))
 
     def __bool__(self):
-        return bool(self.start) or bool(self.end)
+        return bool(self.since) or bool(self.until)
 
     def __call__(self, tested_dt):
         return self.matches(tested_dt)
@@ -129,15 +141,15 @@ class DateTimeRange:
         if not tested_dt:
             return not bool(self)
 
-        if self.start and tested_dt < self.start:
+        if self.since and tested_dt < self.since:
             return False
 
-        if self.end:
-            if self.end_excluded:
-                if tested_dt >= self.end:
+        if self.until:
+            if self.until_included:
+                if tested_dt > self.until:
                     return False
             else:
-                if tested_dt > self.end:
+                if tested_dt >= self.until:
                     return False
 
         return True
@@ -154,9 +166,9 @@ class DateTimeRange:
             DateTimeRange: The deserialized range
         """
         return cls(
-            start=parse(data['start']) if data.get('start') else None,
-            end=parse(data['end']) if data.get('end') else None,
-            end_excluded=data.get('end_excluded', True)
+            since=parse(data['start']) if data.get('start') else None,
+            until=parse(data['end']) if data.get('end') else None,
+            until_included=data.get('end_excluded', True)
         )
 
     def serialize(self) -> Dict[str, Any]:
@@ -167,18 +179,18 @@ class DateTimeRange:
             Dict[str, Any]: The serialized range
         """
         return {
-            'start': format_dt_iso(self.start) if self.start else None,
-            'end': format_dt_iso(self.end) if self.end else None,
-            'end_excluded': self.end_excluded
+            'start': format_dt_iso(self.since) if self.since else None,
+            'end': format_dt_iso(self.until) if self.until else None,
+            'end_excluded': self.until_included
         }
 
     def __str__(self) -> str:
         """String representation of the range using mathematical interval notation."""
-        if not self.start and not self.end:
+        if not self.since and not self.until:
             return ""
-        start_str = str(self.start) if self.start else "-∞"
-        end_str = str(self.end) if self.end else "∞"
-        end_bracket = "]" if not self.end_excluded else ")"
+        start_str = str(self.since) if self.since else "-∞"
+        end_str = str(self.until) if self.until else "∞"
+        end_bracket = "]" if not self.until_included else ")"
         return f"[{start_str}, {end_str}{end_bracket}"
 
 

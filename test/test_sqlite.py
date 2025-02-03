@@ -6,7 +6,7 @@ from runtools.runcore.criteria import JobRunCriteria, parse_criteria, PhaseCrite
 from runtools.runcore.db import sqlite
 from runtools.runcore.run import TerminationStatus
 from runtools.runcore.test.job import test_job_run
-from runtools.runcore.util import parse_iso8601_duration, MatchingStrategy, DateTimeRange
+from runtools.runcore.util import parse_iso8601_duration, MatchingStrategy, DateTimeRange, dtrange
 
 
 @pytest.fixture
@@ -100,24 +100,24 @@ def test_interval(sut):
     sut.store_job_runs(test_job_run('j3', created_at=dt(2023, 4, 22), ended_at=dt(2023, 4, 22, 23, 59, 58)))
 
     # Test ended_from
-    phase_criteria = PhaseCriterion(ended_range=DateTimeRange(start=dt(2023, 4, 23)))
+    phase_criteria = PhaseCriterion(ended=dtrange(since=dt(2023, 4, 23)))
     jobs = sut.read_history_runs(JobRunCriteria(phase_criteria=phase_criteria))
     assert jobs.job_ids == ['j1']
 
     # Test ended_to inclusive
-    phase_criteria = PhaseCriterion(ended_range=DateTimeRange(end=dt(2023, 4, 22, 23, 59, 59), end_excluded=False))
+    phase_criteria = PhaseCriterion(ended=dtrange(until=dt(2023, 4, 22, 23, 59, 59), until_incl=True))
     jobs = sut.read_history_runs(JobRunCriteria(phase_criteria=phase_criteria))
     assert sorted(jobs.job_ids) == ['j2', 'j3']
 
     # Test ended_to exclusive
-    phase_criteria = PhaseCriterion(ended_range=DateTimeRange(end=dt(2023, 4, 22, 23, 59, 59)))
+    phase_criteria = PhaseCriterion(ended=dtrange(until=dt(2023, 4, 22, 23, 59, 59)))
     jobs = sut.read_history_runs(JobRunCriteria(phase_criteria=phase_criteria))
     assert jobs.job_ids == ['j3']
 
     # Test combined ended_from (incl) and created_to
     phase_criteria = PhaseCriterion(
-        ended_range=DateTimeRange(start=dt(2023, 4, 22, 23, 59, 59)),
-        created_range=DateTimeRange(end=dt(2023, 4, 23), end_excluded=False)
+        created=dtrange(until=dt(2023, 4, 23), until_incl=True),
+        ended=dtrange(since=dt(2023, 4, 22, 23, 59, 59))
     )
     jobs = sut.read_history_runs(JobRunCriteria(phase_criteria=phase_criteria))
     assert sorted(jobs.job_ids) == ['j1', 'j2']

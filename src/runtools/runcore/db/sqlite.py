@@ -125,13 +125,13 @@ def _build_where_clause(run_match, alias=''):
         if not dt_range:
             return dt_conditions
 
-        if dt_range.start:
-            dt_conditions.append(f"{alias}{column} >= '{format_dt_sql(dt_range.start)}'")
-        if dt_range.end:
-            if dt_range.end_excluded:
-                dt_conditions.append(f"{alias}{column} < '{format_dt_sql(dt_range.end)}'")
+        if dt_range.since:
+            dt_conditions.append(f"{alias}{column} >= '{format_dt_sql(dt_range.since)}'")
+        if dt_range.until:
+            if dt_range.until_included:
+                dt_conditions.append(f"{alias}{column} <= '{format_dt_sql(dt_range.until)}'")
             else:
-                dt_conditions.append(f"{alias}{column} <= '{format_dt_sql(dt_range.end)}'")
+                dt_conditions.append(f"{alias}{column} < '{format_dt_sql(dt_range.until)}'")
         return dt_conditions
 
     def add_time_range_conditions(time_range) -> list:
@@ -151,15 +151,15 @@ def _build_where_clause(run_match, alias=''):
 
         phase_conditions = []
 
-        if phase.created_range:
-            phase_conditions.extend(add_datetime_conditions('created', phase.created_range))
-        if phase.started_range:
-            phase_conditions.extend(add_datetime_conditions('started', phase.started_range))
-        if phase.ended_range:
-            phase_conditions.extend(add_datetime_conditions('ended', phase.ended_range))
+        if phase.created:
+            phase_conditions.extend(add_datetime_conditions('created', phase.created))
+        if phase.started:
+            phase_conditions.extend(add_datetime_conditions('started', phase.started))
+        if phase.ended:
+            phase_conditions.extend(add_datetime_conditions('ended', phase.ended))
 
-        if phase.exec_range:
-            phase_conditions.extend(add_time_range_conditions(phase.exec_range))
+        if phase.exec_time:
+            phase_conditions.extend(add_time_range_conditions(phase.exec_time))
 
         if phase.termination:
             if phase.termination.status:
@@ -169,8 +169,8 @@ def _build_where_clause(run_match, alias=''):
                 start, end = phase.termination.outcome.value.start, phase.termination.outcome.value.stop
                 phase_conditions.append(f"({alias}termination_status BETWEEN {start} AND {end})")
 
-            if phase.termination.ended_range:
-                phase_conditions.extend(add_datetime_conditions('ended', phase.termination.ended_range))
+            if phase.termination.ended:
+                phase_conditions.extend(add_datetime_conditions('ended', phase.termination.ended))
 
         if phase_conditions:
             conditions.append('(' + ' AND '.join(phase_conditions) + ')')
