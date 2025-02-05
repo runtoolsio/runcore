@@ -63,7 +63,8 @@ def test_offset(sut):
 
 
 def test_job_id_match(sut):
-    sut.store_job_runs(test_job_run('j1', 'i1'), test_job_run('j12', 'i12'), test_job_run('j11', 'i11'), test_job_run('j111', 'i111'), test_job_run('j121', 'i121'))
+    sut.store_job_runs(test_job_run('j1', 'i1'), test_job_run('j12', 'i12'), test_job_run('j11', 'i11'),
+                       test_job_run('j111', 'i111'), test_job_run('j121', 'i121'))
 
     assert len(sut.read_history_runs(parse_criteria('j1'))) == 1
     assert len(sut.read_history_runs(parse_criteria('j1@'))) == 1
@@ -85,7 +86,8 @@ def test_job_id_match(sut):
 
 
 def test_cleanup(sut):
-    sut.store_job_runs(test_job_run('j1', offset_min=-120), test_job_run('j2'), test_job_run('j3', offset_min=-240), test_job_run('j4', offset_min=-10),
+    sut.store_job_runs(test_job_run('j1', offset_min=-120), test_job_run('j2'), test_job_run('j3', offset_min=-240),
+                       test_job_run('j4', offset_min=-10),
                        test_job_run('j5', offset_min=-60))
 
     sut.clean_up(1, parse_iso8601_duration('PT50S'))
@@ -100,24 +102,19 @@ def test_interval(sut):
     sut.store_job_runs(test_job_run('j3', created_at=dt(2023, 4, 22), ended_at=dt(2023, 4, 22, 23, 59, 58)))
 
     # Test ended_from
-    phase_criteria = PhaseCriterion(lifecycle=LifecycleCriterion(ended=dtrange(since=dt(2023, 4, 23))))
-    jobs = sut.read_history_runs(JobRunCriteria(phase_criteria=phase_criteria))
+    jobs = sut.read_history_runs(JobRunCriteria().created(since=dt(2023, 4, 23)))
     assert jobs.job_ids == ['j1']
 
     # Test ended_to inclusive
-    phase_criteria = PhaseCriterion(lifecycle=LifecycleCriterion(ended=dtrange(until=dt(2023, 4, 22, 23, 59, 59), until_incl=True)))
-    jobs = sut.read_history_runs(JobRunCriteria(phase_criteria=phase_criteria))
+    jobs = sut.read_history_runs(JobRunCriteria().ended(until=dt(2023, 4, 22, 23, 59, 59), until_incl=True))
     assert sorted(jobs.job_ids) == ['j2', 'j3']
 
     # Test ended_to exclusive
-    phase_criteria = PhaseCriterion(lifecycle=LifecycleCriterion(ended=dtrange(until=dt(2023, 4, 22, 23, 59, 59))))
-    jobs = sut.read_history_runs(JobRunCriteria(phase_criteria=phase_criteria))
+    jobs = sut.read_history_runs(JobRunCriteria().ended(until=dt(2023, 4, 22, 23, 59, 59)))
     assert jobs.job_ids == ['j3']
 
     # Test combined ended_from (incl) and created_to
-    phase_criteria = PhaseCriterion(lifecycle=LifecycleCriterion(
-        created=dtrange(until=dt(2023, 4, 23), until_incl=True),
-        ended=dtrange(since=dt(2023, 4, 22, 23, 59, 59))
-    ))
-    jobs = sut.read_history_runs(JobRunCriteria(phase_criteria=phase_criteria))
+    jobs = sut.read_history_runs(JobRunCriteria()
+                                 .created(until=dt(2023, 4, 23), until_incl=True)
+                                 .ended(since=dt(2023, 4, 22, 23, 59, 59)))
     assert sorted(jobs.job_ids) == ['j1', 'j2']

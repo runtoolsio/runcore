@@ -627,3 +627,26 @@ class JobRunCriteria(MatchCriteria[JobRun]):
         if self.jobs:
             parts.append(f"jobs={self.jobs}")
         return f"{' | '.join(parts)}" if parts else ""
+
+    def _last_phase_criterion(self) -> PhaseCriterion:
+        if not self.phase_criteria:
+            self.phase_criteria.append(PhaseCriterion())
+        return self.phase_criteria[-1]
+
+    def _last_phase_criterion_lc(self):
+        pc = self._last_phase_criterion()
+        if not pc.lifecycle:
+            pc.lifecycle = LifecycleCriterion()
+        return pc.lifecycle
+
+    def created(self, since=None, until=None, until_incl=False):
+        self._last_phase_criterion_lc().created = DateTimeRange(since, until, until_incl)
+        return self
+
+    def started(self, since=None, until=None, until_incl=False):
+        self._last_phase_criterion_lc().started = DateTimeRange(since, until, until_incl)
+        return self
+
+    def ended(self, since=None, until=None, until_incl=False):
+        self._last_phase_criterion_lc().ended = DateTimeRange(since, until, until_incl)
+        return self
