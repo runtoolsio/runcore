@@ -26,7 +26,7 @@ def job_run(job_id, phase, *, instance_id=None, run_id=None, user_params=None):
     return JobRun(meta, phase, None, None)  # TODO Faults and status
 
 
-def test_job_run(job_id, run_id='r1', *, created_at=None, offset_min=0, ended_at=None,
+def fake_job_run(job_id, run_id='r1', *, created_at=None, offset_min=0, ended_at=None,
                  term_status=TerminationStatus.COMPLETED) -> JobRun:
     start_time = (created_at or utc_now().replace(microsecond=0)) + timedelta(minutes=offset_min)
     phase_builder = FakePhaseDetailBuilder.root(base_ts=start_time)

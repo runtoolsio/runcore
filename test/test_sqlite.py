@@ -5,7 +5,7 @@ import pytest
 from runtools.runcore.criteria import JobRunCriteria, parse_criteria, PhaseCriterion, LifecycleCriterion
 from runtools.runcore.db import sqlite
 from runtools.runcore.run import TerminationStatus
-from runtools.runcore.test.job import test_job_run
+from runtools.runcore.test.job import fake_job_run
 from runtools.runcore.util import parse_iso8601_duration, MatchingStrategy, dtrange
 
 
@@ -16,7 +16,7 @@ def sut():
 
 
 def test_store_and_fetch(sut):
-    test_run = test_job_run('j1', term_status=TerminationStatus.FAILED)
+    test_run = fake_job_run('j1', term_status=TerminationStatus.FAILED)
     sut.store_job_runs(test_run)
     jobs = sut.read_history_runs()
 
@@ -25,11 +25,11 @@ def test_store_and_fetch(sut):
 
 def test_last(sut):
     sut.store_job_runs(
-        test_job_run('j1', 'r1-1', offset_min=1),
-        test_job_run('j2', 'r2-1', offset_min=2),
-        test_job_run('j1', 'r1-2', offset_min=3),
-        test_job_run('j3', 'r3-1', offset_min=4),
-        test_job_run('j2', 'r2-2', offset_min=5))
+        fake_job_run('j1', 'r1-1', offset_min=1),
+        fake_job_run('j2', 'r2-1', offset_min=2),
+        fake_job_run('j1', 'r1-2', offset_min=3),
+        fake_job_run('j3', 'r3-1', offset_min=4),
+        fake_job_run('j2', 'r2-2', offset_min=5))
 
     jobs = sut.read_history_runs(last=True)
     assert len(jobs) == 3
@@ -37,7 +37,7 @@ def test_last(sut):
 
 
 def test_sort(sut):
-    sut.store_job_runs(test_job_run('j1'), test_job_run('j2', offset_min=1), test_job_run('j3', offset_min=-1))
+    sut.store_job_runs(fake_job_run('j1'), fake_job_run('j2', offset_min=1), fake_job_run('j3', offset_min=-1))
 
     jobs = sut.read_history_runs()
     assert jobs.job_ids == ['j3', 'j1', 'j2']
@@ -47,7 +47,7 @@ def test_sort(sut):
 
 
 def test_limit(sut):
-    sut.store_job_runs(test_job_run('1'), test_job_run('2', offset_min=1), test_job_run('3', offset_min=-1))
+    sut.store_job_runs(fake_job_run('1'), fake_job_run('2', offset_min=1), fake_job_run('3', offset_min=-1))
 
     jobs = sut.read_history_runs(limit=1)
     assert len(jobs) == 1
@@ -55,7 +55,7 @@ def test_limit(sut):
 
 
 def test_offset(sut):
-    sut.store_job_runs(test_job_run('1'), test_job_run('2', offset_min=1), test_job_run('3', offset_min=-1))
+    sut.store_job_runs(fake_job_run('1'), fake_job_run('2', offset_min=1), fake_job_run('3', offset_min=-1))
 
     jobs = sut.read_history_runs(offset=2)
     assert len(jobs) == 1
@@ -63,8 +63,8 @@ def test_offset(sut):
 
 
 def test_job_id_match(sut):
-    sut.store_job_runs(test_job_run('j1', 'i1'), test_job_run('j12', 'i12'), test_job_run('j11', 'i11'),
-                       test_job_run('j111', 'i111'), test_job_run('j121', 'i121'))
+    sut.store_job_runs(fake_job_run('j1', 'i1'), fake_job_run('j12', 'i12'), fake_job_run('j11', 'i11'),
+                       fake_job_run('j111', 'i111'), fake_job_run('j121', 'i121'))
 
     assert len(sut.read_history_runs(parse_criteria('j1'))) == 1
     assert len(sut.read_history_runs(parse_criteria('j1@'))) == 1
@@ -86,9 +86,9 @@ def test_job_id_match(sut):
 
 
 def test_cleanup(sut):
-    sut.store_job_runs(test_job_run('j1', offset_min=-120), test_job_run('j2'), test_job_run('j3', offset_min=-240),
-                       test_job_run('j4', offset_min=-10),
-                       test_job_run('j5', offset_min=-60))
+    sut.store_job_runs(fake_job_run('j1', offset_min=-120), fake_job_run('j2'), fake_job_run('j3', offset_min=-240),
+                       fake_job_run('j4', offset_min=-10),
+                       fake_job_run('j5', offset_min=-60))
 
     sut.clean_up(1, parse_iso8601_duration('PT50S'))
     jobs = sut.read_history_runs()
@@ -97,9 +97,9 @@ def test_cleanup(sut):
 
 
 def test_interval(sut):
-    sut.store_job_runs(test_job_run('j1', created_at=dt(2023, 4, 23), ended_at=dt(2023, 4, 23)))
-    sut.store_job_runs(test_job_run('j2', created_at=dt(2023, 4, 22), ended_at=dt(2023, 4, 22, 23, 59, 59)))
-    sut.store_job_runs(test_job_run('j3', created_at=dt(2023, 4, 22), ended_at=dt(2023, 4, 22, 23, 59, 58)))
+    sut.store_job_runs(fake_job_run('j1', created_at=dt(2023, 4, 23), ended_at=dt(2023, 4, 23)))
+    sut.store_job_runs(fake_job_run('j2', created_at=dt(2023, 4, 22), ended_at=dt(2023, 4, 22, 23, 59, 59)))
+    sut.store_job_runs(fake_job_run('j3', created_at=dt(2023, 4, 22), ended_at=dt(2023, 4, 22, 23, 59, 58)))
 
     # Test ended_from
     jobs = sut.read_history_runs(JobRunCriteria().created(since=dt(2023, 4, 23)))
