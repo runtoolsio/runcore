@@ -6,7 +6,7 @@ from runtools.runcore.util import MatchingStrategy
 
 
 def meta(job_id, run_id, instance_id=''):
-    return JobInstanceMetadata(job_id, run_id, instance_id, {}, {})
+    return JobInstanceMetadata(job_id, run_id, instance_id, {})
 
 
 def test_job_run_pattern_match():
