@@ -245,7 +245,7 @@ def compound_instance_filter(metadata_criteria):
 
 
 @dataclass
-class TerminationCriteria(MatchCriteria[TerminationInfo]):
+class TerminationCriterion(MatchCriteria[TerminationInfo]):
     """
     Criteria for matching termination information.
     """
@@ -254,7 +254,7 @@ class TerminationCriteria(MatchCriteria[TerminationInfo]):
     ended_range: DateTimeRange = None
 
     @classmethod
-    def deserialize(cls, data: Dict[str, Any]) -> 'TerminationCriteria':
+    def deserialize(cls, data: Dict[str, Any]) -> 'TerminationCriterion':
         return cls(
             status=TerminationStatus[data['status']] if data.get('status') else None,
             outcome=Outcome[data.get('outcome', Outcome.ANY.name)],
@@ -322,7 +322,7 @@ class LifecycleCriterion(MatchCriteria[RunLifecycle]):
     started: Optional[DateTimeRange] = None
     ended: Optional[DateTimeRange] = None
     total_run_time: Optional[TimeRange] = None
-    termination: Optional[TerminationCriteria] = None
+    termination: Optional[TerminationCriterion] = None
 
     def matches(self, lifecycle: RunLifecycle) -> bool:
         """Check if the lifecycle matches all specified criteria."""
@@ -370,7 +370,7 @@ class LifecycleCriterion(MatchCriteria[RunLifecycle]):
             started=DateTimeRange.deserialize(data['started_range']) if data.get('started_range') else None,
             ended=DateTimeRange.deserialize(data['ended_range']) if data.get('ended_range') else None,
             total_run_time=TimeRange.deserialize(data['exec_range']) if data.get('exec_range') else None,
-            termination=TerminationCriteria.deserialize(data['termination']) if data.get('termination') else None
+            termination=TerminationCriterion.deserialize(data['termination']) if data.get('termination') else None
         )
 
     def __bool__(self) -> bool:

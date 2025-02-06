@@ -166,9 +166,9 @@ class DateTimeRange:
             DateTimeRange: The deserialized range
         """
         return cls(
-            since=parse(data['start']) if data.get('start') else None,
-            until=parse(data['end']) if data.get('end') else None,
-            until_included=data.get('end_excluded', True)
+            since=parse(data['since']) if data.get('since') else None,
+            until=parse(data['until']) if data.get('until') else None,
+            until_included=data.get('until_included', True)
         )
 
     def serialize(self) -> Dict[str, Any]:
@@ -179,76 +179,88 @@ class DateTimeRange:
             Dict[str, Any]: The serialized range
         """
         return {
-            'start': format_dt_iso(self.since) if self.since else None,
-            'end': format_dt_iso(self.until) if self.until else None,
-            'end_excluded': self.until_included
+            'since': format_dt_iso(self.since) if self.since else None,
+            'until': format_dt_iso(self.until) if self.until else None,
+            'until_included': self.until_included
         }
+
+    @classmethod
+    def parse_to_utc(cls, from_val, to_val):
+        """
+        Creates criteria with provided values converted to the UTC timezone.
+
+        Args:
+            from_val (str, datetime, date): The start date-time of the interval.
+            to_val (str, datetime, date): The end date-time of the interval.
+        """
+        if from_val is None and to_val is None:
+            raise ValueError('Both `from_val` and `to_val` parameters cannot be None')
+
+        include_to = True
+
+        if from_val is None:
+            from_dt = None
+        else:
+            if isinstance(from_val, str):
+                from_val = parse(from_val)
+            if isinstance(from_val, datetime):
+                from_dt = from_val.astimezone(timezone.utc)
+            else:  # Assuming it is datetime.date
+                from_dt = datetime.combine(from_val, time.min).astimezone(timezone.utc)
+
+        if to_val is None:
+            to_dt = None
+        else:
+            if isinstance(to_val, str):
+                to_val = parse(to_val)
+            if isinstance(to_val, datetime):
+                to_dt = to_val.astimezone(timezone.utc)
+            else:  # Assuming it is datetime.date
+                to_dt = datetime.combine(to_val + timedelta(days=1), time.min).astimezone(timezone.utc)
+                include_to = False
+
+        return cls(from_dt, to_dt, include_to)
+
+    @classmethod
+    def single_day_range(cls, today_offset=0, *, to_utc=False) -> 'DateTimeRange':
+        today = date.today()
+        start_day = today + timedelta(days=today_offset)
+        end_day = today + timedelta(days=today_offset + 1)
+        start = datetime.combine(start_day, time.min)
+        end = datetime.combine(end_day, time.min)
+
+        return cls(to_naive_utc(start), to_naive_utc(end), False) if to_utc else cls(start, end, False)
+
+    @classmethod
+    def days_range(cls, days=0, *, to_utc=False):
+        end = datetime.now()
+        start = end + timedelta(days=days)
+
+        if days > 0:
+            start, end = end, start
+
+        return cls(to_naive_utc(start), to_naive_utc(end), False) if to_utc else cls(start, end, False)
+
+    @classmethod
+    def today(cls, *, to_utc=False):
+        return cls.single_day_range(0, to_utc=to_utc)
+
+    @classmethod
+    def yesterday(cls, *, to_utc=False):
+        return cls.single_day_range(-1, to_utc=to_utc)
+
+    @classmethod
+    def week_back(cls, *, to_utc=False):
+        return cls.days_range(-7, to_utc=to_utc)
 
     def __str__(self) -> str:
         """String representation of the range using mathematical interval notation."""
         if not self.since and not self.until:
             return ""
-        start_str = str(self.since) if self.since else "-∞"
-        end_str = str(self.until) if self.until else "∞"
-        end_bracket = "]" if not self.until_included else ")"
-        return f"[{start_str}, {end_str}{end_bracket}"
-
-
-def parse_range_to_utc(from_val, to_val):
-    """
-    Creates criteria with provided values converted to the UTC timezone.
-
-    Args:
-        from_val (str, datetime, date): The start date-time of the interval.
-        to_val (str, datetime, date): The end date-time of the interval.
-    """
-    if from_val is None and to_val is None:
-        raise ValueError('Both `from_val` and `to_val` parameters cannot be None')
-
-    include_to = True
-
-    if from_val is None:
-        from_dt = None
-    else:
-        if isinstance(from_val, str):
-            from_val = parse(from_val)
-        if isinstance(from_val, datetime):
-            from_dt = from_val.astimezone(timezone.utc)
-        else:  # Assuming it is datetime.date
-            from_dt = datetime.combine(from_val, time.min).astimezone(timezone.utc)
-
-    if to_val is None:
-        to_dt = None
-    else:
-        if isinstance(to_val, str):
-            to_val = parse(to_val)
-        if isinstance(to_val, datetime):
-            to_dt = to_val.astimezone(timezone.utc)
-        else:  # Assuming it is datetime.date
-            to_dt = datetime.combine(to_val + timedelta(days=1), time.min).astimezone(timezone.utc)
-            include_to = False
-
-    return DateTimeRange(from_dt, to_dt, include_to)
-
-
-def single_day_range(day_offset=0, *, to_utc=False) -> DateTimeRange:
-    today = date.today()
-    start_day = today + timedelta(days=day_offset)
-    end_day = today + timedelta(days=day_offset + 1)
-    start = datetime.combine(start_day, time.min)
-    end = datetime.combine(end_day, time.min)
-
-    return DateTimeRange(to_naive_utc(start), to_naive_utc(end), False) if to_utc else DateTimeRange(start, end, False)
-
-
-def days_range(days=0, *, to_utc=False):
-    end = datetime.now()
-    start = end + timedelta(days=days)
-
-    if days > 0:
-        start, end = end, start
-
-    return DateTimeRange(to_naive_utc(start), to_naive_utc(end), False) if to_utc else DateTimeRange(start, end, False)
+        since_str = str(self.since) if self.since else "-∞"
+        until_str = str(self.until) if self.until else "∞"
+        until_bracket = "]" if not self.until_included else ")"
+        return f"[{since_str}, {until_str}{until_bracket}"
 
 
 def to_naive_utc(dt):
