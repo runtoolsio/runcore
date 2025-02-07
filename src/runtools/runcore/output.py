@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import List, Optional
 
+from runtools.runcore import util
 from runtools.runcore.common import InvalidStateError
 
 
@@ -18,7 +19,7 @@ class Output(ABC):
         pass
 
 
-@dataclass
+@dataclass(frozen=True)
 class OutputLine:
     text: str
     is_error: bool = False
@@ -32,9 +33,13 @@ class OutputLine:
             source=data.get("source"),
         )
 
-    def serialize(self):
-        return {"text": self.text, "is_error": self.is_error, "source": self.source}
-
+    def serialize(self, truncate_length: Optional[int] = None, truncated_suffix: str = ".. (truncated)"):
+        text = util.truncate(self.text, truncate_length, truncated_suffix) if truncate_length is not None else self.text
+        return {
+            "text": text,
+            "is_error": self.is_error,
+            "source": self.source
+        }
 
 class OutputObserver(ABC):
 

@@ -5,9 +5,8 @@ from abc import abstractmethod
 from json import JSONDecodeError
 
 from runtools.runcore import util, paths
-from runtools.runcore.job import JobRun, InstanceTransitionObserver, InstanceOutputObserver, JobInstanceMetadata
-from runtools.runcore.output import OutputLine
-from runtools.runcore.run import PhaseRun
+from runtools.runcore.job import InstanceTransitionObserver, InstanceOutputObserver, JobInstanceMetadata, \
+    InstanceTransitionEvent, InstanceOutputEvent
 from runtools.runcore.util.observer import ObservableNotification
 from runtools.runcore.util.socket import SocketServer
 
@@ -74,26 +73,22 @@ class EventReceiver(SocketServer):
 
 class InstanceTransitionReceiver(EventReceiver):
 
-    def __init__(self, instance_match=None, phases=(), run_states=()):
+    def __init__(self, instance_match=None, phases=(), stages=()):
         super().__init__(_listener_socket_name(TRANSITION_LISTENER_FILE_EXTENSION), instance_match)
         self.phases = phases
-        self.run_states = run_states
+        self.stages = stages
         self._notification = ObservableNotification[InstanceTransitionObserver]()
 
     def handle_event(self, _, instance_meta, event):
-        new_phase = PhaseRun.deserialize(event["new_phase"])
+        e = InstanceTransitionEvent.deserialize(event)
 
-        if self.phases and new_phase.phase_key not in self.phases:
+        if self.phases and e.phase not in self.phases:
             return
 
-        if self.run_states and new_phase.run_state not in self.run_states:
+        if self.stages and e.new_stage not in self.stages:
             return
 
-        job_run = JobRun.deserialize(event['job_run'])
-        previous_phase = PhaseRun.deserialize(event['previous_phase'])
-        ordinal = event['ordinal']
-
-        self._notification.observer_proxy.new_instance_phase(job_run, previous_phase, new_phase, ordinal)
+        self._notification.observer_proxy.new_instance_transition(e)
 
     def add_observer_transition(self, observer):
         self._notification.add_observer(observer)
@@ -109,10 +104,7 @@ class InstanceOutputReceiver(EventReceiver):
         self._notification = ObservableNotification[InstanceOutputObserver]()
 
     def handle_event(self, _, instance_meta, event):
-        text = event['text']
-        is_error = event['is_error']
-        phase_id = event['phase_id']
-        self._notification.observer_proxy.new_instance_output(instance_meta, OutputLine(text, is_error, phase_id))
+        self._notification.observer_proxy.new_instance_output(InstanceOutputEvent.deserialize(event))
 
     def add_observer_output(self, observer):
         self._notification.add_observer(observer)

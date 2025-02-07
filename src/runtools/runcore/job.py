@@ -14,8 +14,9 @@ from datetime import timedelta
 from enum import Enum, auto
 from typing import Dict, Any, List, Optional, Tuple
 
+from runtools.runcore import util
 from runtools.runcore.output import OutputLine
-from runtools.runcore.run import TerminationStatus, RunState, PhaseRun, Fault, PhaseDetail, Stage
+from runtools.runcore.run import TerminationStatus, RunState, Fault, PhaseDetail, Stage
 from runtools.runcore.status import Status
 from runtools.runcore.util import MatchingStrategy, format_dt_iso
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
@@ -226,7 +227,7 @@ class JobStats:
         return result
 
 
-@dataclass
+@dataclass(frozen=True)
 class JobInstanceMetadata(ABC):
     """
     A dataclass that contains metadata information related to a specific job run. This object is designed
@@ -518,46 +519,68 @@ class JobRuns(list):
         return {"runs": [run.serialize(include_empty=include_empty) for run in self]}
 
 
-# TODO PhaseTransitionObserver
-class InstanceTransitionObserver(abc.ABC):
-
-    @abc.abstractmethod
-    def new_instance_phase(self, job_run: JobRun, previous_phase: PhaseRun, new_phase: PhaseRun, ordinal: int):
-        """
-        Called when the instance transitions to a new phase.
-
-        The notification can optionally happen also when this observer is registered with the instance
-        to make the observer aware about the current phase of the instance.
-
-        Args:
-            job_run (JobInstSnapshot): A snapshot of the job instance that transitioned to a new phase.
-            previous_phase (TerminationStatus): The previous phase of the job instance.
-            new_phase (TerminationStatus): The new/current phase state of the job instance.
-            ordinal (int): The number of the current phase.
-        """
-
-
-@dataclass
-class InstancePhaseUpdateEvent:
+@dataclass(frozen=True)
+class InstanceTransitionEvent:
     instance: JobInstanceMetadata
     is_root_phase: bool
-    phase_detail: PhaseDetail
+    phase: PhaseDetail
     new_stage: Stage
     timestamp: datetime
 
+    def serialize(self) -> Dict[str, Any]:
+        return {
+            "instance": self.instance.serialize(),
+            "is_root_phase": self.is_root_phase,
+            "phase": self.phase.serialize(),
+            "new_stage": self.new_stage.name,
+            "timestamp": format_dt_iso(self.timestamp),
+        }
 
-class InstancePhaseUpdateObserver(abc.ABC):
+    @classmethod
+    def deserialize(cls, as_dict: Dict[str, Any]) -> 'InstanceTransitionEvent':
+        return cls(
+            instance=JobInstanceMetadata.deserialize(as_dict['instance']),
+            is_root_phase=as_dict['is_root_phase'],
+            phase=PhaseDetail.deserialize(as_dict['phase']),
+            new_stage=Stage[as_dict['new_stage']],
+            timestamp=util.parse_datetime(as_dict['timestamp']),
+        )
+
+
+class InstanceTransitionObserver(abc.ABC):
 
     @abstractmethod
-    def new_instance_phase_update(self, event: InstancePhaseUpdateEvent):
+    def new_instance_transition(self, event: InstanceTransitionEvent):
         pass
+
+
+@dataclass(frozen=True)
+class InstanceOutputEvent:
+    instance: JobInstanceMetadata
+    output_line: OutputLine
+    timestamp: datetime
+
+    def serialize(self, truncate_length: Optional[int] = None, truncated_suffix: str = ".. (truncated)"):
+        return {
+            "instance": self.instance.serialize(),
+            "output_line": self.output_line.serialize(truncate_length, truncated_suffix),
+            "timestamp": format_dt_iso(self.timestamp),
+        }
+
+    @classmethod
+    def deserialize(cls, as_dict: Dict[str, Any]) -> 'InstanceOutputEvent':
+        return cls(
+            instance=JobInstanceMetadata.deserialize(as_dict['instance']),
+            output_line=OutputLine.deserialize(as_dict['output_line']),
+            timestamp=util.parse_datetime(as_dict['timestamp']),
+        )
 
 
 class InstanceOutputObserver(abc.ABC):
 
     @abc.abstractmethod
-    def new_instance_output(self, instance_meta: JobInstanceMetadata, output_line: OutputLine):
-        """TODO"""
+    def new_instance_output(self, event: InstanceOutputEvent):
+        pass
 
 
 class JobInstanceManager(ABC):
