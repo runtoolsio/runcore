@@ -611,16 +611,16 @@ class PhaseDetail:
 
 
 @dataclass
-class PhaseUpdateEvent:
+class PhaseTransitionEvent:
     phase_detail: PhaseDetail
     new_stage: Stage
     timestamp: datetime
 
 
-class PhaseUpdateObserver(ABC):
+class PhaseTransitionObserver(ABC):
 
     @abstractmethod
-    def new_phase_update(self, event: PhaseUpdateEvent):
+    def new_phase_transition(self, event: PhaseTransitionEvent):
         pass
 
 

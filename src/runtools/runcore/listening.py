@@ -82,7 +82,7 @@ class InstanceTransitionReceiver(EventReceiver):
     def handle_event(self, _, instance_meta, event):
         e = InstanceTransitionEvent.deserialize(event)
 
-        if self.phases and e.phase not in self.phases:
+        if self.phases and e.phase_id not in self.phases:
             return
 
         if self.stages and e.new_stage not in self.stages:

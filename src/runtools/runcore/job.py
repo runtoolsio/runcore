@@ -522,16 +522,18 @@ class JobRuns(list):
 @dataclass(frozen=True)
 class InstanceTransitionEvent:
     instance: JobInstanceMetadata
+    job_run: JobRun
     is_root_phase: bool
-    phase: PhaseDetail
+    phase_id: str
     new_stage: Stage
     timestamp: datetime
 
     def serialize(self) -> Dict[str, Any]:
         return {
             "instance": self.instance.serialize(),
+            "job_run": self.job_run.serialize(),
             "is_root_phase": self.is_root_phase,
-            "phase": self.phase.serialize(),
+            "phase_id": self.phase_id,
             "new_stage": self.new_stage.name,
             "timestamp": format_dt_iso(self.timestamp),
         }
@@ -540,8 +542,9 @@ class InstanceTransitionEvent:
     def deserialize(cls, as_dict: Dict[str, Any]) -> 'InstanceTransitionEvent':
         return cls(
             instance=JobInstanceMetadata.deserialize(as_dict['instance']),
+            job_run=JobRun.deserialize(as_dict['job_run']),
             is_root_phase=as_dict['is_root_phase'],
-            phase=PhaseDetail.deserialize(as_dict['phase']),
+            phase_id=as_dict['phase_id'],
             new_stage=Stage[as_dict['new_stage']],
             timestamp=util.parse_datetime(as_dict['timestamp']),
         )
