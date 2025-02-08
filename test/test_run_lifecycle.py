@@ -53,14 +53,14 @@ def test_run_time(sut):
 
 
 def test_state_checks(sut):
-    assert not sut.is_running()
-    assert sut.is_ended()
-    assert sut.completed_successfully()
+    assert not sut.is_running
+    assert sut.is_ended
+    assert sut.completed_successfully
 
     running = RunLifecycle(created_at=utc_now(), started_at=utc_now())
-    assert running.is_running()
-    assert not running.is_ended()
-    assert not running.completed_successfully()
+    assert running.is_running
+    assert not running.is_ended
+    assert not running.completed_successfully
 
     failed = RunLifecycle(
         created_at=utc_now(),
@@ -70,9 +70,9 @@ def test_state_checks(sut):
             terminated_at=utc_now()
         )
     )
-    assert not failed.is_running()
-    assert failed.is_ended()
-    assert not failed.completed_successfully()
+    assert not failed.is_running
+    assert failed.is_ended
+    assert not failed.completed_successfully
 
 
 def test_serialization(sut):

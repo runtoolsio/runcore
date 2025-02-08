@@ -457,14 +457,17 @@ class RunLifecycle:
             return None
         return self.termination.terminated_at - self.started_at
 
+    @property
     def is_running(self) -> bool:
         """Returns True if this phase is in the running stage."""
         return self.stage == Stage.RUNNING
 
+    @property
     def is_ended(self) -> bool:
         """Returns True if this phase has reached its end stage."""
         return self.stage == Stage.ENDED
 
+    @property
     def completed_successfully(self) -> bool:
         """Returns True if this phase completed its lifecycle successfully."""
         return self.termination is not None and self.termination.status == TerminationStatus.COMPLETED
