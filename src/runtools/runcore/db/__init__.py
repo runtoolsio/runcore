@@ -4,10 +4,9 @@ from abc import ABC
 from enum import Enum
 
 from runtools import runcore
-from runtools.runcore.job import JobRun, InstanceTransitionEvent
 from runtools.runcore.common import RuntoolsException
-from runtools.runcore.job import InstanceTransitionObserver
-from runtools.runcore.run import PhaseRun, RunState, Stage
+from runtools.runcore.job import InstanceStageObserver, InstanceStageEvent
+from runtools.runcore.run import Stage
 
 _db_modules = {}
 
@@ -71,11 +70,11 @@ class Persistence(ABC):
     def close(self):
         pass
 
-class PersistingObserver(InstanceTransitionObserver):
+class PersistingObserver(InstanceStageObserver):
 
     def __init__(self, persistence):
         self._persistence = persistence
 
-    def new_instance_transition(self, event: InstanceTransitionEvent):
-        if event.is_root_phase or event.new_stage == Stage.ENDED:
+    def new_instance_stage(self, event: InstanceStageEvent):
+        if event.new_stage == Stage.ENDED:
             self._persistence.store_job_runs(event.job_run)

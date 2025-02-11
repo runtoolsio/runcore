@@ -360,7 +360,15 @@ class JobInstance(abc.ABC):
         """
 
     @abc.abstractmethod
-    def add_observer_transition(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, notify_on_register=False):
+    def add_observer_stage(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, reply_last_event=False):
+        pass
+
+    @abc.abstractmethod
+    def remove_observer_stage(self, observer):
+        pass
+
+    @abc.abstractmethod
+    def add_observer_transition(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
         """
         Register an instance state observer. Optionally, trigger a notification with the last known state
         upon registration.
@@ -374,8 +382,6 @@ class JobInstance(abc.ABC):
                 2. A callable object with the signature of the `InstanceStateObserver.instance_phase_transition` method.
             priority (int, optional):
                 Priority of the observer. Lower numbers are notified first.
-            notify_on_register (bool, optional):
-                If True, immediately notifies the observer about the last known instance state change upon registration.
         """
 
     @abc.abstractmethod
@@ -520,6 +526,38 @@ class JobRuns(list):
 
 
 @dataclass(frozen=True)
+class InstanceStageEvent:
+    instance: JobInstanceMetadata
+    job_run: JobRun
+    new_stage: Stage
+    timestamp: datetime
+
+    def serialize(self) -> Dict[str, Any]:
+        return {
+            "instance": self.instance.serialize(),
+            "job_run": self.job_run.serialize(),
+            "new_stage": self.new_stage.name,
+            "timestamp": format_dt_iso(self.timestamp),
+        }
+
+    @classmethod
+    def deserialize(cls, as_dict: Dict[str, Any]) -> 'InstanceStageEvent':
+        return cls(
+            instance=JobInstanceMetadata.deserialize(as_dict['instance']),
+            job_run=JobRun.deserialize(as_dict['job_run']),
+            new_stage=Stage[as_dict['new_stage']],
+            timestamp=util.parse_datetime(as_dict['timestamp']),
+        )
+
+
+class InstanceStageObserver(abc.ABC):
+
+    @abstractmethod
+    def new_instance_stage(self, event: InstanceStageEvent):
+        pass
+
+
+@dataclass(frozen=True)
 class InstanceTransitionEvent:
     instance: JobInstanceMetadata
     job_run: JobRun
@@ -623,8 +661,15 @@ class JobInstanceManager(ABC):
 class JobInstanceObservable:
 
     def __init__(self):
+        self._stage_notification = ObservableNotification[InstanceStageObserver]()
         self._transition_notification = ObservableNotification[InstanceTransitionObserver]()
         self._output_notification = ObservableNotification[InstanceOutputObserver]()
+
+    def add_observer_stage(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
+        self._stage_notification.add_observer(observer, priority)
+
+    def remove_observer_stage(self, observer):
+        self._stage_notification.remove_observer(observer)
 
     def add_observer_transition(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
         self._transition_notification.add_observer(observer, priority)
