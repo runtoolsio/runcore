@@ -109,7 +109,7 @@ class _Proxy(Generic[O]):
                 raise ExceptionGroup("Observer exception(s) occurred", exceptions)
 
         # Special handling for methods/attributes that are specific to the proxy object itself
-        if name in ["_notification"]:
+        if name in ["_notification"] or name.startswith("__"):
             return object.__getattribute__(self, name)
 
         return method
