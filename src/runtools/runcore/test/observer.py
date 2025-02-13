@@ -13,7 +13,7 @@ from typing import Tuple, List, Callable
 
 from runtools.runcore.job import JobRun, InstanceOutputObserver, InstanceOutputEvent, \
     InstanceStageObserver, InstanceStageEvent
-from runtools.runcore.run import RunState
+from runtools.runcore.run import RunState, Stage
 
 log = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ class GenericObserver:
         self.updates.put_nowait(("__call__", args))
 
 
-class TestTransitionObserver(InstanceStageObserver):
+class TestStageObserver(InstanceStageObserver):
     __test__ = False  # To tell pytest it isn't a test class
 
     def __init__(self):
@@ -51,15 +51,11 @@ class TestTransitionObserver(InstanceStageObserver):
         """
         :return: job of the last event
         """
-        return [e[0] for e in self.events]
+        return [e.job_run for e in self.events]
 
     @property
-    def phases(self) -> List[Tuple[str, str]]:
-        return [(e[1].phase_id, e[2].phase_id) for e in self.events]
-
-    @property
-    def run_states(self) -> List[RunState]:
-        return [e[2].run_state for e in self.events]
+    def stages(self) -> List[Stage]:
+        return [e.new_stage for e in self.events]
 
     @property
     def last_state(self):
