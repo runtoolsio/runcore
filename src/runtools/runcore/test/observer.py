@@ -11,9 +11,9 @@ from queue import Queue
 from threading import Condition
 from typing import Tuple, List, Callable
 
-from runtools.runcore.job import JobRun, InstanceTransitionObserver, InstanceOutputObserver
-from runtools.runcore.output import OutputLine
-from runtools.runcore.run import PhaseRun, RunState, PhaseInfo
+from runtools.runcore.job import JobRun, InstanceOutputObserver, InstanceOutputEvent, \
+    InstanceStageObserver, InstanceStageEvent
+from runtools.runcore.run import RunState
 
 log = logging.getLogger(__name__)
 
@@ -35,16 +35,15 @@ class GenericObserver:
         self.updates.put_nowait(("__call__", args))
 
 
-class TestTransitionObserver(InstanceTransitionObserver):
+class TestTransitionObserver(InstanceStageObserver):
     __test__ = False  # To tell pytest it isn't a test class
 
     def __init__(self):
-        self.events: List[Tuple[JobRun, PhaseRun, PhaseRun, int]] = []
+        self.events: List[InstanceStageEvent] = []
         self.completion_lock = Condition()
 
-    def new_instance_phase(self, job_run: JobRun, previous_phase, new_phase, ordinal):
-        self.events.append((job_run, previous_phase, new_phase, ordinal))
-        log.info("event=[state_changed] job_info=[{}]".format(job_run))
+    def new_instance_stage(self, event: InstanceStageEvent):
+        self.events.append(event)
         self._release_state_waiter()
 
     @property
@@ -107,9 +106,9 @@ class TestOutputObserver(InstanceOutputObserver):
     def __init__(self):
         self.outputs = []
 
-    def new_instance_output(self, job_run: JobRun, output_line: OutputLine):
-        self.outputs.append((job_run, output_line))
+    def new_instance_output(self, event: InstanceOutputEvent):
+        self.outputs.append(event)
 
     @property
     def last_text(self):
-        return self.outputs[-1][1].text
+        return self.outputs[-1].output_line.text
