@@ -16,7 +16,7 @@ from typing import Dict, Any, List, Optional, Tuple
 
 from runtools.runcore import util
 from runtools.runcore.output import OutputLine
-from runtools.runcore.run import TerminationStatus, RunState, Fault, PhaseDetail, Stage
+from runtools.runcore.run import TerminationStatus, RunState, Fault, PhaseDetail, Stage, RunLifecycle
 from runtools.runcore.status import Status
 from runtools.runcore.util import MatchingStrategy, format_dt_iso
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
@@ -430,7 +430,8 @@ class JobRun:
     Immutable snapshot of job instance
     """
     metadata: JobInstanceMetadata
-    phase: PhaseDetail
+    lifecycle: RunLifecycle
+    phases: List[PhaseDetail]
     faults: Optional[JobFaults] = None
     status: Optional[Status] = None
 
@@ -438,7 +439,8 @@ class JobRun:
     def deserialize(cls, as_dict: Dict[str, Any]) -> 'JobRun':
         return cls(
             metadata=JobInstanceMetadata.deserialize(as_dict['metadata']),
-            phase=PhaseDetail.deserialize(as_dict['phase']),
+            lifecycle=RunLifecycle.deserialize(as_dict['lifecycle']),
+            phases=[PhaseDetail.deserialize(p) for p in as_dict['phase']],
             faults=JobFaults.deserialize(as_dict['faults']) if as_dict.get('faults') else None,
             status=Status.deserialize(as_dict['status']) if as_dict.get('status') else None,
         )
@@ -446,11 +448,11 @@ class JobRun:
     def serialize(self) -> Dict[str, Any]:
         d = {
             "metadata": self.metadata.serialize(),
-            "phase": self.phase.serialize(),
+            "lifecycle": self.lifecycle.serialize(),
+            "phase": [p.serialize() for p in self.phases],
         }
         if self.faults:
             d["faults"] = self.faults.serialize()
-
         if self.status:
             d["status"] = self.status.serialize()
         return d

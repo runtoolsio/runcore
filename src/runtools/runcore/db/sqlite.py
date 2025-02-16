@@ -15,7 +15,7 @@ from runtools.runcore.common import InvalidStateError
 from runtools.runcore.criteria import PhaseMatch, LifecycleCriterion
 from runtools.runcore.db import SortCriteria, Persistence
 from runtools.runcore.job import JobStats, JobRun, JobRuns, JobInstanceMetadata, JobFaults
-from runtools.runcore.run import TerminationStatus, Outcome, PhaseDetail
+from runtools.runcore.run import TerminationStatus, Outcome, PhaseDetail, RunLifecycle
 from runtools.runcore.status import Status
 from runtools.runcore.util import MatchingStrategy, format_dt_sql, parse_dt_sql
 
@@ -272,7 +272,8 @@ class SQLite(Persistence):
                          started timestamp,
                          ended timestamp,
                          exec_time real,
-                         phase text,
+                         lifecycle text,
+                         phases text,
                          termination_status int,
                          faults text,
                          status text,
@@ -333,10 +334,11 @@ class SQLite(Persistence):
 
         def to_job_run(t):
             metadata = JobInstanceMetadata(t[0], t[1], t[2], json.loads(t[3]) if t[3] else dict())
-            phase = PhaseDetail.deserialize(json.loads(t[8]))
-            faults = JobFaults.deserialize(json.loads(t[10])) if t[10] else None
-            status = Status.deserialize(json.loads(t[11])) if t[11] else None
-            return JobRun(metadata, phase, faults, status)
+            lifecycle = RunLifecycle.deserialize(json.loads(t[8]))
+            phases = [PhaseDetail.deserialize(p) for p in json.loads(t[9])]
+            faults = JobFaults.deserialize(json.loads(t[11])) if t[11] else None
+            status = Status.deserialize(json.loads(t[12])) if t[12] else None
+            return JobRun(metadata, lifecycle, phases, faults, status)
 
         return JobRuns((to_job_run(row) for row in c.fetchall()))
 
@@ -442,17 +444,17 @@ class SQLite(Persistence):
         """
 
         def to_tuple(r):
-            lifecycle = r.phase.lifecycle
             return (r.metadata.job_id,
                     r.metadata.run_id,
                     r.metadata.instance_id,
                     json.dumps(r.metadata.user_params) if r.metadata.user_params else None,
-                    format_dt_sql(lifecycle.created_at),
-                    format_dt_sql(lifecycle.started_at),
-                    format_dt_sql(lifecycle.termination.terminated_at) if lifecycle.termination else None,
-                    round(lifecycle.total_run_time.total_seconds(), 3) if lifecycle.total_run_time else None,
-                    json.dumps(r.phase.serialize()),
-                    lifecycle.termination.status.value if lifecycle.termination else None,
+                    format_dt_sql(r.lifecycle.created_at),
+                    format_dt_sql(r.lifecycle.started_at),
+                    format_dt_sql(r.lifecycle.termination.terminated_at) if r.lifecycle.termination else None,
+                    round(r.lifecycle.total_run_time.total_seconds(), 3) if r.lifecycle.total_run_time else None,
+                    json.dumps(r.lifecycle.serialize()),
+                    json.dumps([p.serialize() for p in r.phases]),
+                    r.lifecycle.termination.status.value if r.lifecycle.termination else None,
                     json.dumps(r.faults.serialize()) if r.faults else None,
                     json.dumps(r.status.serialize()) if r.status else None,
                     len(r.status.warnings) if r.status else None,
@@ -461,7 +463,7 @@ class SQLite(Persistence):
 
         jobs = [to_tuple(j) for j in job_runs]
         self._conn.executemany(
-            "INSERT INTO history VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO history VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             jobs
         )
         self._conn.commit()

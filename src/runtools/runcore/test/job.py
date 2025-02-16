@@ -16,7 +16,7 @@ def job_run(job_id, phase, *, instance_id=None, run_id=None, user_params=None):
     instance_id = instance_id or unique_timestamp_hex()
     run_id = run_id or instance_id
     meta = JobInstanceMetadata(job_id, run_id, instance_id, user_params or {})
-    return JobRun(meta, phase, None, None)  # TODO Faults and status
+    return JobRun(meta, phase.lifecycle, phase.children)  # TODO Faults and status
 
 
 def fake_job_run(job_id, run_id='r1', *, created_at=None, offset_min=0, ended_at=None,
