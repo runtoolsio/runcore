@@ -481,6 +481,12 @@ class JobRun:
         """
         return self.metadata.instance_id
 
+    def find_phase(self, phase_id):
+        for p in self.phases:
+            if found := p.find_phase_by_id(phase_id):
+                return found
+        return None
+
 
 class JobRuns(list):
     """

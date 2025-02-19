@@ -295,7 +295,7 @@ class PhaseDetail:
 
         return dto
 
-    def descendants(self, predicate: Optional[Callable[['PhaseDetail'], bool]] = None) -> List['PhaseDetail']:
+    def search_descendants(self, predicate: Optional[Callable[['PhaseDetail'], bool]] = None) -> List['PhaseDetail']:
         """
         Returns all descendant phases in depth-first order.
         Includes children, grandchildren, and so on.
@@ -310,10 +310,10 @@ class PhaseDetail:
         for child in self.children or []:
             if not predicate or predicate(child):
                 result.append(child)
-            result.extend(child.descendants(predicate))
+            result.extend(child.search_descendants(predicate))
         return result
 
-    def find_first_phase(self, predicate: Callable[['PhaseDetail'], bool]) -> Optional['PhaseDetail']:
+    def find_phase(self, predicate: Callable[['PhaseDetail'], bool]) -> Optional['PhaseDetail']:
         """
         Finds a phase in this view's hierarchy that matches the given predicate.
 
@@ -328,11 +328,14 @@ class PhaseDetail:
 
         if self.children:
             for child in self.children:
-                result = child.find_first_phase(predicate)
+                result = child.find_phase(predicate)
                 if result:
                     return result
 
         return None
+
+    def find_phase_by_id(self, phase_id):
+        return self.find_phase(lambda p: p.phase_id == phase_id)
 
 
 @dataclass
