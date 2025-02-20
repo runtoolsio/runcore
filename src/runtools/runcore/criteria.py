@@ -11,7 +11,7 @@ from typing import Dict, Any, Optional, TypeVar, Generic
 
 from runtools.runcore.job import JobInstanceMetadata, JobRun
 from runtools.runcore.run import Outcome, TerminationInfo, RunState, \
-    PhaseDetail, TerminationStatus, RunLifecycle
+    PhaseDetail, TerminationStatus, RunLifecycle, Stage
 from runtools.runcore.util import MatchingStrategy, to_list, DateTimeRange, TimeRange
 
 T = TypeVar('T')
@@ -72,35 +72,21 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         """Creates a criterion that matches no instances."""
         return cls('', '', '', False, MatchingStrategy.ALWAYS_FALSE)
 
-    @staticmethod
-    def exact_match(job_run: 'JobRun') -> 'MetadataCriterion':
-        """
-        Creates a criterion that matches a specific job run by its instance ID.
-
-        Args:
-            job_run: The specific job run to create a match for.
-
-        Returns:
-            MetadataCriterion: A criteria object that will match the given job instance.
-        """
-        return MetadataCriterion.instance_match(job_run.metadata.instance_id)
-
     @classmethod
-    def all_except(cls, job_run: 'JobRun') -> 'MetadataCriterion':
+    def all_except(cls, instance_id) -> 'MetadataCriterion':
         """
         Creates a criterion that matches any job run except the specified one.
 
         Args:
-            job_run: The specific job run to exclude from matching.
+            instance_id: The specific job instance to exclude from matching.
 
         Returns:
-            MetadataCriterion: A criteria object that will match any job instance
-            except the given one.
+            MetadataCriterion: A criteria object that will match any job instance except the given one.
         """
-        return MetadataCriterion.instance_match(negate_id(job_run.metadata.instance_id))
+        return MetadataCriterion.exact_match(negate_id(instance_id))
 
     @staticmethod
-    def instance_match(instance_id: str) -> 'MetadataCriterion':
+    def exact_match(instance_id: str) -> 'MetadataCriterion':
         """
         Creates a criterion that matches a specific instance.
 
@@ -318,6 +304,7 @@ class LifecycleCriterion(MatchCriteria[RunLifecycle]):
     """
     Criteria for matching run lifecycle information.
     """
+    stage: Optional[Stage] = None
     created: Optional[DateTimeRange] = None
     started: Optional[DateTimeRange] = None
     ended: Optional[DateTimeRange] = None
@@ -326,6 +313,9 @@ class LifecycleCriterion(MatchCriteria[RunLifecycle]):
 
     def matches(self, lifecycle: RunLifecycle) -> bool:
         """Check if the lifecycle matches all specified criteria."""
+        if self.stage and lifecycle.stage != self.stage:
+            return False
+
         if self.created and not self.created(lifecycle.created_at):
             return False
 
@@ -350,6 +340,8 @@ class LifecycleCriterion(MatchCriteria[RunLifecycle]):
     def serialize(self) -> Dict[str, Any]:
         """Serialize to a dictionary."""
         data = {}
+        if self.stage:
+            data['stage'] = self.stage.name
         if self.created:
             data['created_range'] = self.created.serialize()
         if self.started:
@@ -366,6 +358,7 @@ class LifecycleCriterion(MatchCriteria[RunLifecycle]):
     def deserialize(cls, data: Dict[str, Any]) -> 'LifecycleCriterion':
         """Deserialize from a dictionary."""
         return cls(
+            stage=Stage[data['stage']] if data.get('stage') else None,
             created=DateTimeRange.deserialize(data['created_range']) if data.get('created_range') else None,
             started=DateTimeRange.deserialize(data['started_range']) if data.get('started_range') else None,
             ended=DateTimeRange.deserialize(data['ended_range']) if data.get('ended_range') else None,
@@ -375,12 +368,13 @@ class LifecycleCriterion(MatchCriteria[RunLifecycle]):
 
     def __bool__(self) -> bool:
         """Check if any criteria are set."""
-        return bool(self.created or self.started or self.ended or
-                    self.total_run_time or self.termination)
+        return bool(self.stage or self.created or self.started or self.ended or self.total_run_time or self.termination)
 
     def __str__(self) -> str:
         """String representation showing non-None criteria."""
         fields = []
+        if self.stage:
+            fields.append(f"stage{self.stage.name}")
         if self.created:
             fields.append(f"created{self.created}")
         if self.started:
@@ -560,19 +554,19 @@ class JobRunCriteria(MatchCriteria[JobRun]):
     @classmethod
     def exact_match(cls, job_run):
         new = cls()
-        new += MetadataCriterion.exact_match(job_run)
+        new += MetadataCriterion.exact_match(job_run.instance_id)
         return new
 
     @classmethod
     def all_except(cls, job_run):
         new = cls()
-        new += MetadataCriterion.all_except(job_run)
+        new += MetadataCriterion.all_except(job_run.instance_id)
         return new
 
     @classmethod
     def instance_match(cls, instance_id):
         new = cls()
-        new += MetadataCriterion.instance_match(instance_id)
+        new += MetadataCriterion.exact_match(instance_id)
         return new
 
     def __iadd__(self, criterion):
