@@ -471,6 +471,9 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
 
         return True
 
+    def __call__(self, phase: PhaseDetail):
+        return self.matches(phase)
+
     def matches(self, phase: PhaseDetail) -> bool:
         """Check if phase or its children match based on match_type."""
         match self.match_type:
