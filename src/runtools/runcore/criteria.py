@@ -374,17 +374,17 @@ class LifecycleCriterion(MatchCriteria[RunLifecycle]):
         """String representation showing non-None criteria."""
         fields = []
         if self.stage:
-            fields.append(f"stage{self.stage.name}")
+            fields.append(f"stage={self.stage.name}")
         if self.created:
-            fields.append(f"created{self.created}")
+            fields.append(f"created={self.created}")
         if self.started:
-            fields.append(f"started{self.started}")
+            fields.append(f"started={self.started}")
         if self.ended:
-            fields.append(f"ended{self.ended}")
+            fields.append(f"ended={self.ended}")
         if self.total_run_time:
-            fields.append(f"exec{self.total_run_time}")
+            fields.append(f"exec={self.total_run_time}")
         if self.termination:
-            fields.append(f"termination{self.termination}")
+            fields.append(f"termination={self.termination}")
         return f"[{', '.join(fields)}]" if fields else "[]"
 
 

@@ -224,6 +224,7 @@ class PhaseDetail:
     run_state: RunState
     phase_name: Optional[str]
     attributes: Optional[Dict[str, Any]]
+    variables: Optional[Dict[str, Any]]
 
     # Lifecycle information encapsulated in a dedicated class
     lifecycle: RunLifecycle
@@ -239,6 +240,7 @@ class PhaseDetail:
             run_state=phase.run_state,
             phase_name=phase.name,
             attributes=phase.attributes,
+            variables=phase.variables,
             lifecycle=RunLifecycle(
                 created_at=phase.created_at,
                 started_at=phase.started_at,
@@ -269,6 +271,7 @@ class PhaseDetail:
             run_state=RunState[as_dict['run_state']],
             phase_name=as_dict.get('phase_name'),
             attributes=as_dict.get('attributes'),
+            variables=as_dict.get('variables'),
             lifecycle=RunLifecycle.deserialize(as_dict.get('lifecycle')),
             children=children,
         )
@@ -290,6 +293,8 @@ class PhaseDetail:
             dto['phase_name'] = self.phase_name
         if self.attributes:
             dto['attributes'] = self.attributes
+        if self.variables:
+            dto['variables'] = self.variables
         if self.children:
             dto['children'] = [child.serialize() for child in self.children]
 

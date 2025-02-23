@@ -171,6 +171,7 @@ class FakePhaseDetailBuilder:
             run_state=self.run_state,
             phase_name=self.phase_id,
             attributes=None,
+            variables=None,
             lifecycle=RunLifecycle(created_at=created_at, started_at=started_at, termination=self._termination),
             children=built_children
         )

@@ -315,10 +315,13 @@ class JobInstance(abc.ABC):
         return self.metadata.run_id
 
     @abc.abstractmethod
-    def find_phase_control(self, phase_id: str, phase_type: str = None):
+    def find_phase_control(self, phase_filter):
         """
         TODO
         """
+
+    def find_phase_control_by_id(self, phase_id: str):
+        return self.find_phase_control(lambda phase: phase.id == phase_id)
 
     @abc.abstractmethod
     def snapshot(self):
@@ -481,7 +484,13 @@ class JobRun:
         """
         return self.metadata.instance_id
 
-    def find_phase(self, phase_id):
+    def find_phase(self, predicate):
+        for p in self.phases:
+            if found := p.find_phase(predicate):
+                return found
+        return None
+
+    def find_phase_by_id(self, phase_id):
         for p in self.phases:
             if found := p.find_phase_by_id(phase_id):
                 return found
