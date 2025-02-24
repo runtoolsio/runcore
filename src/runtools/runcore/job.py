@@ -434,7 +434,7 @@ class JobRun:
     """
     metadata: JobInstanceMetadata
     lifecycle: RunLifecycle
-    phases: List[PhaseDetail]
+    phases: Tuple[PhaseDetail, ...]
     faults: Optional[JobFaults] = None
     status: Optional[Status] = None
 
@@ -443,7 +443,7 @@ class JobRun:
         return cls(
             metadata=JobInstanceMetadata.deserialize(as_dict['metadata']),
             lifecycle=RunLifecycle.deserialize(as_dict['lifecycle']),
-            phases=[PhaseDetail.deserialize(p) for p in as_dict['phase']],
+            phases=tuple(PhaseDetail.deserialize(p) for p in as_dict['phase']),
             faults=JobFaults.deserialize(as_dict['faults']) if as_dict.get('faults') else None,
             status=Status.deserialize(as_dict['status']) if as_dict.get('status') else None,
         )

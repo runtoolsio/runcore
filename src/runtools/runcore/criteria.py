@@ -592,7 +592,13 @@ class JobRunCriteria(MatchCriteria[JobRun]):
 
     def match_phases(self, job_run):
         """Check if any phase in the job run matches any of the phase criteria."""
-        return not self.phase_criteria or any(c.matches(job_run.phase) for c in self.phase_criteria)
+        if not self.phase_criteria:
+            return True
+
+        return any(
+            any(c.matches(phase) for c in self.phase_criteria)
+            for phase in job_run.phases
+        )
 
     def matches_jobs(self, job_run):
         return not self.jobs or job_run.job_id in self.jobs
