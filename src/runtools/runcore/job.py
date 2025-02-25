@@ -270,7 +270,10 @@ class JobInstanceMetadata(ABC):
         )
 
     def __repr__(self) -> str:
-        return f"{self.job_id}@{self.run_id}:{self.instance_id}"
+        if self.run_id == self.instance_id:
+            return f"{self.job_id}@{self.run_id}"
+        else:
+            return f"{self.job_id}@{self.run_id}:{self.instance_id}"
 
 
 class JobInstance(abc.ABC):
