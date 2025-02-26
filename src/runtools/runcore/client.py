@@ -247,7 +247,10 @@ class RemoteCallClient(SocketClient):
             Method return value (transformed by mapper if provided)
 
         Raises:
-            TargetNotFoundError: If server not found
+            RemoteCallServerError: For server-side errors
+            RemoteCallClientError: For client-side errors
+            TargetNotFoundError: When target doesn't exist
+            PhaseNotFoundError: When phase doesn't exist
         """
         request_results = self._send_requests(method, *params, server_addresses=[server_address])
         if not request_results:
@@ -317,7 +320,9 @@ class RemoteCallClient(SocketClient):
             List of JobRun objects for matching instances
 
         Raises:
-            TargetNotFoundError: If the specified server or the target instance is not found
+            RemoteCallServerError: For server-side errors
+            RemoteCallClientError: For client-side errors
+            TargetNotFoundError: When target doesn't exist
         """
         return self.call_method(
             server_address, "get_active_runs", run_match.serialize(), retval_mapper=_job_runs_retval_mapper)
