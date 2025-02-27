@@ -164,8 +164,6 @@ def socket_dir(create: bool, *, subdir=None) -> Path:
     1. Root user: /run/runcore
     2. Non-root user: /tmp/taro_${USER} (An alternative may be: ${HOME}/.cache/runcore)
 
-    TODO taro_${USER} should be unique to prevent denial of service attempts:
-
     :param create: create path directories if not exist
     :return: directory path for unix domain sockets
     :raises FileNotFoundError: when path cannot be created (only if create == True)
@@ -183,7 +181,7 @@ def socket_dir(create: bool, *, subdir=None) -> Path:
         path = path / subdir
 
     if create:
-        path.mkdir(mode=0o700, exist_ok=True)
+        path.mkdir(mode=0o700, exist_ok=True, parents=True)
 
     return path
 
