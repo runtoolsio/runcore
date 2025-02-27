@@ -16,7 +16,7 @@ import weakref
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, EnumMeta, auto
-from typing import Optional, List, Dict, Any, TypeVar, Callable
+from typing import Optional, List, Dict, Any, TypeVar, Callable, Tuple
 
 from runtools.runcore import util
 from runtools.runcore.util import format_dt_iso
@@ -230,7 +230,7 @@ class PhaseDetail:
     lifecycle: RunLifecycle
 
     # Hierarchical information
-    children: List['PhaseDetail']
+    children: Tuple['PhaseDetail',...]
 
     @classmethod
     def from_phase(cls, phase) -> 'PhaseDetail':

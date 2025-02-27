@@ -1,3 +1,4 @@
+import logging
 from abc import ABC, abstractmethod
 from threading import Event
 
@@ -6,8 +7,11 @@ from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.db import SortCriteria, sqlite
 from runtools.runcore.job import JobInstanceObservable
 from runtools.runcore.listening import InstanceOutputReceiver
+from runtools.runcore.remote import JobInstanceRemote
 from runtools.runcore.util.err import run_isolated_collect_exceptions
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
+
+log = logging.getLogger(__name__)
 
 
 class Environment(ABC):
@@ -128,10 +132,41 @@ class LocalEnvironment(JobInstanceObservable, PersistingEnvironment, Environment
         self._output_receiver.start()
 
     def get_active_runs(self, run_match=None):
-        return [run for res in self._client.collect_active_runs(run_match) if not res.error for run in res.retval]
+        """Retrieve active job runs from all available servers.
+
+        Args:
+            run_match: Optional criteria for filtering job runs
+                      (default: None, which matches all runs)
+
+        Returns:
+            List of JobRun objects from all responding servers
+        """
+        run_results = self._client.collect_active_runs(run_match)
+        active_runs = []
+
+        for result in run_results:
+            if result.error:
+                log.warning(f"[remote_call_error] op=[collect_active_runs] server=[{result.server_address}]",
+                            exc_info=result.error)
+                continue
+            active_runs.extend(result.retval)
+
+        return active_runs
 
     def get_instances(self, run_match=None):
-        pass
+        run_results = self._client.collect_active_runs(run_match)
+        instances = []
+
+        for result in run_results:
+            if result.error:
+                # TODO Skip servers with errors
+                continue
+
+            server_address = result.server_address
+            for job_run in result.retval:
+                instances.append(JobInstanceRemote(self._client, server_address, job_run.instance_id))
+
+        return instances
 
     def close(self):
         self._output_receiver.remove_observer_output(self._output_notification.observer_proxy)
@@ -144,6 +179,7 @@ class LocalEnvironment(JobInstanceObservable, PersistingEnvironment, Environment
             self._client.close,
             lambda: PersistingEnvironment.close(self)
         )
+
 
 def wait_for_interrupt(env, *, reraise=True):
     try:

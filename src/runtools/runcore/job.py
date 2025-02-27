@@ -324,7 +324,7 @@ class JobInstance(abc.ABC):
         """
 
     def find_phase_control_by_id(self, phase_id: str):
-        return self.find_phase_control(lambda phase: phase.id == phase_id)
+        return self.find_phase_control(lambda phase: phase.phase_id == phase_id)
 
     @abc.abstractmethod
     def snapshot(self):

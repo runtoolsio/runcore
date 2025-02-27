@@ -8,6 +8,7 @@ import logging
 import sqlite3
 from datetime import timezone
 from functools import wraps
+from threading import Lock
 from typing import List
 
 from runtools.runcore import paths
@@ -25,9 +26,10 @@ log = logging.getLogger(__name__)
 def ensure_open(f):
     @wraps(f)
     def wrapper(self, *args, **kwargs):
-        if not self._conn:
-            raise InvalidStateError("Database connection not opened")
-        return f(self, *args, **kwargs)
+        with self._conn_lock:
+            if not self._conn:
+                raise InvalidStateError("Database connection not opened")
+            return f(self, *args, **kwargs)
 
     return wrapper
 
@@ -198,7 +200,6 @@ def create(database=None, *,
            timeout=5.0,
            detect_types=0,
            isolation_level='DEFERRED',
-           check_same_thread=True,
            cached_statements=128,
            uri=False,
            autocommit=sqlite3.LEGACY_TRANSACTION_CONTROL):
@@ -210,7 +211,6 @@ def create(database=None, *,
         timeout: Float timeout value in seconds
         detect_types: Control whether string or binary is converted to SQLite types
         isolation_level: Sets transaction isolation level
-        check_same_thread: Enforce thread safety checks
         cached_statements: Number of statements to cache
         uri: True if database parameter is a URI
         autocommit: Transaction control mode
@@ -225,7 +225,7 @@ def create(database=None, *,
             timeout=timeout,
             detect_types=detect_types,
             isolation_level=isolation_level,
-            check_same_thread=check_same_thread,
+            check_same_thread=False,  # Using _conn_lock
             cached_statements=cached_statements,
             uri=uri,
             autocommit=autocommit
@@ -243,6 +243,7 @@ class SQLite(Persistence):
         """
         self._connection_factory = connection_factory
         self._conn = None
+        self._conn_lock = Lock()
 
     def __enter__(self):
         self.open()
