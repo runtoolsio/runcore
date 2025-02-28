@@ -78,9 +78,14 @@ class SocketServer(abc.ABC):
         log.debug('event=[server_started]')
         server = self._server  # This prevents None access error when the server is closed
         while not self._stopped:
-            datagram, client_address = server.recvfrom(RECV_BUFFER_LENGTH)
+            try:
+                datagram, client_address = server.recvfrom(RECV_BUFFER_LENGTH)
+            except OSError as e:
+                if e.errno == 9 and self._stopped:
+                    break  # MacOS behaviour on close
+                raise e
             if not datagram:
-                break
+                break  # Linux behaviour on close
 
             req_body = datagram.decode()
             if self._allow_ping and req_body == 'ping':
