@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from runtools.runcore.run import PhaseDetail, RunState, TerminationInfo, TerminationStatus, Fault, RunLifecycle
 from runtools.runcore.util import utc_now
@@ -14,10 +14,10 @@ def phase_detail(phase_id, run_state=RunState.EXECUTING, children=None,
                  *, phase_type='test', created_at=None, started_at=None, termination):
     if not created_at:
         created_at = utc_now().replace(microsecond=0)
-    return PhaseDetail(phase_id, phase_type, run_state, '', None, RunLifecycle(created_at, started_at, termination), children or [])
+    return PhaseDetail(phase_id, phase_type, run_state, '', None, None, RunLifecycle(created_at, started_at, termination), children or tuple())
 
 
-def _determine_container_state(children: List[PhaseDetail]) -> tuple[bool, Optional[TerminationInfo]]:
+def _determine_container_state(children: Tuple[PhaseDetail,...]) -> tuple[bool, Optional[TerminationInfo]]:
     """Determine container state based on children"""
     if not children:
         return False, None
@@ -150,7 +150,7 @@ class FakePhaseDetailBuilder:
     def build(self) -> PhaseDetail:
         """Build the PhaseDetail hierarchy with sequential timestamps"""
         # Build children first to determine container state
-        built_children = [child.build() for child in self.children]
+        built_children = tuple(child.build() for child in self.children)
 
         # For root, use base_ts directly. For others, calculate offset
         if self.parent is None:  # Root phase

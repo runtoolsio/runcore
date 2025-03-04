@@ -38,8 +38,6 @@ from runtools.runcore.util.socket import SocketClient, SocketRequestResult
 
 log = logging.getLogger(__name__)
 
-RPC_FILE_EXTENSION = '.rpc'
-
 T = TypeVar('T')
 
 
@@ -208,12 +206,9 @@ class RemoteCallClient(SocketClient):
     The client implements context manager protocol for proper resource cleanup.
     """
 
-    def __init__(self):
+    def __init__(self, socket_files_provider):
         """Initialize the client with default socket configuration."""
-        super().__init__(
-            paths.socket_files_provider(RPC_FILE_EXTENSION),
-            client_address=str(paths.socket_path_client(True))
-        )
+        super().__init__(socket_files_provider, client_address=str(paths.socket_path_client(True)))  # TODO
         self._request_id = 0
 
     def __enter__(self):

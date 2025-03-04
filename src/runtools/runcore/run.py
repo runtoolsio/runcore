@@ -260,11 +260,6 @@ class PhaseDetail:
         Returns:
             PhaseDetail: The deserialized phase view
         """
-        children = [
-            cls.deserialize(child)
-            for child in as_dict.get('children', [])
-        ]
-
         return cls(
             phase_id=as_dict['phase_id'],
             phase_type=as_dict['phase_type'],
@@ -273,7 +268,7 @@ class PhaseDetail:
             attributes=as_dict.get('attributes'),
             variables=as_dict.get('variables'),
             lifecycle=RunLifecycle.deserialize(as_dict.get('lifecycle')),
-            children=children,
+            children=tuple(cls.deserialize(child) for child in as_dict.get('children', [])),
         )
 
     def serialize(self) -> Dict[str, Any]:

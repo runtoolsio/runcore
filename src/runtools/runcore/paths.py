@@ -159,60 +159,109 @@ https://unix.stackexchange.com/questions/313036/is-a-subdirectory-of-tmp-a-suita
 """
 
 
-def socket_dir(create: bool, *, subdir=None) -> Path:
-    """
-    1. Root user: /run/runcore
-    2. Non-root user: /tmp/taro_${USER} (An alternative may be: ${HOME}/.cache/runcore)
+def ensure_dirs(path_):
+    path_.mkdir(mode=0o700, exist_ok=True, parents=True)
+    return path_
 
-    :param create: create path directories if not exist
-    :return: directory path for unix domain sockets
-    :raises FileNotFoundError: when path cannot be created (only if create == True)
+
+def runtime_dir() -> Path:
+    if _is_root():
+        return Path(f"/run/runtools")
+    else:
+        return Path(f"/tmp/runtools_{getpass.getuser()}")  # Alternative may be: ${HOME}/.cache/runtools
+
+
+def runtime_env_dir():
+    return runtime_dir() / 'env'
+
+
+def list_subdir(root_path: Path, *, pattern=None) -> Generator[Path, None, None]:
+    """
+    Get a generator of subdirectories in a root path, optionally matching a pattern.
 
     Args:
-        subdir:
+        root_path: The root directory to search for subdirectories
+        pattern: Optional regex pattern to filter subdirectories
+
+    Returns:
+        Generator yielding Path objects for matching subdirectories
+    """
+    for entry in root_path.iterdir():
+        if entry.is_dir() and (pattern is None or re.search(pattern, entry.name)):
+            yield entry
+
+
+def find_files_in_subdir(root_path: Path, file_name: str, *, pattern=None) -> Generator[Path, None, None]:
+    """
+    Get a generator of files with a specific name from multiple subdirectories.
+
+    Args:
+        root_path: The root directory containing subdirectories to search
+        file_name: The file name to look for in each subdirectory
+        pattern: Optional regex pattern to filter subdirectories
+
+    Returns:
+        Generator yielding Path objects for matching files
+    """
+    for subdir in list_subdir(root_path, pattern=pattern):
+        file_path = subdir / file_name
+        if file_path.exists():
+            yield file_path
+
+
+def files_in_subdir_provider(root_path: Path, file_name: str, *, pattern=None) \
+        -> Callable[[], Generator[Path, None, None]]:
+    """
+    Returns a callable function that generates file paths for a specific file name
+    across multiple subdirectories.
+
+    Args:
+        root_path: The root directory containing subdirectories to search
+        file_name: The file name to look for in each subdirectory
+        pattern: Optional regex pattern to filter subdirectories
+
+    Returns:
+        A callable function that generates Path objects when called
+    """
+
+    def provider():
+        return find_files_in_subdir(root_path, file_name, pattern=pattern)
+
+    return provider
+
+
+def env_dir(env_id: str, *, create: bool, subdir=None) -> Path:
+    """
+    TODO Remove?
+    Get the directory path for unix domain sockets, optionally with a subdirectory.
+
+    1. Root user: /run/runtools/{subdir}
+    2. Non-root user: /tmp/runtools_${USER}/{subdir} (An alternative may be: ${HOME}/.cache/runtools/{subdir})
+
+    Args:
+        create: If True, ensure the directory exists by creating it if necessary
+        env_id: Optional subdirectory name to append to the base socket directory
+
+    Returns:
+        Path: The directory path for unix domain sockets
+
+    Raises:
+        FileNotFoundError: When the directory cannot be created (only if create=True)
     """
 
     if _is_root():
-        path = Path('/run/runcore')
+        env_path = Path(f"/run/runtools/env/{env_id}")
     else:
-        path = Path(f"/tmp/taro_{getpass.getuser()}")
+        env_path = Path(f"/tmp/runtools_{getpass.getuser()}/env/{env_id}")
 
     if subdir:
-        path = path / subdir
+        env_path = env_path / subdir
 
     if create:
-        path.mkdir(mode=0o700, exist_ok=True, parents=True)
+        env_path.mkdir(mode=0o700, exist_ok=True, parents=True)
 
-    return path
+    return env_path
 
-
-def socket_path(socket_name: str, create: bool) -> Path:
-    """
-    1. Root user: /run/runcore/{socket-name}
-    2. Non-root user: /tmp/taro_${USER}/{socket-name} (An alternative may be: ${HOME}/.cache/runcore/{socket-name})
-
-    :param socket_name: socket file name
-    :param create: create path directories if not exist
-    :return: unix domain socket path
-    :raises FileNotFoundError: when path cannot be created (only if create == True)
-    """
-
-    return socket_dir(create) / socket_name
-
-
-def socket_files(file_extension: str) -> Generator[Path, None, None]:
-    s_dir = socket_dir(False)
-    if s_dir.exists():
-        for entry in s_dir.iterdir():
-            if entry.is_socket() and file_extension == entry.suffix:
-                yield entry
-
-
-def socket_files_provider(file_extension: str) -> Callable[[], Generator[Path, None, None]]:
-    def provider():
-        return socket_files(file_extension)
-
-    return provider
 
 
 def socket_path_client(create: bool) -> Path:
@@ -226,7 +275,7 @@ def socket_path_client(create: bool) -> Path:
     :return: unix domain socket path for client socket
     :raises FileNotFoundError: when path cannot be created (only if create == True)
     """
-    dir_path = socket_dir(create, subdir='clients')
+    dir_path = env_dir(create=create, env_id='clients')
     return dir_path / f"client_{uuid.uuid4()}"
 
 

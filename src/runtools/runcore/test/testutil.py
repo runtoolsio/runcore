@@ -1,10 +1,8 @@
-from multiprocessing import Queue
 from pathlib import Path
 
 import tomli_w
 
-from runtools.runcore import paths
-from runtools.runcore.job import JobRun, InstanceTransitionObserver
+from runtools.runcore import paths, util
 
 
 def create_test_config(config):
@@ -36,35 +34,8 @@ def _custom_test_config_path(filename) -> Path:
     return Path.cwd() / filename
 
 
-class StateWaiter:
-    """
-    This class is used for waiting for execution states of job executed in different process.
+def ensure_test_runtime_dir():
+    return paths.ensure_dirs(paths.runtime_dir())
 
-    See :class:`PutStateToQueueObserver`
-
-    Attributes:
-        state_queue The process must put execution states into this queue
-    """
-
-    def __init__(self):
-        self.state_queue = Queue()
-
-    def wait_for_state(self, state, timeout=1):
-        while True:
-            if state == self.state_queue.get(timeout=timeout):
-                return
-
-
-class PutPhaseToQueueObserver(InstanceTransitionObserver):
-    """
-    This observer puts execution states into the provided queue. With multiprocessing queue this can be used for sending
-    execution states into the parent process.
-
-    See :class:`StateWaiter`
-    """
-
-    def __init__(self, queue):
-        self.queue = queue
-
-    def new_instance_phase(self, job_run: JobRun, previous_phase, new_phase, changed):
-        self.queue.put_nowait(new_phase)
+def random_test_socket():
+    return paths.ensure_dirs(paths.runtime_dir()) / Path(util.unique_timestamp_hex() + ".sock")

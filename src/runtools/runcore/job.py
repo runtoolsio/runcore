@@ -446,7 +446,7 @@ class JobRun:
         return cls(
             metadata=JobInstanceMetadata.deserialize(as_dict['metadata']),
             lifecycle=RunLifecycle.deserialize(as_dict['lifecycle']),
-            phases=tuple(PhaseDetail.deserialize(p) for p in as_dict['phase']),
+            phases=tuple(PhaseDetail.deserialize(p) for p in as_dict['phases']),
             faults=JobFaults.deserialize(as_dict['faults']) if as_dict.get('faults') else None,
             status=Status.deserialize(as_dict['status']) if as_dict.get('status') else None,
         )
@@ -455,7 +455,7 @@ class JobRun:
         d = {
             "metadata": self.metadata.serialize(),
             "lifecycle": self.lifecycle.serialize(),
-            "phase": [p.serialize() for p in self.phases],
+            "phases": [p.serialize() for p in self.phases],
         }
         if self.faults:
             d["faults"] = self.faults.serialize()

@@ -336,7 +336,7 @@ class SQLite(Persistence):
         def to_job_run(t):
             metadata = JobInstanceMetadata(t[0], t[1], t[2], json.loads(t[3]) if t[3] else dict())
             lifecycle = RunLifecycle.deserialize(json.loads(t[8]))
-            phases = [PhaseDetail.deserialize(p) for p in json.loads(t[9])]
+            phases = tuple(PhaseDetail.deserialize(p) for p in json.loads(t[9]))
             faults = JobFaults.deserialize(json.loads(t[11])) if t[11] else None
             status = Status.deserialize(json.loads(t[12])) if t[12] else None
             return JobRun(metadata, lifecycle, phases, faults, status)
