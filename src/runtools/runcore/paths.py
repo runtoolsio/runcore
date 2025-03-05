@@ -14,7 +14,7 @@ import os
 import re
 from importlib.resources import path
 from pathlib import Path
-from typing import Generator, List, Callable
+from typing import Generator, List, Callable, Union
 
 from runtools.runcore import util
 from runtools.runcore.common import RuntoolsException
@@ -190,25 +190,31 @@ def list_subdir(root_path: Path, *, pattern=None) -> Generator[Path, None, None]
             yield entry
 
 
-def find_files_in_subdir(root_path: Path, file_name: str, *, subdir_pattern=None) -> Generator[Path, None, None]:
+def find_files_in_subdir(root_path: Path, file_names: Union[str, List[str]], *, subdir_pattern=None) -> Generator[
+    Path, None, None]:
     """
-    Get a generator of files with a specific name from multiple subdirectories.
+    Get a generator of files with specific names from multiple subdirectories.
 
     Args:
         root_path: The root directory containing subdirectories to search
-        file_name: The file name to look for in each subdirectory
+        file_names: Either a single file name (str) or a list of file names to look for in each subdirectory
         subdir_pattern: Optional regex pattern to filter subdirectories
 
     Returns:
         Generator yielding Path objects for matching files
     """
+    # Convert single string to list for uniform handling
+    if isinstance(file_names, str):
+        file_names = [file_names]
+
     for subdir in list_subdir(root_path, pattern=subdir_pattern):
-        file_path = subdir / file_name
-        if file_path.exists():
-            yield file_path
+        for file_name in file_names:
+            file_path = subdir / file_name
+            if file_path.exists():
+                yield file_path
 
 
-def files_in_subdir_provider(root_path: Path, file_name: str, *, subdir_pattern=None) \
+def files_in_subdir_provider(root_path: Path, file_names: Union[str, List[str]], *, subdir_pattern=None) \
         -> Callable[[], Generator[Path, None, None]]:
     """
     Returns a callable function that generates file paths for a specific file name
@@ -216,7 +222,7 @@ def files_in_subdir_provider(root_path: Path, file_name: str, *, subdir_pattern=
 
     Args:
         root_path: The root directory containing subdirectories to search
-        file_name: The file name to look for in each subdirectory
+        file_names: The file name or names to look for in each subdirectory
         subdir_pattern: Optional regex pattern to filter subdirectories
 
     Returns:
@@ -224,7 +230,7 @@ def files_in_subdir_provider(root_path: Path, file_name: str, *, subdir_pattern=
     """
 
     def provider():
-        return find_files_in_subdir(root_path, file_name, subdir_pattern=subdir_pattern)
+        return find_files_in_subdir(root_path, file_names, subdir_pattern=subdir_pattern)
 
     return provider
 
