@@ -190,25 +190,25 @@ def list_subdir(root_path: Path, *, pattern=None) -> Generator[Path, None, None]
             yield entry
 
 
-def find_files_in_subdir(root_path: Path, file_name: str, *, pattern=None) -> Generator[Path, None, None]:
+def find_files_in_subdir(root_path: Path, file_name: str, *, subdir_pattern=None) -> Generator[Path, None, None]:
     """
     Get a generator of files with a specific name from multiple subdirectories.
 
     Args:
         root_path: The root directory containing subdirectories to search
         file_name: The file name to look for in each subdirectory
-        pattern: Optional regex pattern to filter subdirectories
+        subdir_pattern: Optional regex pattern to filter subdirectories
 
     Returns:
         Generator yielding Path objects for matching files
     """
-    for subdir in list_subdir(root_path, pattern=pattern):
+    for subdir in list_subdir(root_path, pattern=subdir_pattern):
         file_path = subdir / file_name
         if file_path.exists():
             yield file_path
 
 
-def files_in_subdir_provider(root_path: Path, file_name: str, *, pattern=None) \
+def files_in_subdir_provider(root_path: Path, file_name: str, *, subdir_pattern=None) \
         -> Callable[[], Generator[Path, None, None]]:
     """
     Returns a callable function that generates file paths for a specific file name
@@ -217,14 +217,14 @@ def files_in_subdir_provider(root_path: Path, file_name: str, *, pattern=None) \
     Args:
         root_path: The root directory containing subdirectories to search
         file_name: The file name to look for in each subdirectory
-        pattern: Optional regex pattern to filter subdirectories
+        subdir_pattern: Optional regex pattern to filter subdirectories
 
     Returns:
         A callable function that generates Path objects when called
     """
 
     def provider():
-        return find_files_in_subdir(root_path, file_name, pattern=pattern)
+        return find_files_in_subdir(root_path, file_name, subdir_pattern=subdir_pattern)
 
     return provider
 

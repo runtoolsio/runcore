@@ -93,7 +93,7 @@ class StandardLocalConnectorLayout(LocalConnectorLayout):
     @property
     def provider_sockets_server_rpc(self):
         return paths.files_in_subdir_provider(self.env_dir, self.socket_name_server_rpc,
-                                              pattern=f"^{self.NODE_DIR_PREFIX}")
+                                              subdir_pattern=f"^{self.NODE_DIR_PREFIX}")
 
     def cleanup(self):
         shutil.rmtree(self.component_dir)
