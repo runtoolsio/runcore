@@ -29,7 +29,6 @@ from dataclasses import dataclass
 from json import JSONDecodeError
 from typing import List, Any, Optional, TypeVar, Generic, Callable, Iterable
 
-from runtools.runcore import paths
 from runtools.runcore.common import RuntoolsException
 from runtools.runcore.job import JobRun
 from runtools.runcore.output import OutputLine
@@ -129,6 +128,8 @@ def _parse_retval_or_raise_error(resp: SocketRequestResult) -> Any:
         TargetNotFoundError: When target doesn't exist
         PhaseNotFoundError: When phase doesn't exist
     """
+    if not resp:
+        raise RemoteCallServerError('n/a', 'Empty response from server')
     sid = resp.server_address
     if resp.error:
         raise RemoteCallServerError(sid, 'Socket based error occurred') from resp.error
@@ -206,9 +207,9 @@ class RemoteCallClient(SocketClient):
     The client implements context manager protocol for proper resource cleanup.
     """
 
-    def __init__(self, socket_files_provider):
+    def __init__(self, server_sockets_provider, response_socket=None):
         """Initialize the client with default socket configuration."""
-        super().__init__(socket_files_provider, client_address=str(paths.socket_path_client(True)))  # TODO
+        super().__init__(server_sockets_provider, client_address=str(response_socket) if response_socket else None)
         self._request_id = 0
 
     def __enter__(self):

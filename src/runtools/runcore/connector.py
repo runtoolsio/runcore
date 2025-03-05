@@ -36,17 +36,17 @@ class LocalConnectorLayout(ABC):
 
     @property
     @abstractmethod
-    def socket_client_path(self):
+    def socket_client_rpc(self):
         pass
 
     @property
     @abstractmethod
-    def socket_events_path(self):
+    def socket_listener_events(self):
         pass
 
     @property
     @abstractmethod
-    def socket_server_paths_provider(self):
+    def provider_sockets_server_rpc(self):
         pass
 
     @abstractmethod
@@ -64,34 +64,39 @@ class StandardLocalConnectorLayout(LocalConnectorLayout):
 
     def __init__(self, env_dir, connector_dir):
         self._env_dir = env_dir
-        self.component_path = connector_dir
-
-    @property
-    def server_socket_name(self):
-        return 'server.sock'
-
-    @property
-    def listener_socket_name(self):
-        return 'listener.sock'
+        self.component_dir = connector_dir
 
     @property
     def env_dir(self):
         return self._env_dir
 
     @property
-    def socket_client_path(self):
-        return self.component_path / 'client.sock'
+    def socket_name_client_rpc(self):
+        return 'client-rpc.sock'
 
     @property
-    def socket_events_path(self):
-        return self.component_path / self.listener_socket_name
+    def socket_client_rpc(self):
+        return self.component_dir / self.socket_name_client_rpc
 
     @property
-    def socket_server_paths_provider(self):
-        return paths.files_in_subdir_provider(self.env_dir, self.server_socket_name, pattern=f"^{self.NODE_DIR_PREFIX}")
+    def socket_name_listener_events(self):
+        return 'listener-events.sock'
+
+    @property
+    def socket_listener_events(self):
+        return self.component_dir / self.socket_name_listener_events
+
+    @property
+    def socket_name_server_rpc(self):
+        return 'server-rpc.sock'
+
+    @property
+    def provider_sockets_server_rpc(self):
+        return paths.files_in_subdir_provider(self.env_dir, self.socket_name_server_rpc,
+                                              pattern=f"^{self.NODE_DIR_PREFIX}")
 
     def cleanup(self):
-        shutil.rmtree(self.component_path)
+        shutil.rmtree(self.component_dir)
 
 
 def create_layout_dirs(env_id, root_dir, component_prefix):
@@ -185,9 +190,9 @@ class EnvironmentConnector(ABC):
 def local(env_id=DEF_ENV_ID, persistence=None, connector_layout=None) -> EnvironmentConnector:
     layout = connector_layout or StandardLocalConnectorLayout.create(env_id)
     persistence = persistence or sqlite.create(':memory:')  # TODO Load correct database
-    client = RemoteCallClient(layout.socket_server_paths_provider)
-    transition_receiver = InstanceTransitionReceiver(layout.socket_events_path)
-    output_receiver = InstanceOutputReceiver(layout.socket_events_path)
+    client = RemoteCallClient(layout.provider_sockets_server_rpc, layout.socket_client_rpc)
+    transition_receiver = InstanceTransitionReceiver(layout.socket_listener_events)
+    output_receiver = InstanceOutputReceiver(layout.socket_listener_events)
     return LocalConnector(env_id, layout, persistence, client, transition_receiver, output_receiver)
 
 

@@ -12,7 +12,6 @@ Discussion:
 import getpass
 import os
 import re
-import uuid
 from importlib.resources import path
 from pathlib import Path
 from typing import Generator, List, Callable
@@ -228,55 +227,6 @@ def files_in_subdir_provider(root_path: Path, file_name: str, *, pattern=None) \
         return find_files_in_subdir(root_path, file_name, pattern=pattern)
 
     return provider
-
-
-def env_dir(env_id: str, *, create: bool, subdir=None) -> Path:
-    """
-    TODO Remove?
-    Get the directory path for unix domain sockets, optionally with a subdirectory.
-
-    1. Root user: /run/runtools/{subdir}
-    2. Non-root user: /tmp/runtools_${USER}/{subdir} (An alternative may be: ${HOME}/.cache/runtools/{subdir})
-
-    Args:
-        create: If True, ensure the directory exists by creating it if necessary
-        env_id: Optional subdirectory name to append to the base socket directory
-
-    Returns:
-        Path: The directory path for unix domain sockets
-
-    Raises:
-        FileNotFoundError: When the directory cannot be created (only if create=True)
-    """
-
-    if _is_root():
-        env_path = Path(f"/run/runtools/env/{env_id}")
-    else:
-        env_path = Path(f"/tmp/runtools_{getpass.getuser()}/env/{env_id}")
-
-    if subdir:
-        env_path = env_path / subdir
-
-    if create:
-        env_path.mkdir(mode=0o700, exist_ok=True, parents=True)
-
-    return env_path
-
-
-
-def socket_path_client(create: bool) -> Path:
-    """
-    Generate a unique socket path for client sockets.
-
-    - Root user: /run/runcore/client_{uuid}
-    - Non-root user: /tmp/taro_${USER}/client_{uuid}
-
-    :param create: create path directories if not exist
-    :return: unix domain socket path for client socket
-    :raises FileNotFoundError: when path cannot be created (only if create == True)
-    """
-    dir_path = env_dir(create=create, env_id='clients')
-    return dir_path / f"client_{uuid.uuid4()}"
 
 
 def lock_dir(create: bool) -> Path:
