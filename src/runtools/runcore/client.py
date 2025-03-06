@@ -128,8 +128,6 @@ def _parse_retval_or_raise_error(resp: SocketRequestResult) -> Any:
         TargetNotFoundError: When target doesn't exist
         PhaseNotFoundError: When phase doesn't exist
     """
-    if not resp:
-        raise RemoteCallServerError('n/a', 'Empty response from server')
     sid = resp.server_address
     if resp.error:
         raise RemoteCallServerError(sid, 'Socket based error occurred') from resp.error

@@ -170,15 +170,15 @@ class PingResult:
 
 class SocketClient:
 
-    def __init__(self, servers_provider, *, client_address=None, timeout=2):
+    def __init__(self, server_sockets_provider, *, client_address=None, timeout=2):
         """
 
         Args:
-            servers_provider: TBS
+            server_sockets_provider: TBS
             client_address (str): bidirectional communication is assumed when this parameter is set
             timeout: TBS
         """
-        self._servers_provider = servers_provider
+        self._server_sockets_provider = server_sockets_provider
         self._client = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         self._client_addr = client_address
         if client_address:
@@ -186,20 +186,18 @@ class SocketClient:
             self._client.settimeout(timeout)
 
     @coroutine
-    def servers(self, include=()):
+    def servers(self, addresses=()):
         """
 
-        :param include: server IDs exact match filter
+        :param addresses: server IDs exact match filter
         :return: response if bidirectional
         :raises PayloadTooLarge: when request payload is too large
         """
         req_body = '_'  # Dummy initialization to remove warnings
         res = None
         skip = False
-        for server_file in self._servers_provider():
-            server_id = str(server_file)
-            if include and server_id not in include:
-                continue
+        for server_socket in (addresses or self._server_sockets_provider()):
+            server_address = str(server_socket)
             while True:
                 if not skip:
                     req_body = yield res
@@ -209,26 +207,27 @@ class SocketClient:
 
                 encoded = req_body.encode()
                 try:
-                    self._client.sendto(encoded, str(server_file))
+                    self._client.sendto(encoded, str(server_socket))
                     if self._client_addr:
                         datagram = self._client.recv(RECV_BUFFER_LENGTH)
-                        res = SocketRequestResult(server_id, datagram.decode())
+                        res = SocketRequestResult(server_address, datagram.decode())
                 except (socket.timeout, TimeoutError) as e:
-                    log.warning('event=[socket_timeout] socket=[{}]'.format(server_file))
-                    res = SocketRequestResult(server_id, None, e)
+                    log.warning('event=[socket_timeout] socket=[{}]'.format(server_socket))
+                    res = SocketRequestResult(server_address, None, e)
                 except ConnectionRefusedError:
-                    log.debug('event=[stale_socket] socket=[{}]'.format(server_file))
+                    log.debug('event=[stale_socket] socket=[{}]'.format(server_socket))
                     skip = True  # Ignore this one and continue with another one
                     break
                 except OSError as e:
                     if e.errno in (errno.ENOENT, errno.EPIPE):  # No such file/directory (2) or Broken pipe (32)
-                        continue  # The server closed meanwhile
+                        skip = True  # The server not found or closed meanwhile
+                        break
                     if e.errno == errno.EMSGSIZE:
                         raise PayloadTooLarge(len(encoded))
-                    res = SocketRequestResult(server_id, None, e)
+                    res = SocketRequestResult(server_address, None, e)
 
-    def communicate(self, req: str, include=()) -> List[SocketRequestResult]:
-        server = self.servers(include=include)
+    def communicate(self, req: str, addresses=()) -> List[SocketRequestResult]:
+        server = self.servers(addresses)
         responses = []
         while True:
             try:
