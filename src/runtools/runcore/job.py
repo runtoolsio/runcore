@@ -728,12 +728,116 @@ class JobInstanceManager(ABC):
         pass
 
 
-class JobInstanceObservable:
+class JobInstanceObservable(ABC):
+    """
+    Interface defining the contract for objects that can be observed for job instance events.
+
+    This interface provides methods to register and unregister observers for different
+    types of job instance events: stage transitions, phase transitions, and output events.
+    """
+
+    @abstractmethod
+    def add_observer_all_events(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
+        """
+        Register an observer for all event types: stage, transition, and output events.
+
+        Args:
+            observer: The observer to register for all event types
+            priority: Priority level for the observer (lower numbers = higher priority)
+        """
+        pass
+
+    @abstractmethod
+    def remove_observer_all_events(self, observer):
+        """
+        Unregister an observer from all event types: stage, transition, and output events.
+
+        Args:
+            observer: The observer to unregister from all event types
+        """
+        pass
+
+    @abstractmethod
+    def add_observer_stage(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
+        """
+        Register an observer for stage events.
+
+        Args:
+            observer: The observer to register for stage events
+            priority: Priority level for the observer (lower numbers = higher priority)
+        """
+        pass
+
+    @abstractmethod
+    def remove_observer_stage(self, observer):
+        """
+        Unregister an observer from stage events.
+
+        Args:
+            observer: The observer to unregister from stage events
+        """
+        pass
+
+    @abstractmethod
+    def add_observer_transition(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
+        """
+        Register an observer for transition events.
+
+        Args:
+            observer: The observer to register for transition events
+            priority: Priority level for the observer (lower numbers = higher priority)
+
+        """
+        pass
+
+    @abstractmethod
+    def remove_observer_transition(self, observer):
+        """
+        Unregister an observer from transition events.
+
+        Args:
+            observer: The observer to unregister from transition events
+        """
+        pass
+
+    @abstractmethod
+    def add_observer_output(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
+        """
+        Register an observer for output events.
+
+        Args:
+            observer: The observer to register for output events
+            priority: Priority level for the observer (lower numbers = higher priority)
+        """
+        pass
+
+    @abstractmethod
+    def remove_observer_output(self, observer):
+        """
+        Unregister an observer from output events.
+
+        Args:
+            observer: The observer to unregister from output events
+        """
+        pass
+
+
+class JobInstanceNotifications:
 
     def __init__(self):
         self._stage_notification = ObservableNotification[InstanceStageObserver]()
         self._transition_notification = ObservableNotification[InstanceTransitionObserver]()
         self._output_notification = ObservableNotification[InstanceOutputObserver]()
+
+    def add_observer_all_events(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
+        self.add_observer_stage(observer, priority)
+        self.add_observer_transition(observer, priority)
+        self.add_observer_output(observer, priority)
+
+    def remove_observer_all_events(self, observer):
+        self.remove_observer_stage(observer)
+        self.remove_observer_transition(observer)
+        self.remove_observer_output(observer)
 
     def add_observer_stage(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
         self._stage_notification.add_observer(observer, priority)
@@ -752,3 +856,7 @@ class JobInstanceObservable:
 
     def remove_observer_output(self, observer):
         self._output_notification.remove_observer(observer)
+
+
+class InstanceEventsObserver(InstanceStageObserver, InstanceTransitionObserver, InstanceOutputObserver, ABC):
+    pass

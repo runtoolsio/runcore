@@ -12,7 +12,6 @@ from runtools.runcore.client import RemoteCallClient, RemoteCallResult
 from runtools.runcore.common import RuntoolsException
 from runtools.runcore.db import Persistence, SortCriteria
 from runtools.runcore.job import JobRun
-from runtools.runcore.listening import InstanceTransitionReceiver
 
 _current_persistence = 'sqlite'
 _persistence = {}

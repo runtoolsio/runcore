@@ -1,13 +1,11 @@
 #  Sender, Listening
 import json
 import logging
-from abc import abstractmethod
 from json import JSONDecodeError
 
 from runtools.runcore import util
-from runtools.runcore.job import InstanceTransitionObserver, InstanceOutputObserver, JobInstanceMetadata, \
-    InstanceTransitionEvent, InstanceOutputEvent
-from runtools.runcore.util.observer import ObservableNotification
+from runtools.runcore.job import JobInstanceMetadata, \
+    InstanceTransitionEvent, InstanceOutputEvent, JobInstanceNotifications, InstanceStageEvent
 from runtools.runcore.util.socket import SocketServer
 
 log = logging.getLogger(__name__)
@@ -41,13 +39,41 @@ def _read_metadata(req_body_json):
 
 
 class EventReceiver(SocketServer):
+    """
+    Generic event receiver that uses composition to handle different event types.
+    """
 
-    def __init__(self, socket_path, instance_match=None, event_types=()):
+    def __init__(self, socket_path, instance_match=None):
+        """
+        Initialize the event receiver.
+
+        Args:
+            socket_path: Path to the socket file
+            instance_match: Optional filter for instances
+        """
         super().__init__(socket_path, allow_ping=True)
         self.instance_match = instance_match
-        self.event_types = event_types
+        self._event_handlers = {}
+        self._default_handlers = []
+
+    def register_handler(self, handler, *event_types: str):
+        """
+        Register a handler for a specific event type.
+
+        Args:
+            event_types: Event type identifier
+            handler: Handler function to process events of this type
+        """
+        if event_types:
+            for event_type in event_types:
+                self._event_handlers[event_type] = handler
+        else:
+            self._default_handlers.append(handler)
+
+        return self
 
     def handle(self, req_body):
+        """Process received event data."""
         try:
             req_body_json = json.loads(req_body)
         except JSONDecodeError:
@@ -60,54 +86,28 @@ class EventReceiver(SocketServer):
             log.warning(e)
             return
 
-        if (self.event_types and event_type not in self.event_types) or \
+        # Check if this event type should be handled by this receiver
+        if (event_type not in self._event_handlers) or \
                 (self.instance_match and not self.instance_match(instance_meta)):
             return
 
-        self.handle_event(event_type, instance_meta, req_body_json.get('event'))
-
-    @abstractmethod
-    def handle_event(self, event_type, instance_meta, event):
-        pass
-
-
-class InstanceTransitionReceiver(EventReceiver):
-
-    def __init__(self, socket_path, instance_match=None, phases=(), stages=()):
-        super().__init__(socket_path, instance_match)
-        self.phases = phases
-        self.stages = stages
-        self._notification = ObservableNotification[InstanceTransitionObserver]()
-
-    def handle_event(self, _, instance_meta, event):
-        e = InstanceTransitionEvent.deserialize(event)
-
-        if self.phases and e.phase_id not in self.phases:
-            return
-
-        if self.stages and e.new_stage not in self.stages:
-            return
-
-        self._notification.observer_proxy.new_instance_transition(e)
-
-    def add_observer_transition(self, observer):
-        self._notification.add_observer(observer)
-
-    def remove_observer_transition(self, observer):
-        self._notification.remove_observer(observer)
+        handlers = list(self._default_handlers)
+        if event_type in self._event_handlers:
+            handlers.append(self._event_handlers[event_type])
+        for handler in handlers:
+            # TODO catch exc
+            handler(event_type, instance_meta, req_body_json.get("event"))
 
 
-class InstanceOutputReceiver(EventReceiver):
+class InstanceEventReceiver(JobInstanceNotifications):
 
-    def __init__(self, socket_path, instance_match=None):
-        super().__init__(socket_path, instance_match)
-        self._notification = ObservableNotification[InstanceOutputObserver]()
-
-    def handle_event(self, _, instance_meta, event):
-        self._notification.observer_proxy.new_instance_output(InstanceOutputEvent.deserialize(event))
-
-    def add_observer_output(self, observer):
-        self._notification.add_observer(observer)
-
-    def remove_observer_output(self, observer):
-        self._notification.remove_observer(observer)
+    def __call__(self, event_type, instance_metadata, event):
+        if event_type == InstanceStageEvent.EVENT_TYPE:
+            self._stage_notification.observer_proxy.new_instance_stage(InstanceStageEvent.deserialize(event))
+        elif event_type == InstanceTransitionEvent.EVENT_TYPE:
+            self._transition_notification.observer_proxy.new_instance_transition(
+                InstanceTransitionEvent.deserialize(event))
+        elif event_type == InstanceOutputEvent.EVENT_TYPE:
+            self._output_notification.observer_proxy.new_instance_output(InstanceOutputEvent.deserialize(event))
+        else:
+            log.warning(f"[unknown_event_type] event_type=[{event_type}] instance=[{instance_metadata}]")

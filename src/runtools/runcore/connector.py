@@ -3,11 +3,11 @@ import shutil
 from abc import ABC, abstractmethod
 from threading import Event
 
-from runtools.runcore import RemoteCallClient, InstanceTransitionReceiver, paths, util
+from runtools.runcore import RemoteCallClient, paths, util
 from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.db import SortCriteria, sqlite
 from runtools.runcore.job import JobInstanceObservable
-from runtools.runcore.listening import InstanceOutputReceiver
+from runtools.runcore.listening import EventReceiver, InstanceEventReceiver
 from runtools.runcore.remote import JobInstanceRemote
 from runtools.runcore.util.err import run_isolated_collect_exceptions
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
@@ -111,7 +111,7 @@ def create_layout_dirs(env_id, root_dir, component_prefix):
     return env_dir, component_dir
 
 
-class EnvironmentConnector(ABC):
+class EnvironmentConnector(JobInstanceObservable, ABC):
 
     def __enter__(self):
         """
@@ -145,40 +145,6 @@ class EnvironmentConnector(ABC):
     def read_history_stats(self, run_match=None):
         pass
 
-    @abstractmethod
-    def add_observer_transition(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
-        """
-        Add an observer for job instance transitions in this environment.
-        The observer will be notified of all transitions for all instances.
-
-        Args:
-            observer: The transition observer to add
-            priority: Priority level for the observer (lower numbers = higher priority)
-        """
-        pass
-
-    @abstractmethod
-    def remove_observer_transition(self, observer):
-        """Remove a previously registered transition observer."""
-        pass
-
-    @abstractmethod
-    def add_observer_output(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
-        """
-        Add an observer for job instance outputs in this environment.
-        The observer will be notified of all outputs from all instances.
-
-        Args:
-            observer: The output observer to add
-            priority: Priority level for the observer (lower numbers = higher priority)
-        """
-        pass
-
-    @abstractmethod
-    def remove_observer_output(self, observer):
-        """Remove a previously registered output observer."""
-        pass
-
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
@@ -191,30 +157,24 @@ def local(env_id=DEF_ENV_ID, persistence=None, connector_layout=None) -> Environ
     layout = connector_layout or StandardLocalConnectorLayout.create(env_id)
     persistence = persistence or sqlite.create(':memory:')  # TODO Load correct database
     client = RemoteCallClient(layout.provider_sockets_server_rpc, layout.socket_client_rpc)
-    transition_receiver = InstanceTransitionReceiver(layout.socket_listener_events)
-    output_receiver = InstanceOutputReceiver(layout.socket_listener_events)
-    return LocalConnector(env_id, layout, persistence, client, transition_receiver, output_receiver)
+    event_receiver = EventReceiver(layout.socket_listener_events)
+    return LocalConnector(env_id, layout, persistence, client, event_receiver)
 
 
-class LocalConnector(JobInstanceObservable, EnvironmentConnector):
+class LocalConnector(EnvironmentConnector):
 
-    def __init__(self, env_id, connector_layout, persistence, client, transition_receiver, output_receiver):
-        JobInstanceObservable.__init__(self)
+    def __init__(self, env_id, connector_layout, persistence, client, event_receiver):
         self.env_id = env_id
         self._layout = connector_layout
         self._persistence = persistence
         self._client = client
-        self._transition_receiver = transition_receiver
-        self._output_receiver = output_receiver
+        self._event_receiver = event_receiver
+        self._instance_event_receiver = InstanceEventReceiver()
+        self._event_receiver.register_handler(self._instance_event_receiver)
 
     def open(self):
         self._persistence.open()
-
-        self._transition_receiver.add_observer_transition(self._transition_notification.observer_proxy)
-        self._transition_receiver.start()
-
-        self._output_receiver.add_observer_output(self._output_notification.observer_proxy)
-        self._output_receiver.start()
+        self._event_receiver.start()
 
     def get_active_runs(self, run_match=None):
         """Retrieve active job runs from all available servers.
@@ -259,14 +219,34 @@ class LocalConnector(JobInstanceObservable, EnvironmentConnector):
     def read_history_stats(self, run_match=None):
         return self._persistence.read_history_stats(run_match)
 
-    def close(self):
-        self._output_receiver.remove_observer_output(self._output_notification.observer_proxy)
-        self._transition_receiver.remove_observer_transition(self._transition_notification.observer_proxy)
+    def add_observer_all_events(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
+        self._instance_event_receiver.add_observer_all_events(observer, priority)
 
+    def remove_observer_all_events(self, observer):
+        self._instance_event_receiver.remove_observer_all_events(observer)
+
+    def add_observer_stage(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
+        self._instance_event_receiver.add_observer_stage(observer, priority)
+
+    def remove_observer_stage(self, observer):
+        self._instance_event_receiver.remove_observer_stage(observer)
+
+    def add_observer_transition(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
+        self._instance_event_receiver.add_observer_transition(observer, priority)
+
+    def remove_observer_transition(self, observer):
+        self._instance_event_receiver.remove_observer_transition(observer)
+
+    def add_observer_output(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
+        self._instance_event_receiver.add_observer_output(observer, priority)
+
+    def remove_observer_output(self, observer):
+        self._instance_event_receiver.remove_observer_output(observer)
+
+    def close(self):
         run_isolated_collect_exceptions(
             "Errors during closing local environment",
-            self._output_receiver.close,
-            self._transition_receiver.close,
+            self._event_receiver.close,
             self._client.close,
             self._persistence.close,
             self._layout.cleanup,
