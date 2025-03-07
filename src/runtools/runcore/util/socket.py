@@ -170,7 +170,7 @@ class PingResult:
 
 class SocketClient:
 
-    def __init__(self, server_sockets_provider, *, client_address=None, timeout=2):
+    def __init__(self, server_sockets_provider=None, *, client_address=None, timeout=2):
         """
 
         Args:

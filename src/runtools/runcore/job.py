@@ -365,6 +365,16 @@ class JobInstance(abc.ABC):
         TODO: Notify about keyboard interruption signal
         """
 
+    def add_observer_all_events(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
+        self.add_observer_stage(observer, priority)
+        self.add_observer_transition(observer, priority)
+        self.add_observer_output(observer, priority)
+
+    def remove_observer_all_events(self, observer):
+        self.remove_observer_stage(observer)
+        self.remove_observer_transition(observer)
+        self.remove_observer_output(observer)
+
     @abc.abstractmethod
     def add_observer_stage(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, reply_last_event=False):
         pass
@@ -547,17 +557,30 @@ class JobRuns(list):
 
 @dataclass(frozen=True)
 class InstanceStageEvent:
+    EVENT_TYPE = "instance_stage_update"
+
     instance: JobInstanceMetadata
     job_run: JobRun
     new_stage: Stage
     timestamp: datetime
 
+    @property
+    def event_type(self):
+        return self.EVENT_TYPE
+
     def serialize(self) -> Dict[str, Any]:
+        instance_meta = self.instance.serialize()
         return {
-            "instance": self.instance.serialize(),
-            "job_run": self.job_run.serialize(),
-            "new_stage": self.new_stage.name,
-            "timestamp": format_dt_iso(self.timestamp),
+            "event_metadata": {
+                "event_type": self.EVENT_TYPE,
+                "instance": instance_meta,
+            },
+            "event": {
+                "instance": instance_meta,
+                "job_run": self.job_run.serialize(),
+                "new_stage": self.new_stage.name,
+                "timestamp": format_dt_iso(self.timestamp),
+            }
         }
 
     @classmethod
@@ -579,6 +602,8 @@ class InstanceStageObserver(abc.ABC):
 
 @dataclass(frozen=True)
 class InstanceTransitionEvent:
+    EVENT_TYPE = "instance_phase_update"
+
     instance: JobInstanceMetadata
     job_run: JobRun
     is_root_phase: bool
@@ -586,14 +611,25 @@ class InstanceTransitionEvent:
     new_stage: Stage
     timestamp: datetime
 
+    @property
+    def event_type(self):
+        return self.EVENT_TYPE
+
     def serialize(self) -> Dict[str, Any]:
+        instance_meta = self.instance.serialize()
         return {
-            "instance": self.instance.serialize(),
-            "job_run": self.job_run.serialize(),
-            "is_root_phase": self.is_root_phase,
-            "phase_id": self.phase_id,
-            "new_stage": self.new_stage.name,
-            "timestamp": format_dt_iso(self.timestamp),
+            "event_metadata": {
+                "event_type": self.EVENT_TYPE,
+                "instance": instance_meta,
+            },
+            "event": {
+                "instance": instance_meta,
+                "job_run": self.job_run.serialize(),
+                "is_root_phase": self.is_root_phase,
+                "phase_id": self.phase_id,
+                "new_stage": self.new_stage.name,
+                "timestamp": format_dt_iso(self.timestamp),
+            }
         }
 
     @classmethod
@@ -617,15 +653,29 @@ class InstanceTransitionObserver(abc.ABC):
 
 @dataclass(frozen=True)
 class InstanceOutputEvent:
+    EVENT_TYPE = "instance_output_update"
+
     instance: JobInstanceMetadata
     output_line: OutputLine
     timestamp: datetime
 
-    def serialize(self, truncate_length: Optional[int] = None, truncated_suffix: str = ".. (truncated)"):
+    @property
+    def event_type(self):
+        return self.EVENT_TYPE
+
+    def serialize(self, truncate_length: Optional[int] = None, truncated_suffix: str = ".. (truncated)") \
+            -> Dict[str, Any]:
+        instance_meta = self.instance.serialize()
         return {
-            "instance": self.instance.serialize(),
-            "output_line": self.output_line.serialize(truncate_length, truncated_suffix),
-            "timestamp": format_dt_iso(self.timestamp),
+            "event_metadata": {
+                "event_type": self.EVENT_TYPE,
+                "instance": instance_meta,
+            },
+            "event": {
+                "instance": instance_meta,
+                "output_line": self.output_line.serialize(truncate_length, truncated_suffix),
+                "timestamp": format_dt_iso(self.timestamp),
+            }
         }
 
     @classmethod

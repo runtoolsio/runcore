@@ -4,7 +4,7 @@ import logging
 from abc import abstractmethod
 from json import JSONDecodeError
 
-from runtools.runcore import util, paths
+from runtools.runcore import util
 from runtools.runcore.job import InstanceTransitionObserver, InstanceOutputObserver, JobInstanceMetadata, \
     InstanceTransitionEvent, InstanceOutputEvent
 from runtools.runcore.util.observer import ObservableNotification
@@ -33,9 +33,9 @@ def _read_metadata(req_body_json):
     if not event_type:
         raise ValueError(_missing_field_txt('event_metadata', 'event_type'))
 
-    instance_metadata = req_body_json.get('instance_metadata')
+    instance_metadata = event_metadata.get('instance')
     if not instance_metadata:
-        raise ValueError(_missing_field_txt('root', 'instance_metadata'))
+        raise ValueError(_missing_field_txt('event_metadata', 'instance'))
 
     return event_type, JobInstanceMetadata.deserialize(instance_metadata)
 
