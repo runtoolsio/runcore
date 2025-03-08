@@ -488,4 +488,5 @@ class SQLite(Persistence):
         self.close()
 
     def close(self):
-        self._conn.close()
+        if self._conn:
+            self._conn.close()

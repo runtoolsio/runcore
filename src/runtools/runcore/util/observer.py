@@ -94,7 +94,8 @@ class _Proxy(Generic[O]):
             exceptions = []
             for observer in object.__getattribute__(self, "_notification").observers:
                 try:
-                    if isinstance(observer, (FunctionType, MethodType)):
+                    if isinstance(observer, (FunctionType, MethodType)) or (
+                            callable(observer) and not hasattr(observer, name)):
                         observer(*args, **kwargs)
                     else:
                         getattr(observer, name)(*args, **kwargs)

@@ -87,8 +87,7 @@ class EventReceiver(SocketServer):
             return
 
         # Check if this event type should be handled by this receiver
-        if (event_type not in self._event_handlers) or \
-                (self.instance_match and not self.instance_match(instance_meta)):
+        if self.instance_match and not self.instance_match(instance_meta):
             return
 
         handlers = list(self._default_handlers)
