@@ -860,3 +860,103 @@ class JobInstanceNotifications:
 
 class InstanceEventsObserver(InstanceStageObserver, InstanceTransitionObserver, InstanceOutputObserver, ABC):
     pass
+
+
+class JobInstanceDelegate(JobInstance):
+    """
+    A generic delegation wrapper for JobInstance implementations.
+
+    This class implements all JobInstance methods by forwarding calls to the
+    wrapped instance, allowing subclasses to selectively override behaviors
+    without duplicating code.
+    """
+
+    def __init__(self, wrapped: JobInstance):
+        """
+        Initialize with a delegate instance.
+
+        Args:
+            wrapped: The JobInstance implementation to wrap
+        """
+        self._wrapped = wrapped
+
+    @property
+    def metadata(self):
+        """Delegates to the wrapped instance's metadata"""
+        return self._wrapped.metadata
+
+    @property
+    def instance_id(self):
+        """Delegates to the wrapped instance's instance_id"""
+        return self._wrapped.instance_id
+
+    @property
+    def job_id(self):
+        """Delegates to the wrapped instance's job_id"""
+        return self._wrapped.job_id
+
+    @property
+    def run_id(self):
+        """Delegates to the wrapped instance's run_id"""
+        return self._wrapped.run_id
+
+    def find_phase_control(self, phase_filter):
+        """Delegates to the wrapped instance's find_phase_control method"""
+        return self._wrapped.find_phase_control(phase_filter)
+
+    def find_phase_control_by_id(self, phase_id: str):
+        """Delegates to the wrapped instance's find_phase_control_by_id method"""
+        return self._wrapped.find_phase_control_by_id(phase_id)
+
+    def snapshot(self) -> JobRun:
+        """Delegates to the wrapped instance's snapshot method"""
+        return self._wrapped.snapshot()
+
+    @property
+    def output(self):
+        """Delegates to the wrapped instance's output property"""
+        return self._wrapped.output
+
+    def run(self):
+        """Delegates to the wrapped instance's run method"""
+        return self._wrapped.run()
+
+    def stop(self):
+        """Delegates to the wrapped instance's stop method"""
+        return self._wrapped.stop()
+
+    def interrupted(self):
+        """Delegates to the wrapped instance's interrupted method"""
+        return self._wrapped.interrupted()
+
+    def add_observer_all_events(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
+        """Delegates to the wrapped instance's add_observer_all_events method"""
+        self._wrapped.add_observer_all_events(observer, priority)
+
+    def remove_observer_all_events(self, observer):
+        """Delegates to the wrapped instance's remove_observer_all_events method"""
+        self._wrapped.remove_observer_all_events(observer)
+
+    def add_observer_stage(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, reply_last_event=False):
+        """Delegates to the wrapped instance's add_observer_stage method"""
+        self._wrapped.add_observer_stage(observer, priority, reply_last_event)
+
+    def remove_observer_stage(self, observer):
+        """Delegates to the wrapped instance's remove_observer_stage method"""
+        self._wrapped.remove_observer_stage(observer)
+
+    def add_observer_transition(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
+        """Delegates to the wrapped instance's add_observer_transition method"""
+        self._wrapped.add_observer_transition(observer, priority)
+
+    def remove_observer_transition(self, observer):
+        """Delegates to the wrapped instance's remove_observer_transition method"""
+        self._wrapped.remove_observer_transition(observer)
+
+    def add_observer_output(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
+        """Delegates to the wrapped instance's add_observer_output method"""
+        self._wrapped.add_observer_output(observer, priority)
+
+    def remove_observer_output(self, observer):
+        """Delegates to the wrapped instance's remove_observer_output method"""
+        self._wrapped.remove_observer_output(observer)
