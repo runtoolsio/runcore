@@ -1,6 +1,5 @@
 from .containers import *
 from .dt import *
-from .files import *
 from .parser import *
 from .text import *
 
