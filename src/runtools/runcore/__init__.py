@@ -51,7 +51,7 @@ def persistence(persistence_type=None) -> Persistence:
     if not db_type:
         raise PersistenceDisabledError
 
-    return db.load_database_module(db_type).create_database(_persistence[db_type])
+    return db.load_database_module(db_type).create(database=_persistence['database'], **_persistence[db_type])
 
 
 def read_history_runs(run_match, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):

@@ -23,6 +23,32 @@ from runtools.runcore.util import MatchingStrategy, format_dt_sql, parse_dt_sql
 log = logging.getLogger(__name__)
 
 
+def create(database=None, **kwargs):
+    """
+    Creates SQLite persistence with configurable connection parameters.
+
+    Args:
+        database: Database path or ':memory:' for in-memory database. If None, uses default path
+        **kwargs: Any valid keyword arguments for sqlite3.connect()
+            Common options include:
+            - timeout: Float timeout value in seconds (default: 5.0)
+            - detect_types: Control whether string or binary is converted to SQLite types (default: 0)
+            - isolation_level: Sets transaction isolation level (default: 'DEFERRED')
+            - cached_statements: Number of statements to cache (default: 128)
+            - uri: True if database parameter is a URI (default: False)
+            - autocommit: Transaction control mode (default: sqlite3.LEGACY_TRANSACTION_CONTROL)
+
+    Returns:
+        SQLite: Configured SQLite persistence instance
+    """
+    # Force check_same_thread to False since we're using _conn_lock
+    kwargs['check_same_thread'] = False
+    def connection_factory():
+        return sqlite3.connect(database or str(paths.sqlite_db_path(True)), **kwargs)
+
+    return SQLite(connection_factory)
+
+
 def ensure_open(f):
     @wraps(f)
     def wrapper(self, *args, **kwargs):
@@ -32,14 +58,6 @@ def ensure_open(f):
             return f(self, *args, **kwargs)
 
     return wrapper
-
-
-def create_database(db_conf):
-    config = db_conf if db_conf else {}
-    db_con = sqlite3.connect(config.get('database') or str(paths.sqlite_db_path(True)))
-    sqlite_ = SQLite(db_con)
-    sqlite_.check_tables_exist()
-    return sqlite_
 
 
 def _build_where_clause(run_match, alias=''):
@@ -194,44 +212,6 @@ def _build_where_clause(run_match, alias=''):
             conditions.append('(' + ' AND '.join(phase_conditions) + ')')
 
     return " WHERE " + " AND ".join(conditions) if conditions else ""
-
-
-def create(database=None, *,
-           timeout=5.0,
-           detect_types=0,
-           isolation_level='DEFERRED',
-           cached_statements=128,
-           uri=False,
-           autocommit=sqlite3.LEGACY_TRANSACTION_CONTROL):
-    """
-    Creates SQLite persistence with configurable connection parameters.
-
-    Args:
-        database: Database path or ':memory:' for in-memory database. If None, uses default path
-        timeout: Float timeout value in seconds
-        detect_types: Control whether string or binary is converted to SQLite types
-        isolation_level: Sets transaction isolation level
-        cached_statements: Number of statements to cache
-        uri: True if database parameter is a URI
-        autocommit: Transaction control mode
-
-    Returns:
-        SQLite: Configured SQLite persistence instance
-    """
-
-    def connection_factory():
-        return sqlite3.connect(
-            database or str(paths.sqlite_db_path(True)),
-            timeout=timeout,
-            detect_types=detect_types,
-            isolation_level=isolation_level,
-            check_same_thread=False,  # Using _conn_lock
-            cached_statements=cached_statements,
-            uri=uri,
-            autocommit=autocommit
-        )
-
-    return SQLite(connection_factory)
 
 
 class SQLite(Persistence):
