@@ -3,7 +3,8 @@ import shutil
 from abc import ABC, abstractmethod
 from threading import Event
 
-from runtools.runcore import RemoteCallClient, paths, util
+from runtools.runcore import paths, util
+from runtools.runcore.client import RemoteCallClient
 from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.db import SortCriteria, sqlite
 from runtools.runcore.job import JobInstanceObservable
