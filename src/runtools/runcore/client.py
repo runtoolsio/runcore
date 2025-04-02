@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from json import JSONDecodeError
 from typing import List, Any, Optional, TypeVar, Generic, Callable, Iterable
 
-from runtools.runcore.common import RuntoolsException
+from runtools.runcore.err import RuntoolsException
 from runtools.runcore.job import JobRun
 from runtools.runcore.output import OutputLine
 from runtools.runcore.util.json import JsonRpcResponse, JsonRpcParseError, ErrorType, ErrorCode

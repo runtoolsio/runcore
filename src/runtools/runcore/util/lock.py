@@ -12,7 +12,7 @@ from threading import RLock
 import portalocker
 
 from runtools.runcore import paths
-from runtools.runcore.common import InvalidStateError
+from runtools.runcore.err import InvalidStateError
 
 log = logging.getLogger(__name__)
 

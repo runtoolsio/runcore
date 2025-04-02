@@ -12,7 +12,7 @@ from threading import Lock
 from typing import List
 
 from runtools.runcore import paths
-from runtools.runcore.common import InvalidStateError
+from runtools.runcore.err import InvalidStateError
 from runtools.runcore.criteria import PhaseMatch, LifecycleCriterion
 from runtools.runcore.db import SortCriteria, Persistence
 from runtools.runcore.job import JobStats, JobRun, JobRuns, JobInstanceMetadata, JobFaults

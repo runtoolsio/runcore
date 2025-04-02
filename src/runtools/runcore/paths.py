@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Generator, List, Callable, Union
 
 from runtools.runcore import util
-from runtools.runcore.common import RuntoolsException
+from runtools.runcore.err import RuntoolsException
 
 CONFIG_DIR = 'runcore'
 CONFIG_FILE = 'runcore.toml'

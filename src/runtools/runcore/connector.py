@@ -9,7 +9,7 @@ from runtools.runcore.db import SortCriteria, sqlite
 from runtools.runcore.job import JobInstanceObservable
 from runtools.runcore.listening import EventReceiver, InstanceEventReceiver
 from runtools.runcore.remote import JobInstanceRemote
-from runtools.runcore.util.err import run_isolated_collect_exceptions
+from runtools.runcore.err import run_isolated_collect_exceptions
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
 
 log = logging.getLogger(__name__)

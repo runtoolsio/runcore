@@ -4,7 +4,7 @@ from abc import ABC
 from enum import Enum
 
 from runtools import runcore
-from runtools.runcore.common import RuntoolsException
+from runtools.runcore.err import RuntoolsException
 from runtools.runcore.job import InstanceStageObserver, InstanceStageEvent
 from runtools.runcore.run import Stage
 

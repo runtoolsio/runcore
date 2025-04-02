@@ -1,3 +1,13 @@
+class RuntoolsException(Exception):
+    pass
+
+
+class InvalidStateError(RuntoolsException):
+
+    def __init__(self, message: str):
+        super().__init__(message)
+
+
 def run_isolated_collect_exceptions(msg, *callbacks, suppress=False) -> None:
     """
     Execute callbacks in order, collecting any exceptions that occur.

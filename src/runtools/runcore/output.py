@@ -4,7 +4,7 @@ from enum import Enum, auto
 from typing import List, Optional
 
 from runtools.runcore import util
-from runtools.runcore.common import InvalidStateError
+from runtools.runcore.err import InvalidStateError
 
 
 
