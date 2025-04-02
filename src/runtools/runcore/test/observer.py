@@ -9,7 +9,7 @@ between job executing thread and testing thread.
 import logging
 from queue import Queue
 from threading import Condition
-from typing import Tuple, List, Callable
+from typing import List, Callable
 
 from runtools.runcore.job import JobRun, InstanceOutputObserver, InstanceOutputEvent, \
     InstanceStageObserver, InstanceStageEvent

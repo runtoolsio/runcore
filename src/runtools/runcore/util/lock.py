@@ -81,10 +81,6 @@ class FileLock:
         self.release()
 
 
-def default_queue_lock():
-    return FileLock(paths.lock_path('state0.lock', True))
-
-
 def default_file_lock_factory(*, timeout=10, max_check_time=0.05):
     def factory(lock_file):
         return FileLock(lock_file, timeout=timeout, max_check_time=max_check_time)
