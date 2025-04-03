@@ -29,29 +29,59 @@ def wait_for_interrupt(env, *, reraise=True):
 
 
 class LocalConnectorLayout(ABC):
+    """
+    Abstract class defining filesystem structure of a local environment to be used by a connector.
+
+    Implementations of this class provide path information for socket files required by a connector
+    to communicate with environment nodes as well as the information
+    where the connector should place its own listening sockets.
+    """
 
     @property
     @abstractmethod
     def env_dir(self):
+        """
+        Returns:
+            Path: Directory containing the environment structure.
+        """
         pass
 
     @property
     @abstractmethod
-    def socket_client_rpc(self):
+    def socket_path_client_rpc(self):
+        """
+        Returns:
+            Path: Path to socket file used by the connector for receiving RPC responses.
+        """
         pass
 
     @property
     @abstractmethod
-    def socket_listener_events(self):
+    def socket_path_listener_events(self):
+        """
+        Returns:
+            Path: Path to socket file used by the connector for receiving events.
+        """
         pass
 
     @property
     @abstractmethod
     def provider_sockets_server_rpc(self):
+        """
+        Returns:
+            Callable: Provider function that generates paths to the RPC server
+            socket files of environment nodes.
+        """
         pass
 
     @abstractmethod
     def cleanup(self):
+        """
+        Cleans up resources used by this connector layout.
+
+        This typically involves removing temporary files and directories
+        created for socket communication.
+        """
         pass
 
 
@@ -69,34 +99,70 @@ class StandardLocalConnectorLayout(LocalConnectorLayout):
 
     @property
     def env_dir(self):
+        """
+        Returns:
+            Directory containing individual environments
+        """
         return self._env_dir
 
     @property
     def socket_name_client_rpc(self):
+        """
+        Returns:
+            str: File name of domain socket used for receiving responses from RPC server
+        """
         return 'client-rpc.sock'
 
     @property
-    def socket_client_rpc(self):
+    def socket_path_client_rpc(self):
+        """
+        Returns:
+            Path: Full path of RPC client domain socket used for receiving responses from RPC server
+        """
         return self.component_dir / self.socket_name_client_rpc
 
     @property
     def socket_name_listener_events(self):
+        """
+        Returns:
+            str: File name of domain socket used for receiving all events from the connected environment
+        """
         return 'listener-events.sock'
 
     @property
-    def socket_listener_events(self):
+    def socket_path_listener_events(self):
+        """
+        Returns:
+            Path: Full path of domain socket used for receiving all events from the connected environment
+        """
         return self.component_dir / self.socket_name_listener_events
 
     @property
     def socket_name_server_rpc(self):
+        """
+        Returns:
+            str: File name of server domain socket used for sending requests to RPC servers
+        """
         return 'server-rpc.sock'
 
     @property
     def provider_sockets_server_rpc(self):
+        """
+        Returns:
+            Callable: A provider function that generates paths to the RPC server socket files of
+            each environment node within the environment directory.
+        """
         return paths.files_in_subdir_provider(self.env_dir, self.socket_name_server_rpc,
                                               subdir_pattern=f"^{self.NODE_DIR_PREFIX}")
 
     def cleanup(self):
+        """
+        Removes the component directory and all its contents from the filesystem.
+
+        This method performs cleanup by deleting the entire component directory
+        created for this connector layout, effectively removing all socket files
+        and other resources associated with this connector instance.
+        """
         shutil.rmtree(self.component_dir)
 
 
@@ -157,8 +223,8 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
 def local(env_id=DEF_ENV_ID, persistence=None, connector_layout=None) -> EnvironmentConnector:
     layout = connector_layout or StandardLocalConnectorLayout.create(env_id)
     persistence = persistence or sqlite.create(':memory:')  # TODO Load correct database
-    client = RemoteCallClient(layout.provider_sockets_server_rpc, layout.socket_client_rpc)
-    event_receiver = EventReceiver(layout.socket_listener_events)
+    client = RemoteCallClient(layout.provider_sockets_server_rpc, layout.socket_path_client_rpc)
+    event_receiver = EventReceiver(layout.socket_path_listener_events)
     return LocalConnector(env_id, layout, persistence, client, event_receiver)
 
 

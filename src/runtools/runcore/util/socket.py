@@ -182,6 +182,7 @@ class SocketClient:
         self._client = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         self._client_addr = client_address
         if client_address:
+            # Explicit client address wouldn't be needed on Linux: self._client.bind(self._client.getsockname())
             self._client.bind(client_address)
             self._client.settimeout(timeout)
 
