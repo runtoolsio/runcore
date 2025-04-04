@@ -1,7 +1,7 @@
-from runtools.runcore import RuntoolsException, JobRun
 from runtools.runcore.client import TargetNotFoundError, RemoteCallError
 from runtools.runcore.criteria import JobRunCriteria
-from runtools.runcore.job import JobInstance
+from runtools.runcore.err import RuntoolsException
+from runtools.runcore.job import JobRun, JobInstance
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
 
 

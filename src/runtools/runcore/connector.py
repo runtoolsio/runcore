@@ -30,21 +30,11 @@ def wait_for_interrupt(env, *, reraise=True):
 
 class LocalConnectorLayout(ABC):
     """
-    Abstract class defining filesystem structure of a local environment to be used by a connector.
+    Abstract class defining the filesystem structure for a local environment connector.
 
-    Implementations of this class provide path information for socket files required by a connector
-    to communicate with environment nodes as well as the information
-    where the connector should place its own listening sockets.
+    Implementations of this class provide paths to socket files required by a connector to communicate
+    with environment nodes as well as the paths where the connector should place its own listening sockets.
     """
-
-    @property
-    @abstractmethod
-    def env_dir(self):
-        """
-        Returns:
-            Path: Directory containing the environment structure.
-        """
-        pass
 
     @property
     @abstractmethod
@@ -69,8 +59,7 @@ class LocalConnectorLayout(ABC):
     def provider_sockets_server_rpc(self):
         """
         Returns:
-            Callable: Provider function that generates paths to the RPC server
-            socket files of environment nodes.
+            Callable: Provider function that generates paths to the RPC server socket files of environment nodes.
         """
         pass
 
@@ -79,29 +68,77 @@ class LocalConnectorLayout(ABC):
         """
         Cleans up resources used by this connector layout.
 
-        This typically involves removing temporary files and directories
-        created for socket communication.
+        This typically involves removing temporary files and directories created for socket communication.
         """
         pass
 
 
 class StandardLocalConnectorLayout(LocalConnectorLayout):
+    """
+    This class manages the filesystem layout for environment connectors, defining where socket files are located
+    and how they're named.
+
+    Example structure:
+    /tmp/runtools/env/{env_id}/                      # Directory for the specific environment (env_dir)
+    │
+    ├── node_abc123/                                 # Environment node directory (NODE_DIR_PREFIX + id)
+    │   ├── server-rpc.sock                          # Node's RPC server socket
+    │   ├── client-rpc.sock                          # Node's RPC client socket
+    │   ├── listener-events.sock                     # Node's events listener socket
+    │   └── ...                                      # Other node-specific sockets
+    │
+    └── connector_789xyz/                            # Connector directory (connector_dir)
+        ├── client-rpc.sock                          # Connector's RPC client socket
+        ├── listener-events.sock                     # Connector's events listener socket
+        └── ...                                      # Other connector-specific sockets
+
+    Attributes:
+        NODE_DIR_PREFIX (str): Prefix for node directories within the environment directory.
+        CONNECTOR_DIR_PREFIX (str): Prefix for connector directories within the environment directory.
+        _connector_dir (Path): Path to this connector's specific directory.
+    """
     NODE_DIR_PREFIX = "node_"
     CONNECTOR_DIR_PREFIX = "connector_"
 
     @classmethod
     def create(cls, env_id, root_dir=None):
+        """
+        Creates a layout for a new connector together with a new unique directory for the connector in the environment
+        directory. Connector's socket paths are all defined relative to this dedicated connector directory,
+        ensuring that when sockets are created, they will be properly isolated from other connectors
+        and nodes in the same environment.
+
+        Args:
+            env_id (str): Identifier for the environment
+            root_dir (Path, optional): Root directory containing environments or uses the default one.
+        Returns (StandardLocalConnectorLayout): Layout instance for connector
+        """
         return cls(*create_layout_dirs(env_id, root_dir, cls.CONNECTOR_DIR_PREFIX))
 
     def __init__(self, env_dir, connector_dir):
+        """
+        Initializes the connector layout with environment and connector directories.
+
+        The connector directory is where all connector's socket files will be placed.
+        Environment node sockets will be searched for within subdirectories of the environment directory.
+
+        Args:
+            env_dir (Path): Directory containing the environment structure
+            connector_dir (Path): Directory specific to this connector instance
+        """
         self._env_dir = env_dir
-        self.component_dir = connector_dir
+        self._connector_dir = connector_dir
 
     @property
     def env_dir(self):
         """
+        Returns the environment directory containing all nodes and connectors.
+
+        This directory serves as the root for the entire environment structure,
+        with individual node and connector directories as subdirectories.
+
         Returns:
-            Directory containing individual environments
+            Path: Directory containing individual environments
         """
         return self._env_dir
 
@@ -119,7 +156,7 @@ class StandardLocalConnectorLayout(LocalConnectorLayout):
         Returns:
             Path: Full path of RPC client domain socket used for receiving responses from RPC server
         """
-        return self.component_dir / self.socket_name_client_rpc
+        return self._connector_dir / self.socket_name_client_rpc
 
     @property
     def socket_name_listener_events(self):
@@ -135,7 +172,7 @@ class StandardLocalConnectorLayout(LocalConnectorLayout):
         Returns:
             Path: Full path of domain socket used for receiving all events from the connected environment
         """
-        return self.component_dir / self.socket_name_listener_events
+        return self._connector_dir / self.socket_name_listener_events
 
     @property
     def socket_name_server_rpc(self):
@@ -157,13 +194,9 @@ class StandardLocalConnectorLayout(LocalConnectorLayout):
 
     def cleanup(self):
         """
-        Removes the component directory and all its contents from the filesystem.
-
-        This method performs cleanup by deleting the entire component directory
-        created for this connector layout, effectively removing all socket files
-        and other resources associated with this connector instance.
+        Removes the connector directory and all its contents from the filesystem.
         """
-        shutil.rmtree(self.component_dir)
+        shutil.rmtree(self._connector_dir)
 
 
 def create_layout_dirs(env_id, root_dir, component_prefix):
