@@ -270,28 +270,45 @@ def lock_path(lock_name: str, create: bool) -> Path:
     return lock_dir(create) / lock_name
 
 
-def sqlite_db_path(create: bool) -> Path:
+def get_data_dir(*, create: bool = False) -> Path:
     """
-    1. Root user: /var/lib/runcore/{db-file}
-    2. Non-root user: ${XDG_DATA_HOME}/runcore/{db-file} or default to ${HOME}/.local/share/runcore
+    Determines the appropriate data directory for persistent application data based on user privileges.
 
-    :param create: create path directories if not exist
-    :return: db file path
+    Follows XDG standards for data storage locations.
+
+    Args:
+        create: If True, ensures the directory exists
+
+    Returns:
+        Path to the application data directory
     """
-
     if _is_root():
-        db_path = Path('/var/lib/runcore')
-
+        data_path = Path('/var/lib/runtools')
     elif os.environ.get('XDG_DATA_HOME'):
-        db_path = Path(os.environ['XDG_DATA_HOME']) / 'runcore'
+        data_path = Path(os.environ['XDG_DATA_HOME']) / 'runtools'
     else:
         home = Path.home()
-        db_path = home / '.local' / 'share' / 'runcore'
+        data_path = home / '.local' / 'share' / 'runtools'
 
     if create:
-        db_path.mkdir(parents=True, exist_ok=True)
+        data_path.mkdir(parents=True, exist_ok=True)
 
-    return db_path / 'jobs.db'
+    return data_path
+
+
+def sqlite_db_path(env_id, *, create: bool = False) -> Path:
+    """
+    Determines the appropriate path for an environment's SQLite database.
+
+    Args:
+        env_id: Environment identifier
+        create: If True, ensures the directory exists
+
+    Returns:
+        Path to the environment's database file
+    """
+    data_path = get_data_dir(create=create)
+    return data_path / f"{env_id}.db"
 
 
 def copy_config_to_search_path(package, filename, overwrite: bool):

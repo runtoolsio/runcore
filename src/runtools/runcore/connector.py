@@ -113,7 +113,7 @@ class StandardLocalConnectorLayout(LocalConnectorLayout):
             root_dir (Path, optional): Root directory containing environments or uses the default one.
         Returns (StandardLocalConnectorLayout): Layout instance for connector
         """
-        return cls(*create_layout_dirs(env_id, root_dir, cls.CONNECTOR_DIR_PREFIX))
+        return cls(*ensure_component_dirs(env_id, cls.CONNECTOR_DIR_PREFIX, root_dir))
 
     def __init__(self, env_dir, connector_dir):
         """
@@ -199,7 +199,21 @@ class StandardLocalConnectorLayout(LocalConnectorLayout):
         shutil.rmtree(self._connector_dir)
 
 
-def create_layout_dirs(env_id, root_dir, component_prefix):
+def ensure_component_dirs(env_id, component_prefix, root_dir=None):
+    """
+    Creates a unique component directory within a specified environment directory.
+
+    Ensures the environment directory exists and creates a unique subdirectory
+    within it for a component instance (e.g., node or connector).
+
+    Args:
+        env_id: Identifier for the target environment.
+        component_prefix: Prefix for the unique component directory name.
+        root_dir: Optional root path for environment directories. Uses default if None.
+
+    Returns:
+        A tuple containing the environment directory path and the unique component directory path.
+    """
     if root_dir:
         env_dir = root_dir / env_id
     else:
@@ -212,6 +226,13 @@ def create_layout_dirs(env_id, root_dir, component_prefix):
 
 
 class EnvironmentConnector(JobInstanceObservable, ABC):
+    """
+    An abstract base class defining the interface for connecting to and interacting with an environment.
+
+    Environment connectors provide access to job instances and their historical data.
+    They allow monitoring and controlling jobs and retrieving information about their state and execution history.
+    Connectors cannot create or run new job instances - that functionality is provided by environment nodes.
+    """
 
     def __enter__(self):
         """
@@ -229,7 +250,6 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
         pass
 
     def get_instance(self, instance_id):
-        """TODO Abstract"""
         inst = self.get_instances(JobRunCriteria.instance_match(instance_id))
         return inst[0] if inst else None
 
@@ -255,7 +275,7 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
 
 def local(env_id=DEF_ENV_ID, persistence=None, connector_layout=None) -> EnvironmentConnector:
     layout = connector_layout or StandardLocalConnectorLayout.create(env_id)
-    persistence = persistence or sqlite.create(':memory:')  # TODO Load correct database
+    persistence = persistence or sqlite.create(str(paths.sqlite_db_path(env_id, create=True)))
     client = RemoteCallClient(layout.provider_sockets_server_rpc, layout.socket_path_client_rpc)
     event_receiver = EventReceiver(layout.socket_path_listener_events)
     return LocalConnector(env_id, layout, persistence, client, event_receiver)
