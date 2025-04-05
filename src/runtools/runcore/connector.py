@@ -1,3 +1,21 @@
+"""
+Environment connector module providing interfaces for interacting with job environments.
+
+This module defines connector components that enable communication with local job environments
+and access to both live and historical job data. The connectors serve as clients to environment
+nodes, allowing monitoring and control of job instances.
+
+Key components:
+- EnvironmentConnector: Abstract base class defining the connector interface
+- LocalConnector: Implementation for local (same host) environment connections using socket communication
+- LocalConnectorLayout: Filesystem structure definitions for connector components
+
+The module provides factory methods for quickly creating commonly used connector configurations:
+    with local() as connector:
+        # Get snapshots of active job instances
+        active_runs = connector.get_active_runs()
+"""
+
 import logging
 import shutil
 from abc import ABC, abstractmethod
