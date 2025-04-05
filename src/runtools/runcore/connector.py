@@ -274,6 +274,22 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
 
 
 def local(env_id=DEF_ENV_ID, persistence=None, connector_layout=None) -> EnvironmentConnector:
+    """
+    Factory function to create a connector for the given local environment using standard components.
+    This provides a convenient way to get a ready-to-use connector for local environment interaction.
+
+    A local connector provides access to job instances and their history within a local environment,
+    allowing monitoring and controlling of jobs belonging to the environment.
+
+    Args:
+        env_id (str): The identifier for the local environment. Defaults to `DEF_ENV_ID`.
+        persistence (Persistence, optional): A specific persistence implementation.
+            If None, a default SQLite backend is used for the environment.
+        connector_layout (LocalConnectorLayout): Optional custom connector layout.
+            Defaults to standard layout for local environments
+    Returns:
+        EnvironmentConnector: Configured connector to the local environment
+    """
     layout = connector_layout or StandardLocalConnectorLayout.create(env_id)
     persistence = persistence or sqlite.create(str(paths.sqlite_db_path(env_id, create=True)))
     client = RemoteCallClient(layout.provider_sockets_server_rpc, layout.socket_path_client_rpc)
@@ -282,6 +298,14 @@ def local(env_id=DEF_ENV_ID, persistence=None, connector_layout=None) -> Environ
 
 
 class LocalConnector(EnvironmentConnector):
+    """
+    Concrete implementation of the EnvironmentConnector for interacting with local environments.
+
+    Local environments are those running within the same operating system.
+    LocalConnector uses socket-based communication to connect to environment nodes,
+    enabling remote management of job instances and collection of their status and history.
+    It handles both live job data via RPC calls and historical job data through persistence.
+    """
 
     def __init__(self, env_id, connector_layout, persistence, client, event_receiver):
         self.env_id = env_id
