@@ -366,6 +366,18 @@ class LifecycleCriterion(MatchCriteria[RunLifecycle]):
             termination=TerminationCriterion.deserialize(data['termination']) if data.get('termination') else None
         )
 
+    def set_created(self, since=None, until=None, until_incl=False):
+        self.created = DateTimeRange(since, until, until_incl)
+        return self
+
+    def set_started(self, since=None, until=None, until_incl=False):
+        self.started = DateTimeRange(since, until, until_incl)
+        return self
+
+    def set_ended(self, since=None, until=None, until_incl=False):
+        self.ended = DateTimeRange(since, until, until_incl)
+        return self
+
     def __bool__(self) -> bool:
         """Check if any criteria are set."""
         return bool(self.stage or self.created or self.started or self.ended or self.total_run_time or self.termination)
@@ -518,9 +530,9 @@ class JobRunCriteria(MatchCriteria[JobRun]):
     Criteria for querying and matching job instances.
     """
 
-    def __init__(self, *, jobs=None, metadata_criteria=None, phase_criteria=None):
-        self.jobs = to_list(jobs) or []
+    def __init__(self, *, metadata_criteria=None, lifecycle_criteria=None, phase_criteria=None):
         self.metadata_criteria = to_list(metadata_criteria)
+        self.lifecycle_criteria = to_list(lifecycle_criteria)
         self.phase_criteria = to_list(phase_criteria)
 
     @classmethod
@@ -530,15 +542,15 @@ class JobRunCriteria(MatchCriteria[JobRun]):
     @classmethod
     def deserialize(cls, as_dict):
         new = cls()
-        new.jobs = as_dict.get('jobs', [])
         new.metadata_criteria = [MetadataCriterion.deserialize(c) for c in as_dict.get('metadata_criteria', ())]
+        new.lifecycle_criteria = [LifecycleCriterion.deserialize(c) for c in as_dict.get('lifecycle_criteria', ())]
         new.phase_criteria = [PhaseCriterion.deserialize(c) for c in as_dict.get('phase_criteria', ())]
         return new
 
     def serialize(self):
         return {
-            'jobs': self.jobs,
             'metadata_criteria': [c.serialize() for c in self.metadata_criteria],
+            'lifecycle_criteria': [c.serialize() for c in self.lifecycle_criteria],
             'phase_criteria': [c.serialize() for c in self.phase_criteria],
         }
 
@@ -577,10 +589,10 @@ class JobRunCriteria(MatchCriteria[JobRun]):
 
     def add(self, criterion):
         match criterion:
-            case str():
-                self.jobs.append(criterion)
             case MetadataCriterion():
                 self.metadata_criteria.append(criterion)
+            case LifecycleCriterion():
+                self.lifecycle_criteria.append(criterion)
             case PhaseCriterion():
                 self.phase_criteria.append(criterion)
             case _:
@@ -589,6 +601,9 @@ class JobRunCriteria(MatchCriteria[JobRun]):
 
     def matches_metadata(self, job_run):
         return not self.metadata_criteria or any(c(job_run.metadata) for c in self.metadata_criteria)
+
+    def matches_lifecycle(self, job_run):
+        return not self.lifecycle_criteria or any(c(job_run.lifecycle) for c in self.lifecycle_criteria)
 
     def match_phases(self, job_run):
         """Check if any phase in the job run matches any of the phase criteria."""
@@ -600,56 +615,46 @@ class JobRunCriteria(MatchCriteria[JobRun]):
             for phase in job_run.phases
         )
 
-    def matches_jobs(self, job_run):
-        return not self.jobs or job_run.job_id in self.jobs
-
     def __call__(self, job_run):
         return self.matches(job_run)
 
     def matches(self, job_run):
         """Check if a job run matches all criteria."""
         return (self.matches_metadata(job_run) and
-                self.match_phases(job_run) and
-                self.matches_jobs(job_run))
+                self.matches_lifecycle(job_run) and
+                self.match_phases(job_run))
 
     def __bool__(self):
         return bool(self.metadata_criteria or
-                    self.phase_criteria or
-                    self.jobs)
+                    self.lifecycle_criteria or
+                    self.phase_criteria)
 
     def __str__(self) -> str:
         parts = []
         if self.metadata_criteria:
-            criteria_strs = [str(c) for c in self.metadata_criteria if bool(c)]
-            if criteria_strs:
+            if criteria_strs := [str(c) for c in self.metadata_criteria if bool(c)]:
                 parts.append(f"metadata={''.join(criteria_strs)}")
+        if self.lifecycle_criteria:
+            if criteria_strs := [str(c) for c in self.lifecycle_criteria if bool(c)]:
+                parts.append(f"lifecycle={''.join(criteria_strs)}")
         if self.phase_criteria:
-            criteria_strs = [str(c) for c in self.phase_criteria if bool(c)]
-            if criteria_strs:
+            if criteria_strs := [str(c) for c in self.phase_criteria if bool(c)]:
                 parts.append(f"phase={''.join(criteria_strs)}")
-        if self.jobs:
-            parts.append(f"jobs={self.jobs}")
         return f"{' | '.join(parts)}" if parts else ""
 
-    def _last_phase_criterion(self) -> PhaseCriterion:
-        if not self.phase_criteria:
-            self.phase_criteria.append(PhaseCriterion())
-        return self.phase_criteria[-1]
-
-    def _last_phase_criterion_lc(self):
-        pc = self._last_phase_criterion()
-        if not pc.lifecycle:
-            pc.lifecycle = LifecycleCriterion()
-        return pc.lifecycle
+    def _last_lc_criterion(self):
+        if not self.lifecycle_criteria:
+            self.lifecycle_criteria = [LifecycleCriterion()]
+        return self.lifecycle_criteria[-1]
 
     def created(self, since=None, until=None, until_incl=False):
-        self._last_phase_criterion_lc().created = DateTimeRange(since, until, until_incl)
+        self._last_lc_criterion().created = DateTimeRange(since, until, until_incl)
         return self
 
     def started(self, since=None, until=None, until_incl=False):
-        self._last_phase_criterion_lc().started = DateTimeRange(since, until, until_incl)
+        self._last_lc_criterion().started = DateTimeRange(since, until, until_incl)
         return self
 
     def ended(self, since=None, until=None, until_incl=False):
-        self._last_phase_criterion_lc().ended = DateTimeRange(since, until, until_incl)
+        self._last_lc_criterion().ended = DateTimeRange(since, until, until_incl)
         return self

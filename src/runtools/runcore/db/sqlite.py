@@ -83,13 +83,6 @@ def _build_where_clause(run_match, alias=''):
 
     conditions = []
 
-    # Handle job ID direct matches
-    if run_match.jobs:
-        job_conditions = [f'{alias}job_id = "{j}"' for j in run_match.jobs]
-        if job_conditions:
-            conditions.append('(' + ' OR '.join(job_conditions) + ')')
-
-    # Handle metadata criteria
     metadata_conditions = []
     for c in run_match.metadata_criteria:
         if c.strategy == MatchingStrategy.ALWAYS_TRUE:
@@ -196,20 +189,10 @@ def _build_where_clause(run_match, alias=''):
 
         return lifecycle_conditions
 
-    # Handle phase criteria that target root phase
-    for phase in run_match.phase_criteria:
-        # Skip non-root phase criteria
-        if phase.match_type != PhaseMatch.ROOT:
-            continue
-
+    for lc in run_match.lifecycle_criteria:
         phase_conditions = []
-
-        # Handle lifecycle criteria if present
-        if phase.lifecycle:
-            phase_conditions.extend(add_lifecycle_conditions(phase.lifecycle))
-
-        if phase_conditions:
-            conditions.append('(' + ' AND '.join(phase_conditions) + ')')
+        phase_conditions.extend(add_lifecycle_conditions(lc))
+        conditions.append('(' + ' AND '.join(phase_conditions) + ')')
 
     return " WHERE " + " AND ".join(conditions) if conditions else ""
 

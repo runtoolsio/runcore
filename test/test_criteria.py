@@ -6,7 +6,7 @@ from runtools.runcore.util import utc_now, DateTimeRange
 
 def test_interval_utc_conversion():
     c = JobRunCriteria().created(*DateTimeRange.parse_to_utc(from_val='2023-11-10T09:00+02:00', to_val=None))
-    assert c.phase_criteria[-1].lifecycle.created.since.hour == 7
+    assert c.lifecycle_criteria[-1].created.since.hour == 7
 
 
 def test_termination_criteria():
