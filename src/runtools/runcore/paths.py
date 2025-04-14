@@ -19,19 +19,13 @@ from typing import Generator, List, Callable, Union
 from runtools.runcore import util
 from runtools.runcore.err import RuntoolsException
 
-CONFIG_DIR = 'runcore'
-CONFIG_FILE = 'runcore.toml'
+CONFIG_DIR = 'runtools'
 JOBS_FILE = 'jobs.toml'
-_HOSTINFO_FILE = 'hostinfo'
 _LOG_FILE = 'runcore.log'
 
 
 def _is_root():
     return os.geteuid() == 0
-
-
-def default_config_file_path() -> Path:
-    return package_config_path('runtools.runcore.config', CONFIG_FILE)
 
 
 def package_config_path(package, filename) -> Path:
@@ -45,16 +39,8 @@ def package_config_path(package, filename) -> Path:
         raise ConfigFileNotFoundError(filename + ' config file not found')
 
 
-def lookup_config_file():
-    return lookup_file_in_config_path(CONFIG_FILE)
-
-
 def lookup_jobs_file():
     return lookup_file_in_config_path(JOBS_FILE)
-
-
-def lookup_hostinfo_file():
-    return lookup_file_in_config_path(_HOSTINFO_FILE)
 
 
 def lookup_file_in_config_path(file) -> Path:
