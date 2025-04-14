@@ -14,6 +14,7 @@ import os
 import re
 from importlib.resources import path
 from pathlib import Path
+from shutil import copy
 from typing import Generator, List, Callable, Union
 
 from runtools.runcore import util
@@ -297,16 +298,48 @@ def sqlite_db_path(env_id, *, create: bool = False) -> Path:
     return data_path / f"{env_id}.db"
 
 
-def copy_config_to_search_path(package, filename, overwrite: bool):
+def _copy_config(package, filename, dest, overwrite: bool):
     cfg_to_copy = package_config_path(package, filename)
-    # Copy to first dir in search path
-    # TODO Specify where to copy the file - do not use XDG search path
-    copy_to = runtools_config_file_search_path(exclude_cwd=True)[0] / filename
     try:
-        util.copy_resource(cfg_to_copy, copy_to, overwrite)
-        return copy_to
+        copy_resource(cfg_to_copy, dest, overwrite)
+        return dest
     except FileExistsError as e:
         raise ConfigFileAlreadyExists(str(e)) from e
+
+
+def copy_config_to_search_path(package, filename, overwrite: bool):
+    # Copy to first dir in search path (excluding the current working directory)
+    dest = runtools_config_file_search_path(exclude_cwd=True)[0] / filename
+    return _copy_config(package, filename, dest, overwrite)
+
+
+def copy_config_to_path(package, filename, copy_to, overwrite: bool):
+    dest = copy_to / filename
+    return _copy_config(package, filename, dest, overwrite)
+
+
+def copy_resource(src: Path, dst: Path, overwrite=False):
+    if not dst.parent.is_dir():
+        os.makedirs(dst.parent)
+
+    if not dst.exists() or overwrite:
+        copy(src, dst)
+    else:
+        raise FileExistsError('File already exists: ' + str(dst))
+
+
+def expand_user(file):
+    if not isinstance(file, str) or not file.startswith('~'):
+        return file
+
+    return os.path.expanduser(file)
+
+
+def print_file(path_):
+    path_ = expand_user(path_)
+    print('Showing file: ' + str(path_))
+    with open(path_, 'r') as file:
+        print(file.read())
 
 
 class ConfigFileAlreadyExists(RuntoolsException, FileExistsError):
