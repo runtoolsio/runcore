@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum, auto
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, NamedTuple
 
 from runtools.runcore import util
 from runtools.runcore.output import OutputLine
@@ -170,7 +170,6 @@ class JobStats:
         failed_count (int): Number of instances that failed during the time interval.
         warning_count (int): Number of instances with at least one warning during the time interval.
     """
-
     job_id: str
     count: int = 0
     first_created: Optional[datetime] = None
@@ -227,53 +226,70 @@ class JobStats:
         return result
 
 
+class InstanceID(NamedTuple):
+    job_id: str
+    run_id: str
+
+    def serialize(self) -> Dict[str, str]:
+        return {
+            "job_id": self.job_id,
+            "run_id": self.run_id
+        }
+
+    @classmethod
+    def deserialize(cls, data: Dict[str, str]) -> 'InstanceID':
+        return cls(
+            job_id=data["job_id"],
+            run_id=data["run_id"]
+        )
+
+    def __str__(self):
+        return f"{self.job_id}@{self.run_id}"
+
+
 @dataclass(frozen=True)
 class JobInstanceMetadata(ABC):
     """
-    A dataclass that contains metadata information related to a specific job run. This object is designed
-    to represent essential information about a job run in a compact and serializable format. By using this object
-    instead of a full `JobRun` snapshot, you can reduce the amount of data transmitted when sending information
-    across a network or between different parts of a system.
-    TODO Add job_type
+    A dataclass that contains descriptive information about a specific job instance. This object is designed
+    to represent essential information about a job run in a compact and serializable format.
+    TODO Add job type
 
     Attributes:
-        job_id (str):
-            The unique identifier of the job associated with the instance.
-        run_id (str):
-            The unique identifier of the job instance run.
-        instance_id (str):
-            The reference identifier of the job instance.
+        instance_id (InstanceID):
+            Unique identifier for the job instance, composed of job_id and run_id.
         user_params (Dict[str, Any]):
             A dictionary containing user-defined parameters associated with the instance.
             These are arbitrary parameters set by the user, and they do not affect the functionality.
     """
-    job_id: str
-    run_id: str
-    instance_id: str
+    instance_id: InstanceID
     user_params: Dict[str, Any]
+
+    @property
+    def job_id(self) -> str:
+        """The unique identifier of the job associated with the instance."""
+        return self.instance_id.job_id
+
+    @property
+    def run_id(self) -> str:
+        """The unique identifier of the job instance run."""
+        return self.instance_id.run_id
 
     def serialize(self) -> Dict[str, Any]:
         return {
             "job_id": self.job_id,
             "run_id": self.run_id,
-            "instance_id": self.instance_id,
             "user_params": self.user_params,
         }
 
     @classmethod
     def deserialize(cls, as_dict):
         return cls(
-            as_dict['job_id'],
-            as_dict['run_id'],
-            as_dict['instance_id'],
-            as_dict['user_params'],
+            instance_id=InstanceID(as_dict['job_id'], as_dict['run_id']),
+            user_params=as_dict['user_params'],
         )
 
     def __repr__(self) -> str:
-        if self.run_id == self.instance_id:
-            return f"{self.job_id}@{self.run_id}"
-        else:
-            return f"{self.job_id}@{self.run_id}:{self.instance_id}"
+        return str(self.instance_id)
 
 
 class JobInstance(abc.ABC):
@@ -297,7 +313,7 @@ class JobInstance(abc.ABC):
     def instance_id(self):
         """
         Returns:
-            str: Instance reference/identity identifier. Expected to be a unique value.
+            InstanceID: Unique identifier of this instance.
         """
         return self.metadata.instance_id
 
@@ -474,6 +490,14 @@ class JobRun:
         return d
 
     @property
+    def instance_id(self) -> InstanceID:
+        """
+        Returns:
+            str: Unique identifier of the instance representing this job run.
+        """
+        return self.metadata.instance_id
+
+    @property
     def job_id(self) -> str:
         """
         Returns:
@@ -488,14 +512,6 @@ class JobRun:
             str: Run part of the job instance full identifier.
         """
         return self.metadata.run_id
-
-    @property
-    def instance_id(self) -> str:
-        """
-        Returns:
-            str: Instance part of the instance full identifier.
-        """
-        return self.metadata.instance_id
 
     def find_phase(self, predicate):
         for p in self.phases:

@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from runtools.runcore.job import JobRun, JobInstanceMetadata
+from runtools.runcore.job import JobRun, JobInstanceMetadata, InstanceID
 from runtools.runcore.run import RunState, \
     TerminationStatus, Fault
 from runtools.runcore.test.run import FakePhaseDetailBuilder
@@ -12,10 +12,9 @@ PROGRAM = 'program'
 TERM = 'term'
 
 
-def job_run(job_id, phase, *, instance_id=None, run_id=None, user_params=None):
-    instance_id = instance_id or unique_timestamp_hex()
-    run_id = run_id or instance_id
-    meta = JobInstanceMetadata(job_id, run_id, instance_id, user_params or {})
+def job_run(job_id, phase, *, run_id=None, user_params=None):
+    run_id = run_id or unique_timestamp_hex()
+    meta = JobInstanceMetadata(InstanceID(job_id, run_id), user_params or {})
     return JobRun(meta, phase.lifecycle, phase.children)  # TODO Faults and status
 
 

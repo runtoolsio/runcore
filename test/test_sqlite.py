@@ -2,7 +2,7 @@ from datetime import datetime as dt
 
 import pytest
 
-from runtools.runcore.criteria import JobRunCriteria, parse_criteria, PhaseCriterion, LifecycleCriterion
+from runtools.runcore.criteria import JobRunCriteria, parse_criteria
 from runtools.runcore.db import sqlite
 from runtools.runcore.run import TerminationStatus
 from runtools.runcore.test.job import fake_job_run

@@ -30,7 +30,7 @@ from json import JSONDecodeError
 from typing import List, Any, Optional, TypeVar, Generic, Callable, Iterable
 
 from runtools.runcore.err import RuntoolsException
-from runtools.runcore.job import JobRun
+from runtools.runcore.job import JobRun, InstanceID
 from runtools.runcore.output import OutputLine
 from runtools.runcore.util.json import JsonRpcResponse, JsonRpcParseError, ErrorType, ErrorCode
 from runtools.runcore.util.socket import SocketClient, SocketRequestResult
@@ -321,7 +321,7 @@ class RemoteCallClient(SocketClient):
         return self.call_method(
             server_address, "get_active_runs", run_match.serialize(), retval_mapper=_job_runs_retval_mapper)
 
-    def stop_instance(self, server_address: str, instance_id: str) -> None:
+    def stop_instance(self, server_address: str, instance_id: InstanceID) -> None:
         """Stops a specific job instance.
 
         Args:
@@ -335,9 +335,9 @@ class RemoteCallClient(SocketClient):
         if not instance_id:
             raise ValueError('Instance ID is mandatory for the stop operation')
 
-        self.call_method(server_address, "stop_instance", instance_id)
+        self.call_method(server_address, "stop_instance", instance_id.serialize())
 
-    def get_output_tail(self, server_address: str, instance_id: str, max_lines: int = 100) -> List[OutputLine]:
+    def get_output_tail(self, server_address: str, instance_id: InstanceID, max_lines: int = 100) -> List[OutputLine]:
         """Retrieves recent output lines from a specific job instance.
 
         Args:
@@ -355,10 +355,10 @@ class RemoteCallClient(SocketClient):
         def resp_mapper(retval: Any) -> List[OutputLine]:
             return [OutputLine.deserialize(line) for line in retval]
 
-        return self.call_method(server_address, "get_output_tail", instance_id, max_lines,
+        return self.call_method(server_address, "get_output_tail", instance_id.serialize(), max_lines,
                                 retval_mapper=resp_mapper)
 
-    def exec_phase_op(self, server_address: str, instance_id: str, phase_id: str, op_name: str, *op_args) -> Any:
+    def exec_phase_op(self, server_address: str, instance_id: InstanceID, phase_id: str, op_name: str, *op_args) -> Any:
         """Executes an operation on a specific phase of a job instance.
 
         Args:
@@ -382,4 +382,4 @@ class RemoteCallClient(SocketClient):
             raise ValueError('Operation name is required for control operation')
 
         return self.call_method(
-            server_address, "exec_phase_op", instance_id, phase_id, op_name, op_args)
+            server_address, "exec_phase_op", instance_id.serialize(), phase_id, op_name, op_args)

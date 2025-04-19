@@ -1,7 +1,7 @@
 from runtools.runcore.client import TargetNotFoundError, RemoteCallError
 from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.err import RuntoolsException
-from runtools.runcore.job import JobRun, JobInstance
+from runtools.runcore.job import JobRun, JobInstance, InstanceID
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
 
 
@@ -125,7 +125,7 @@ class RemoteInstanceNotFoundError(RemoteInstanceError):
         instance_id: ID of the job instance that could not be found
     """
 
-    def __init__(self, server_address: str, instance_id: str):
+    def __init__(self, server_address: str, instance_id: InstanceID):
         self.server_address = server_address
         self.instance_id = instance_id
         super().__init__(f"Job instance '{instance_id}' not found on server '{server_address}'")
@@ -139,7 +139,7 @@ class RemoteInstanceUnavailableError(RemoteInstanceError):
         instance_id: ID of the job instance that could not be reached
     """
 
-    def __init__(self, server_address: str, instance_id: str):
+    def __init__(self, server_address: str, instance_id: InstanceID):
         self.server_address = server_address
         self.instance_id = instance_id
         super().__init__(f"Error reaching job instance '{instance_id}' on server '{server_address}'")
