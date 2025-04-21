@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import timedelta
 from enum import Enum, auto
-from typing import Dict, Any, List, Optional, Tuple, Iterator
+from typing import Dict, Any, List, Optional, Tuple, Iterator, ClassVar, Set
 
 from runtools.runcore import util
 from runtools.runcore.output import OutputLine
@@ -21,8 +21,6 @@ from runtools.runcore.run import TerminationStatus, RunState, Fault, PhaseDetail
 from runtools.runcore.status import Status
 from runtools.runcore.util import MatchingStrategy, format_dt_iso, unique_timestamp_hex
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
-
-FORBIDDEN_ID_CHARS = set("!@#")
 
 
 class JobType(Enum):
@@ -235,6 +233,7 @@ def iid(job_id, run_id=None):
 
 @dataclass(frozen=True)
 class InstanceID(Sequence):
+    FORBIDDEN_CHARS: ClassVar[Set[str]] = frozenset("!@#")
     job_id: str
     run_id: str = field(default_factory=unique_timestamp_hex)
 
@@ -243,8 +242,8 @@ class InstanceID(Sequence):
             raise ValueError("Instance `job_id` must be non‑empty")
         if not self.run_id:
             object.__setattr__(self, 'run_id', unique_timestamp_hex())
-        if FORBIDDEN_ID_CHARS.intersection(self.job_id) or FORBIDDEN_ID_CHARS.intersection(self.run_id):
-            raise ValueError(f"Instance ID identifiers cannot contain characters: {", ".join(FORBIDDEN_ID_CHARS)}")
+        if InstanceID.FORBIDDEN_CHARS.intersection(self.job_id) or InstanceID.FORBIDDEN_CHARS.intersection(self.run_id):
+            raise ValueError(f"Instance ID identifiers cannot contain characters: {", ".join(InstanceID.FORBIDDEN_CHARS)}")
 
     def __len__(self) -> int:
         return 2

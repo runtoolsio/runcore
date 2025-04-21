@@ -23,12 +23,12 @@ from runtools.runcore.util import MatchingStrategy, format_dt_sql, parse_dt_sql
 log = logging.getLogger(__name__)
 
 
-def create(database=None, **kwargs):
+def create(database, **kwargs):
     """
     Creates SQLite persistence with configurable connection parameters.
 
     Args:
-        database: Database path or ':memory:' for in-memory database. If None, uses default path
+        database: Database path or ':memory:' for in-memory database.
         **kwargs: Any valid keyword arguments for sqlite3.connect()
             Common options include:
             - timeout: Float timeout value in seconds (default: 5.0)
@@ -45,7 +45,7 @@ def create(database=None, **kwargs):
     kwargs['check_same_thread'] = False
 
     def connection_factory():
-        return sqlite3.connect(database or str(paths.sqlite_db_path(True)), **kwargs)
+        return sqlite3.connect(database, **kwargs)
 
     return SQLite(connection_factory)
 

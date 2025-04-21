@@ -23,6 +23,7 @@ from threading import Event
 
 from runtools.runcore import paths, util
 from runtools.runcore.client import RemoteCallClient
+from runtools.runcore.constants import DEFAULT_ENVIRONMENT
 from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.db import SortCriteria, sqlite
 from runtools.runcore.job import JobInstanceObservable
@@ -32,8 +33,6 @@ from runtools.runcore.err import run_isolated_collect_exceptions
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
 
 log = logging.getLogger(__name__)
-
-DEF_ENV_ID = 'default'
 
 
 def wait_for_interrupt(env, *, reraise=True):
@@ -291,7 +290,7 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
         pass
 
 
-def local(env_id=DEF_ENV_ID, persistence=None, connector_layout=None) -> EnvironmentConnector:
+def local(env_id=DEFAULT_ENVIRONMENT, persistence=None, connector_layout=None) -> EnvironmentConnector:
     """
     Factory function to create a connector for the given local environment using standard components.
     This provides a convenient way to get a ready-to-use connector for local environment interaction.
