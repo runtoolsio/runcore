@@ -141,6 +141,9 @@ class Status:
                 return operation
         return None
 
+    def __bool__(self) -> bool:
+        return self.last_event is not None or bool(self.operations) or bool(self.warnings) or self.result is not None
+
     def __str__(self) -> str:
         """
         Formats a status line showing active operations and the last event.
