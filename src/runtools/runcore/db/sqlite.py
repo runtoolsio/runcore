@@ -11,12 +11,11 @@ from functools import wraps
 from threading import Lock
 from typing import List
 
-from runtools.runcore import paths
-from runtools.runcore.err import InvalidStateError
 from runtools.runcore.criteria import LifecycleCriterion
 from runtools.runcore.db import SortCriteria, Persistence
-from runtools.runcore.job import JobStats, JobRun, JobRuns, JobInstanceMetadata, JobFaults, InstanceID
-from runtools.runcore.run import TerminationStatus, Outcome, PhaseDetail, RunLifecycle
+from runtools.runcore.err import InvalidStateError
+from runtools.runcore.job import JobStats, JobRun, JobRuns, JobInstanceMetadata, InstanceID
+from runtools.runcore.run import TerminationStatus, Outcome, PhaseDetail, RunLifecycle, Fault
 from runtools.runcore.status import Status
 from runtools.runcore.util import MatchingStrategy, format_dt_sql, parse_dt_sql
 
@@ -289,7 +288,7 @@ class SQLite(Persistence):
             metadata = JobInstanceMetadata(InstanceID(t[0], t[1]), json.loads(t[2]) if t[2] else dict())
             lifecycle = RunLifecycle.deserialize(json.loads(t[7]))
             phases = tuple(PhaseDetail.deserialize(p) for p in json.loads(t[8]))
-            faults = JobFaults.deserialize(json.loads(t[10])) if t[10] else None
+            faults = tuple(Fault.deserialize(f) for f in json.loads(t[10])) if t[10] else ()
             status = Status.deserialize(json.loads(t[11])) if t[11] else None
             return JobRun(metadata, lifecycle, phases, faults, status)
 
@@ -407,7 +406,7 @@ class SQLite(Persistence):
                     json.dumps(r.lifecycle.serialize()),
                     json.dumps([p.serialize() for p in r.phases]),
                     r.lifecycle.termination.status.value if r.lifecycle.termination else None,
-                    json.dumps(r.faults.serialize()) if r.faults else None,
+                    json.dumps([f.serialize() for f in r.faults]) if r.faults else None,
                     json.dumps(r.status.serialize()) if r.status else None,
                     len(r.status.warnings) if r.status else None,
                     None  # misc

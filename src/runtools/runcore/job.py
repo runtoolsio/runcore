@@ -243,7 +243,8 @@ class InstanceID(Sequence):
         if not self.run_id:
             object.__setattr__(self, 'run_id', unique_timestamp_hex())
         if InstanceID.FORBIDDEN_CHARS.intersection(self.job_id) or InstanceID.FORBIDDEN_CHARS.intersection(self.run_id):
-            raise ValueError(f"Instance ID identifiers cannot contain characters: {", ".join(InstanceID.FORBIDDEN_CHARS)}")
+            raise ValueError(
+                f"Instance ID identifiers cannot contain characters: {", ".join(InstanceID.FORBIDDEN_CHARS)}")
 
     def __len__(self) -> int:
         return 2
@@ -457,29 +458,6 @@ class JobInstance(abc.ABC):
 
 
 @dataclass(frozen=True)
-class JobFaults:
-    transition_observer_faults: Tuple[Fault, ...]
-    output_observer_faults: Tuple[Fault, ...]
-
-    def serialize(self) -> Dict[str, Any]:
-        return {
-            "transition_observer_faults": [fault.serialize() for fault in self.transition_observer_faults],
-            "output_observer_faults": [fault.serialize() for fault in self.output_observer_faults]
-        }
-
-    @classmethod
-    def deserialize(cls, as_dict: Dict[str, Any]) -> 'JobFaults':
-        return cls(
-            transition_observer_faults=tuple(
-                Fault.deserialize(fault) for fault in as_dict.get("transition_observer_faults", [])
-            ),
-            output_observer_faults=tuple(
-                Fault.deserialize(fault) for fault in as_dict.get("output_observer_faults", [])
-            )
-        )
-
-
-@dataclass(frozen=True)
 class JobRun:
     """
     Immutable snapshot of job instance
@@ -487,7 +465,7 @@ class JobRun:
     metadata: JobInstanceMetadata
     lifecycle: RunLifecycle
     phases: Tuple[PhaseDetail, ...]
-    faults: Optional[JobFaults] = None
+    faults: Tuple[Fault, ...] = ()
     status: Optional[Status] = None
 
     @classmethod
@@ -496,7 +474,7 @@ class JobRun:
             metadata=JobInstanceMetadata.deserialize(as_dict['metadata']),
             lifecycle=RunLifecycle.deserialize(as_dict['lifecycle']),
             phases=tuple(PhaseDetail.deserialize(p) for p in as_dict['phases']),
-            faults=JobFaults.deserialize(as_dict['faults']) if as_dict.get('faults') else None,
+            faults=tuple(Fault.deserialize(f) for f in as_dict.get('faults', [])),
             status=Status.deserialize(as_dict['status']) if as_dict.get('status') else None,
         )
 
@@ -507,7 +485,7 @@ class JobRun:
             "phases": [p.serialize() for p in self.phases],
         }
         if self.faults:
-            d["faults"] = self.faults.serialize()
+            d["faults"] = [f.serialize() for f in self.faults]
         if self.status:
             d["status"] = self.status.serialize()
         return d
