@@ -2,7 +2,7 @@ import importlib
 import pkgutil
 from abc import ABC
 from enum import Enum
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -36,7 +36,7 @@ def create_persistence(env_id, persistence_config):
     if not persistence_config.enabled:
         return None
 
-    return load_database_module(persistence_config.type).create(env_id, **persistence_config.params)
+    return load_database_module(persistence_config.type).create(env_id, persistence_config.database, **persistence_config.params)
 
 
 class DatabaseNotFoundError(RuntoolsException):
@@ -49,11 +49,12 @@ class DatabaseNotFoundError(RuntoolsException):
 class PersistenceConfig(BaseModel):
     type: str
     enabled: bool = True
+    database: Optional[str] = Field(default=None)
     params: Dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
     def default_sqlite(cls):
-        return cls(type="sqlite", enabled=True, params={})
+        return cls(type="sqlite", enabled=True)
 
 
 class SortCriteria(Enum):

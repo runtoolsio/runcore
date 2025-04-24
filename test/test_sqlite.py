@@ -6,12 +6,12 @@ from runtools.runcore.criteria import JobRunCriteria, parse_criteria
 from runtools.runcore.db import sqlite
 from runtools.runcore.run import TerminationStatus
 from runtools.runcore.test.job import fake_job_run
-from runtools.runcore.util import parse_iso8601_duration, MatchingStrategy, dtrange
+from runtools.runcore.util import parse_iso8601_duration, MatchingStrategy
 
 
 @pytest.fixture
 def sut():
-    with sqlite.create(':memory:') as db:
+    with sqlite.create('test_env', database=':memory:') as db:
         yield db
 
 
