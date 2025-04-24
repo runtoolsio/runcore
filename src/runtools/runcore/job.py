@@ -406,21 +406,21 @@ class JobInstance(abc.ABC):
         """
 
     def add_observer_all_events(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
-        self.add_observer_stage(observer, priority)
+        self.add_observer_lifecycle(observer, priority)
         self.add_observer_transition(observer, priority)
         self.add_observer_output(observer, priority)
 
     def remove_observer_all_events(self, observer):
-        self.remove_observer_stage(observer)
+        self.remove_observer_lifecycle(observer)
         self.remove_observer_transition(observer)
         self.remove_observer_output(observer)
 
     @abc.abstractmethod
-    def add_observer_stage(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, reply_last_event=False):
+    def add_observer_lifecycle(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, reply_last_event=False):
         pass
 
     @abc.abstractmethod
-    def remove_observer_stage(self, observer):
+    def remove_observer_lifecycle(self, observer):
         pass
 
     @abc.abstractmethod
@@ -775,7 +775,7 @@ class JobInstanceObservable(ABC):
         pass
 
     @abstractmethod
-    def add_observer_stage(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
+    def add_observer_lifecycle(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
         """
         Register an observer for stage events.
 
@@ -786,7 +786,7 @@ class JobInstanceObservable(ABC):
         pass
 
     @abstractmethod
-    def remove_observer_stage(self, observer):
+    def remove_observer_lifecycle(self, observer):
         """
         Unregister an observer from stage events.
 
@@ -847,19 +847,19 @@ class JobInstanceNotifications:
         self._output_notification = ObservableNotification[InstanceOutputObserver]()
 
     def add_observer_all_events(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
-        self.add_observer_stage(observer, priority)
+        self.add_observer_lifecycle(observer, priority)
         self.add_observer_transition(observer, priority)
         self.add_observer_output(observer, priority)
 
     def remove_observer_all_events(self, observer):
-        self.remove_observer_stage(observer)
+        self.remove_observer_lifecycle(observer)
         self.remove_observer_transition(observer)
         self.remove_observer_output(observer)
 
-    def add_observer_stage(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
+    def add_observer_lifecycle(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
         self._stage_notification.add_observer(observer, priority)
 
-    def remove_observer_stage(self, observer):
+    def remove_observer_lifecycle(self, observer):
         self._stage_notification.remove_observer(observer)
 
     def add_observer_transition(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
@@ -954,13 +954,13 @@ class JobInstanceDelegate(JobInstance):
         """Delegates to the wrapped instance's remove_observer_all_events method"""
         self._wrapped.remove_observer_all_events(observer)
 
-    def add_observer_stage(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, reply_last_event=False):
+    def add_observer_lifecycle(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, reply_last_event=False):
         """Delegates to the wrapped instance's add_observer_stage method"""
-        self._wrapped.add_observer_stage(observer, priority, reply_last_event)
+        self._wrapped.add_observer_lifecycle(observer, priority, reply_last_event)
 
-    def remove_observer_stage(self, observer):
+    def remove_observer_lifecycle(self, observer):
         """Delegates to the wrapped instance's remove_observer_stage method"""
-        self._wrapped.remove_observer_stage(observer)
+        self._wrapped.remove_observer_lifecycle(observer)
 
     def add_observer_transition(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
         """Delegates to the wrapped instance's add_observer_transition method"""

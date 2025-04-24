@@ -47,10 +47,10 @@ class JobInstanceRemote(JobInstance):
     def interrupted(self):
         pass
 
-    def add_observer_stage(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, reply_last_event=False):
+    def add_observer_lifecycle(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, reply_last_event=False):
         pass
 
-    def remove_observer_stage(self, observer):
+    def remove_observer_lifecycle(self, observer):
         pass
 
     def add_observer_transition(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
