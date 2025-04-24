@@ -2,6 +2,9 @@ import importlib
 import pkgutil
 from abc import ABC
 from enum import Enum
+from typing import Dict, Any
+
+from pydantic import BaseModel, Field
 
 from runtools import runcore
 from runtools.runcore.err import RuntoolsException
@@ -29,11 +32,28 @@ def load_database_module(db_type):
     raise DatabaseNotFoundError(runcore.db.__name__ + "." + db_type)
 
 
+def create_persistence(env_id, persistence_config):
+    if not persistence_config.enabled:
+        return None
+
+    return load_database_module(persistence_config.type).create(env_id, **persistence_config.params)
+
+
 class DatabaseNotFoundError(RuntoolsException):
 
     def __init__(self, module_):
         super().__init__(f'Cannot find database module {module_}. Ensure this module is installed '
                          f'or check that the provided persistence type value is correct.')
+
+
+class PersistenceConfig(BaseModel):
+    type: str
+    enabled: bool = True
+    params: Dict[str, Any] = Field(default_factory=dict)
+
+    @classmethod
+    def default_sqlite(cls):
+        return cls(type="sqlite", enabled=True, params={})
 
 
 class SortCriteria(Enum):
@@ -69,6 +89,7 @@ class Persistence(ABC):
 
     def close(self):
         pass
+
 
 class PersistingObserver(InstanceStageObserver):
 
