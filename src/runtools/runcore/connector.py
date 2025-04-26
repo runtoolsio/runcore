@@ -21,15 +21,14 @@ import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
 from threading import Event
-from typing import Callable, Optional, Annotated, Union
-
-from pydantic import Discriminator
+from typing import Callable, Optional
 
 from runtools.runcore import paths, util, db
 from runtools.runcore.client import RemoteCallClient
-from runtools.runcore.env import DEFAULT_ENVIRONMENT, EnvironmentConfig, EnvironmentTypes, LocalEnvironmentConfig
+from runtools.runcore.env import DEFAULT_ENVIRONMENT, LocalEnvironmentConfig, \
+    EnvironmentConfigUnion
 from runtools.runcore.criteria import JobRunCriteria
-from runtools.runcore.db import SortCriteria, sqlite, NullPersistence
+from runtools.runcore.db import SortCriteria, NullPersistence
 from runtools.runcore.err import run_isolated_collect_exceptions
 from runtools.runcore.job import JobInstanceObservable
 from runtools.runcore.listening import EventReceiver, InstanceEventReceiver
@@ -258,19 +257,13 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
         pass
 
 
-EnvironmentConfigUnion = Annotated[
-    Union[LocalEnvironmentConfig],
-    Discriminator("type")
-]
-
-
 def create(env_config: EnvironmentConfigUnion):
     if isinstance(env_config, LocalEnvironmentConfig):
         if env_config.persistence:
             persistence = db.create_persistence(env_config.id, env_config.persistence)
         else:
             persistence = NullPersistence()
-        layout = StandardLocalConnectorLayout.create(env_config.id, env_config.layout.root_dir)
+        layout = StandardLocalConnectorLayout.create(env_config.id, env_config.layout.root_dir)  # TODO fact fnc for cfg
         return local(env_config.id, persistence, layout)
 
     raise AssertionError(f"Unsupported environment type: {env_config.type}. This is a programming error.")

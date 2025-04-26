@@ -1,7 +1,7 @@
 from pathlib import Path
-from typing import Optional, Literal
+from typing import Optional, Literal, Annotated, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, Discriminator
 
 from runtools.runcore.db import PersistenceConfig
 
@@ -37,3 +37,9 @@ class LocalEnvironmentConfig(EnvironmentConfig):
     @classmethod
     def create_default(cls, env_id: str = DEFAULT_ENVIRONMENT):
         return cls(id=env_id, persistence=PersistenceConfig.default_sqlite())
+
+
+EnvironmentConfigUnion = Annotated[
+    Union[LocalEnvironmentConfig],
+    Discriminator("type")
+]
