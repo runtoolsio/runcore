@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from json import JSONDecodeError
 from typing import List, Any, Optional, TypeVar, Generic, Callable, Iterable
 
+from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.err import RuntoolsException
 from runtools.runcore.job import JobRun, InstanceID
 from runtools.runcore.output import OutputLine
@@ -47,6 +48,7 @@ class RemoteCallError(RuntoolsException):
         server_id: Identifier of the server where error occurred
         message: Optional error message details
     """
+
     def __init__(self, server_id: str, message: Optional[str] = None):
         self.server_id = server_id
         super().__init__(f"Server '{server_id}' {message or ''}")
@@ -61,6 +63,7 @@ class RemoteCallClientError(RemoteCallError):
         server_address: Address of the target server
         message: Optional error message details
     """
+
     def __init__(self, server_address: str, message: Optional[str] = None):
         super().__init__(server_address, message)
 
@@ -72,6 +75,7 @@ class RemoteCallServerError(RemoteCallError):
         server_address: Address of the target server
         message: Optional error message details
     """
+
     def __init__(self, server_address: str, message: Optional[str] = None):
         super().__init__(server_address, message)
 
@@ -82,6 +86,7 @@ class TargetNotFoundError(RemoteCallError):
     Args:
         server_address: Optional address of the target server
     """
+
     def __init__(self, server_address: str = None):
         super().__init__(server_address)
 
@@ -92,6 +97,7 @@ class PhaseNotFoundError(RemoteCallError):
     Args:
         server_address: Address of the target server
     """
+
     def __init__(self, server_address: str):
         super().__init__(server_address)
 
@@ -301,6 +307,8 @@ class RemoteCallClient(SocketClient):
             List of RemoteCallResult containing JobRun objects for matching instances
             from each responding server
         """
+        if not run_match:
+            run_match = JobRunCriteria.all()
         return self.broadcast_method("get_active_runs", run_match.serialize(), retval_mapper=_job_runs_retval_mapper)
 
     def get_active_runs(self, server_address: str, run_match) -> List[JobRun]:

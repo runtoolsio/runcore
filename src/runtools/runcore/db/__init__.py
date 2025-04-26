@@ -1,6 +1,6 @@
 import importlib
 import pkgutil
-from abc import ABC
+from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Dict, Any, Optional
 
@@ -36,7 +36,8 @@ def create_persistence(env_id, persistence_config):
     if not persistence_config.enabled:
         return None
 
-    return load_database_module(persistence_config.type).create(env_id, persistence_config.database, **persistence_config.params)
+    return load_database_module(persistence_config.type).create(env_id, persistence_config.database,
+                                                                **persistence_config.params)
 
 
 class DatabaseNotFoundError(RuntoolsException):
@@ -73,22 +74,65 @@ class SortCriteria(Enum):
 
 class Persistence(ABC):
 
+    @property
+    def enabled(self):
+        return True
+
+    def open(self):
+        pass
+
+    @abstractmethod
     def read_history_runs(self, run_match=None, sort=SortCriteria.CREATED, *, asc, limit, offset, last=False):
         pass
 
+    @abstractmethod
     def read_history_stats(self, run_match=None):
         pass
 
+    @abstractmethod
     def store_job_runs(self, *job_runs):
         pass
 
+    @abstractmethod
     def remove_job_runs(self, run_match):
         pass
 
+    @abstractmethod
     def clean_up(self, max_records, max_age):
         pass
 
+    @abstractmethod
     def close(self):
+        pass
+
+
+class NullPersistence(Persistence):
+    """
+    A no-op persistence. .enabled == False, and any attempt to read/write
+    will raise PersistenceDisabledError so callers can distinguish “no-data”
+    from “disabled”.
+    """
+
+    @property
+    def enabled(self) -> bool:
+        return False
+
+    def read_history_runs(self, run_match=None, sort=SortCriteria.CREATED, *, asc, limit, offset, last=False):
+        raise PersistenceDisabledError("Persistence is disabled; no history available.")
+
+    def read_history_stats(self, run_match=None) -> dict:
+        raise PersistenceDisabledError("Persistence is disabled; no stats available.")
+
+    def store_job_runs(self, *job_runs) -> None:
+        pass
+
+    def remove_job_runs(self, run_match) -> None:
+        pass
+
+    def clean_up(self, max_records: int, max_age: float) -> None:
+        pass
+
+    def close(self) -> None:
         pass
 
 
@@ -100,3 +144,7 @@ class PersistingObserver(InstanceStageObserver):
     def new_instance_stage(self, event: InstanceStageEvent):
         if event.new_stage == Stage.ENDED:
             self._persistence.store_job_runs(event.job_run)
+
+
+class PersistenceDisabledError(RuntoolsException):
+    pass

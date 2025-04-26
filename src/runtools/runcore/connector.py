@@ -21,13 +21,15 @@ import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
 from threading import Event
-from typing import Callable, Optional
+from typing import Callable, Optional, Annotated, Union
 
-from runtools.runcore import paths, util
+from pydantic import Discriminator
+
+from runtools.runcore import paths, util, db
 from runtools.runcore.client import RemoteCallClient
-from runtools.runcore.constants import DEFAULT_ENVIRONMENT
+from runtools.runcore.env import DEFAULT_ENVIRONMENT, EnvironmentConfig, EnvironmentTypes, LocalEnvironmentConfig
 from runtools.runcore.criteria import JobRunCriteria
-from runtools.runcore.db import SortCriteria, sqlite
+from runtools.runcore.db import SortCriteria, sqlite, NullPersistence
 from runtools.runcore.err import run_isolated_collect_exceptions
 from runtools.runcore.job import JobInstanceObservable
 from runtools.runcore.listening import EventReceiver, InstanceEventReceiver
@@ -132,7 +134,7 @@ class StandardLocalConnectorLayout(LocalConnectorLayout):
         self._listener_events_socket_name = "listener-events.sock"
 
     @classmethod
-    def create(cls, env_id: str, root_dir: Optional[Path] = None, connector_dir_prefix: str =  "connector_"):
+    def create(cls, env_id: str, root_dir: Optional[Path] = None, connector_dir_prefix: str = "connector_"):
         """
         Creates a layout for a connector and ensures that the directory for the connector is created.
 
@@ -219,6 +221,11 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
         self.open()
         return self
 
+    @property
+    @abstractmethod
+    def persistence_enabled(self) -> bool:
+        pass
+
     @abstractmethod
     def open(self):
         pass
@@ -251,6 +258,24 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
         pass
 
 
+EnvironmentConfigUnion = Annotated[
+    Union[LocalEnvironmentConfig],
+    Discriminator("type")
+]
+
+
+def create(env_config: EnvironmentConfigUnion):
+    if isinstance(env_config, LocalEnvironmentConfig):
+        if env_config.persistence:
+            persistence = db.create_persistence(env_config.id, env_config.persistence)
+        else:
+            persistence = NullPersistence()
+        layout = StandardLocalConnectorLayout.create(env_config.id, env_config.layout.root_dir)
+        return local(env_config.id, persistence, layout)
+
+    raise AssertionError(f"Unsupported environment type: {env_config.type}. This is a programming error.")
+
+
 def local(env_id=DEFAULT_ENVIRONMENT, persistence=None, connector_layout=None) -> EnvironmentConnector:
     """
     Factory function to create a connector for the given local environment using standard components.
@@ -269,7 +294,7 @@ def local(env_id=DEFAULT_ENVIRONMENT, persistence=None, connector_layout=None) -
         EnvironmentConnector: Configured connector to the local environment
     """
     layout = connector_layout or StandardLocalConnectorLayout.create(env_id)
-    persistence = persistence or sqlite.create(str(paths.sqlite_db_path(env_id, create=True)))
+    persistence = persistence or NullPersistence()
     client = RemoteCallClient(layout.server_sockets_provider, layout.client_socket_path)
     event_receiver = EventReceiver(layout.listener_events_socket_path)
     return LocalConnector(env_id, layout, persistence, client, event_receiver)
@@ -293,6 +318,10 @@ class LocalConnector(EnvironmentConnector):
         self._event_receiver = event_receiver
         self._instance_event_receiver = InstanceEventReceiver()
         self._event_receiver.register_handler(self._instance_event_receiver)
+
+    @property
+    def persistence_enabled(self) -> bool:
+        return self._persistence.enabled
 
     def open(self):
         self._persistence.open()
