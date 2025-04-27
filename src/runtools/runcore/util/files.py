@@ -1,6 +1,8 @@
 import os
+import tomllib
 from pathlib import Path
 from shutil import copy
+from typing import Dict, Any
 
 from runtools.runcore.paths import package_config_path, ConfigFileAlreadyExists, runtools_config_file_search_path, \
     expand_user
@@ -34,6 +36,24 @@ def copy_config_to_search_path(package, filename, overwrite: bool):
 def copy_config_to_path(package, filename, copy_to, overwrite: bool):
     dest = copy_to / filename
     return _copy_config(package, filename, dest, overwrite)
+
+
+def read_toml_file(file_path) -> Dict[str, Any]:
+    """
+    Reads a TOML file and returns its contents as a dictionary.
+
+    Args:
+        file_path (str|Path): The path to the TOML file.
+
+    Returns:
+        A dictionary representing the TOML data.
+
+    Raises:
+        FileNotFoundError: If the file_path does not exist.
+        tomllib.TOMLDecodeError: If the file is not valid TOML.
+    """
+    with open(file_path, 'rb') as file:
+        return tomllib.load(file)
 
 
 def print_file(path_):

@@ -49,6 +49,36 @@ def lookup_jobs_file():
     return lookup_file_in_config_path(JOBS_FILE)
 
 
+def find_config_files(pattern: str, *, exclude_cwd: bool = False, raise_if_empty: bool = False) -> Generator[
+    Path, None, None]:
+    """
+    Find files matching a pattern in the config search path.
+
+    Args:
+        pattern: Glob pattern for matching files (e.g., "*.toml")
+        exclude_cwd: Whether to exclude the current working directory from the search
+        raise_if_empty: Whether to raise ConfigFileNotFoundError if no files are found
+
+    Returns:
+        Generator yielding Path objects for matching files
+
+    Raises:
+        ConfigFileNotFoundError: If raise_if_empty is True and no files are found
+    """
+    search_path = runtools_config_file_search_path(exclude_cwd=exclude_cwd)
+    found_any = False
+
+    for dir_path in search_path:
+        if dir_path.exists() and dir_path.is_dir():
+            for file_path in dir_path.glob(pattern):
+                if file_path.is_file():
+                    found_any = True
+                    yield file_path
+
+    if raise_if_empty and not found_any:
+        raise ConfigFileNotFoundError(pattern, search_path)
+
+
 def lookup_file_in_config_path(file) -> Path:
     """Returns config found in the search path
     :return: config file path
