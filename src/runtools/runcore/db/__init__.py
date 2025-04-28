@@ -57,6 +57,10 @@ class PersistenceConfig(BaseModel):
     def default_sqlite(cls):
         return cls(type="sqlite", enabled=True)
 
+    @classmethod
+    def in_memory_sqlite(cls):
+        return cls(type="sqlite", enabled=True, database=":memory:")
+
 
 class SortCriteria(Enum):
     """
