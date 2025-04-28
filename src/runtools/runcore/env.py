@@ -20,7 +20,7 @@ class EnvironmentConfig(BaseModel):
     type: str
     id: str = Field(default=DEFAULT_ENVIRONMENT, description="Environment identifier")
     persistence: Optional[PersistenceConfig] = Field(
-        default=None,
+        default_factory=PersistenceConfig.default_sqlite,
         description="Persistence configuration, if None persistence is disabled"
     )
 
@@ -38,10 +38,6 @@ class LocalEnvironmentConfig(EnvironmentConfig):
         default_factory=LayoutConfig,
         description="Layout configuration for local environment resources"
     )
-
-    @classmethod
-    def create_default(cls, env_id: str = DEFAULT_ENVIRONMENT):
-        return cls(id=env_id, persistence=PersistenceConfig.default_sqlite())
 
 
 EnvironmentConfigUnion = Annotated[
