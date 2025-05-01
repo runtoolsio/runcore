@@ -52,3 +52,25 @@ def test_negate():
     assert not sut.matches(meta('job_id', 'r_id'))
     assert not sut.matches(meta('j_id', 'run_id'))
     assert sut.matches(meta('j_id', 'r_id'))
+
+
+def test_all_except():
+    """Test that all_except correctly matches everything except the specified instance."""
+    # Create a criterion that excludes job1@run1
+    instance_id = InstanceID("job1", "run1")
+    sut = MetadataCriterion.all_except(instance_id)
+
+    # Test that the excluded instance doesn't match
+    assert not sut.matches(meta("job1", "run1"))
+
+    # Test that different instances match
+    assert sut.matches(meta("job1", "run2"))  # Same job_id, different run_id
+    assert sut.matches(meta("job2", "run1"))  # Different job_id, same run_id
+    assert sut.matches(meta("job2", "run2"))  # Both different
+
+    # Verify that the negation syntax is used correctly
+    assert sut.job_id.startswith("!")
+    assert sut.run_id.startswith("!")
+
+    # Verify match_any_field is false, requiring both conditions to match
+    assert sut.match_any_field

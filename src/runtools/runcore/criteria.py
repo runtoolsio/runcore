@@ -81,7 +81,11 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         Returns:
             MetadataCriterion: A criteria object that will match any job instance except the given one.
         """
-        return MetadataCriterion(job_id=negate_id(instance_id.job_id), run_id=negate_id(instance_id.run_id))
+        return MetadataCriterion(
+            job_id=negate_id(instance_id.job_id),
+            run_id=negate_id(instance_id.run_id),
+            match_any_field=True,
+        )
 
     @staticmethod
     def exact_match(instance_id: InstanceID) -> 'MetadataCriterion':
@@ -415,7 +419,6 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
     @classmethod
     def deserialize(cls, data: Dict[str, Any]) -> 'PhaseCriterion':
         """Deserialize a dictionary into a PhaseCriterion instance."""
-        # Create a LifecycleCriterion from the legacy fields if present
         return cls(
             phase_type=data.get('phase_type'),
             phase_id=data.get('phase_id'),
@@ -442,7 +445,6 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
         """
         Check if a single phase matches this criterion.
 
-        Lifecycle fields are only checked for ROOT match_type.
         """
         # Check basic fields for all match types
         if self.phase_type and phase_detail.phase_type != self.phase_type:

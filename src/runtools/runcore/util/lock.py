@@ -11,7 +11,6 @@ from threading import RLock
 
 import portalocker
 
-from runtools.runcore import paths
 from runtools.runcore.err import InvalidStateError
 
 log = logging.getLogger(__name__)
@@ -55,7 +54,8 @@ class FileLock:
 
         self._start_time = time.time()
         self._file_lock.acquire()
-        log.debug(f'event=[file_lock_acquired] wait=[{(time.time() - self._start_time) * 1000 :.2f} ms]')
+        log.debug(
+            f'event=[file_lock_acquired] file=[{self.lock_file}] wait=[{(time.time() - self._start_time) * 1000 :.2f} ms]')
 
     def release(self):
         """
@@ -71,7 +71,7 @@ class FileLock:
         self._file_lock = None
 
         lock_time_ms = (time.time() - self._start_time) * 1000
-        log.debug(f'event=[lock_released] locked=[{lock_time_ms:.2f} ms]')
+        log.debug(f'event=[lock_released] file=[{self.lock_file}] locked=[{lock_time_ms:.2f} ms]')
 
     def __enter__(self):
         self.acquire()
