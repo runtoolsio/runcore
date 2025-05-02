@@ -47,7 +47,8 @@ def _determine_container_state(children: Tuple[PhaseDetail,...]) -> tuple[bool, 
             return started, TerminationInfo(
                 status=child.lifecycle.termination.status,
                 terminated_at=latest_termination,
-                fault=child.lifecycle.termination.fault
+                message=child.lifecycle.termination.message,
+                stack_trace=child.lifecycle.termination.stack_trace,
             )
 
     # All children completed successfully
@@ -129,7 +130,8 @@ class FakePhaseDetailBuilder:
             termination_info = TerminationInfo(
                 status=term_status,
                 terminated_at=terminated_at,
-                fault=fault
+                message=None,
+                stack_trace=fault.stack_trace if fault else None,
             )
 
         child = FakePhaseDetailBuilder(

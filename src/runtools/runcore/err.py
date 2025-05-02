@@ -1,3 +1,6 @@
+import traceback
+
+
 class RuntoolsException(Exception):
     pass
 
@@ -34,3 +37,7 @@ def run_isolated_collect_exceptions(msg, *callbacks, suppress=False) -> None:
 
     if exceptions and not suppress:
         raise ExceptionGroup(msg, exceptions)
+
+
+def stacktrace_str(exception):
+    return ''.join(traceback.format_exception(type(exception), exception, exception.__traceback__))

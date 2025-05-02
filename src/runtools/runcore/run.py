@@ -128,21 +128,24 @@ class Fault:
 class TerminationInfo:
     status: TerminationStatus
     terminated_at: datetime.datetime
-    fault: Optional[Fault] = None
+    message: Optional[str] = None
+    stack_trace: Optional[str] = None
 
     @classmethod
     def deserialize(cls, as_dict: Dict[str, Any]):
         return cls(
             status=TerminationStatus[as_dict['termination_status']],
             terminated_at=util.parse_datetime(as_dict['terminated_at']),
-            fault=Fault.deserialize(as_dict['fault']) if as_dict.get('fault') else None,
+            message=as_dict.get('message'),
+            stack_trace=as_dict.get('stack_trace'),
         )
 
     def serialize(self) -> Dict[str, Any]:
         return {
             "termination_status": self.status.name,
             "terminated_at": format_dt_iso(self.terminated_at),
-            "fault": self.fault.serialize() if self.fault else None,
+            "message": self.message,
+            "stack_trace": self.stack_trace,
         }
 
 
@@ -230,7 +233,7 @@ class PhaseDetail:
     lifecycle: RunLifecycle
 
     # Hierarchical information
-    children: Tuple['PhaseDetail',...]
+    children: Tuple['PhaseDetail', ...]
 
     @classmethod
     def from_phase(cls, phase) -> 'PhaseDetail':
@@ -353,12 +356,10 @@ class PhaseTransitionObserver(ABC):
 
 
 class TerminateRun(Exception):
-    """TODO Delete?"""
-    def __init__(self, term_status: TerminationStatus):
-        if term_status.value <= 1:
-            raise ValueError("Termination status code must be >1 but it was: " + str(term_status.value))
-        self.term_status = term_status
-        super().__init__(f"Termination status: {term_status}")
+
+    def __init__(self, termination_status: TerminationStatus, message=None):
+        super().__init__(message)
+        self.termination_status = termination_status
 
 
 C = TypeVar('C')
