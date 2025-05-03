@@ -355,13 +355,6 @@ class PhaseTransitionObserver(ABC):
         pass
 
 
-class TerminateRun(Exception):
-
-    def __init__(self, termination_status: TerminationStatus, message=None):
-        super().__init__(message)
-        self.termination_status = termination_status
-
-
 C = TypeVar('C')
 
 
