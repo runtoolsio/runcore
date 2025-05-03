@@ -148,6 +148,13 @@ class TerminationInfo:
             "stack_trace": self.stack_trace,
         }
 
+    def __str__(self) -> str:
+        """Compact string representation of termination info."""
+        parts = [f"{self.status.name}@{self.terminated_at.strftime('%Y-%m-%dT%H:%M:%S')}"]
+        if self.message:
+            parts.append(f"msg={self.message}")
+        return " ".join(parts)
+
 
 @dataclass(frozen=True)
 class RunLifecycle:
