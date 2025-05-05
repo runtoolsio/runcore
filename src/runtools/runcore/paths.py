@@ -344,7 +344,7 @@ class ConfigFileNotFoundError(RuntoolsException, FileNotFoundError):
         self.search_path = search_path
 
         if search_path:
-            message = f"Config file `{file}` not found in the search path: {', '.join([str(dir_) for dir_ in search_path])}"
+            message = f"Config file `{file}` not found in search paths: {', '.join([str(dir_) for dir_ in search_path])}"
         else:
             message = f"Config file `{file}` not found"
 

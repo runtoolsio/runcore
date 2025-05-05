@@ -25,10 +25,10 @@ from typing import Callable, Optional
 
 from runtools.runcore import paths, util, db
 from runtools.runcore.client import RemoteCallClient
-from runtools.runcore.env import DEFAULT_ENVIRONMENT, LocalEnvironmentConfig, \
+from runtools.runcore.env import LocalEnvironmentConfig, \
     EnvironmentConfigUnion
 from runtools.runcore.criteria import JobRunCriteria
-from runtools.runcore.db import SortCriteria, NullPersistence
+from runtools.runcore.db import SortCriteria, NullPersistence, sqlite
 from runtools.runcore.err import run_isolated_collect_exceptions
 from runtools.runcore.job import JobInstanceObservable
 from runtools.runcore.listening import EventReceiver, InstanceEventReceiver
@@ -213,6 +213,11 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
     Connectors cannot create or run new job instances - that functionality is provided by environment nodes.
     """
 
+    @property
+    @abstractmethod
+    def env_id(self):
+        pass
+
     def __enter__(self):
         """
         Open the environment node.
@@ -269,7 +274,7 @@ def create(env_config: EnvironmentConfigUnion):
     raise AssertionError(f"Unsupported environment type: {env_config.type}. This is a programming error.")
 
 
-def local(env_id=DEFAULT_ENVIRONMENT, persistence=None, connector_layout=None) -> EnvironmentConnector:
+def local(env_id, persistence=None, connector_layout=None) -> EnvironmentConnector:
     """
     Factory function to create a connector for the given local environment using standard components.
     This provides a convenient way to get a ready-to-use connector for local environment interaction.
@@ -278,7 +283,7 @@ def local(env_id=DEFAULT_ENVIRONMENT, persistence=None, connector_layout=None) -
     allowing monitoring and controlling of jobs belonging to the environment.
 
     Args:
-        env_id (str): The identifier for the local environment. Defaults to `DEF_ENV_ID`.
+        env_id (str): The identifier for the local environment.
         persistence (Persistence, optional): A specific persistence implementation.
             If None, a default SQLite backend is used for the environment.
         connector_layout (LocalConnectorLayout): Optional custom connector layout.
@@ -287,7 +292,7 @@ def local(env_id=DEFAULT_ENVIRONMENT, persistence=None, connector_layout=None) -
         EnvironmentConnector: Configured connector to the local environment
     """
     layout = connector_layout or StandardLocalConnectorLayout.create(env_id)
-    persistence = persistence or NullPersistence()
+    persistence = persistence or sqlite.create(str(paths.sqlite_db_path(env_id, create=True)))
     client = RemoteCallClient(layout.server_sockets_provider, layout.client_socket_path)
     event_receiver = EventReceiver(layout.listener_events_socket_path)
     return LocalConnector(env_id, layout, persistence, client, event_receiver)
@@ -304,13 +309,17 @@ class LocalConnector(EnvironmentConnector):
     """
 
     def __init__(self, env_id, connector_layout, persistence, client, event_receiver):
-        self.env_id = env_id
+        self._env_id = env_id
         self._layout = connector_layout
         self._persistence = persistence
         self._client = client
         self._event_receiver = event_receiver
         self._instance_event_receiver = InstanceEventReceiver()
         self._event_receiver.register_handler(self._instance_event_receiver)
+
+    @property
+    def env_id(self):
+        return self._env_id
 
     @property
     def persistence_enabled(self) -> bool:
