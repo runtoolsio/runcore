@@ -124,9 +124,9 @@ def load_env_config(env_id) -> Tuple[Dict[str, Any], Path]:
 
 
 def _load_env_config(env_id, path_provider) -> Tuple[Dict[str, Any], Path]:
-    search_paths = []
+    config_paths = []
     for env_cfg_path in path_provider:
-        search_paths.append(env_cfg_path)
+        config_paths.append(env_cfg_path)
         env_cfg = files.read_toml_file(env_cfg_path)
 
         if "environment" not in env_cfg:
@@ -141,7 +141,8 @@ def _load_env_config(env_id, path_provider) -> Tuple[Dict[str, Any], Path]:
             if env.get("id") == env_id:
                 return env, env_cfg_path
 
-    raise EnvironmentNotFoundError(f"No configuration found for environment '{env_id}' in search paths: {', '.join([str(dir_) for dir_ in search_paths])}")
+    raise EnvironmentNotFoundError(
+        f"No configuration found for environment '{env_id}' in files: {', '.join([str(dir_) for dir_ in config_paths])}")
 
 
 class EnvironmentNotFoundError(RuntoolsException):
