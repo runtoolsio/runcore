@@ -138,28 +138,28 @@ def xdg_config_dirs() -> List[Path]:
         return [Path('/etc/xdg')]
 
 
-def log_file_path(create: bool) -> Path:
+def log_file_dir(create: bool) -> Path:
     """
-    1. Root user: /var/log/runcore/{log-file}
-    2. Non-root user: ${XDG_CACHE_HOME}/runcore/{log-file} or default to ${HOME}/.cache/runcore
+    1. Root user: /var/log/runtools
+    2. Non-root user: ${XDG_CACHE_HOME}/runtools or default to ${HOME}/.cache/runtools
 
     :param create: create path directories if not exist
-    :return: log file path
+    :return: log dir path
     """
 
     if _is_root():
-        path = Path('/var/log')
+        path_ = Path('/var/log')
     else:
         if os.environ.get('XDG_CACHE_HOME'):
-            path = Path(os.environ['XDG_CACHE_HOME'])
+            path_ = Path(os.environ['XDG_CACHE_HOME'])
         else:
             home = Path.home()
-            path = home / '.cache'
+            path_ = home / '.cache'
 
     if create:
-        os.makedirs(path / 'runcore', exist_ok=True)
+        os.makedirs(path_ / 'runtools', exist_ok=True)
 
-    return path / 'runcore' / 'runcore.log'
+    return path_ / 'runtools'
 
 
 """
