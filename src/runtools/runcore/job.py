@@ -246,6 +246,35 @@ class InstanceID(Sequence):
             raise ValueError(
                 f"Instance ID identifiers cannot contain characters: {", ".join(InstanceID.FORBIDDEN_CHARS)}")
 
+    @classmethod
+    def parse(cls, id_string: str) -> "InstanceID":
+        """
+        Parse an instance ID from a string in the format 'job_id@run_id'.
+
+        Args:
+            id_string: A string in the format 'job_id@run_id'
+
+        Returns:
+            An InstanceID object
+
+        Raises:
+            ValueError: If the string is not in the expected format
+        """
+        if not id_string:
+            raise ValueError("Instance ID string cannot be empty")
+
+        if '@' not in id_string:
+            raise ValueError("Instance ID must be in format 'job_id@run_id'")
+
+        job_id, run_id = id_string.split('@', 1)
+
+        if not job_id:
+            raise ValueError("job_id part cannot be empty")
+        if not run_id:
+            raise ValueError("run_id part cannot be empty")
+
+        return cls(job_id=job_id, run_id=run_id)
+
     def __len__(self) -> int:
         return 2
 

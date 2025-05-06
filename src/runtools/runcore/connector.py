@@ -26,11 +26,11 @@ from typing import Callable, Optional
 from runtools.runcore import paths, util, db
 from runtools.runcore.client import RemoteCallClient
 from runtools.runcore.env import LocalEnvironmentConfig, \
-    EnvironmentConfigUnion
+    EnvironmentConfigUnion, DEFAULT_LOCAL_ENVIRONMENT
 from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.db import SortCriteria, NullPersistence, sqlite
 from runtools.runcore.err import run_isolated_collect_exceptions
-from runtools.runcore.job import JobInstanceObservable
+from runtools.runcore.job import JobInstanceObservable, JobInstance
 from runtools.runcore.listening import EventReceiver, InstanceEventReceiver
 from runtools.runcore.remote import JobInstanceRemote
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
@@ -238,7 +238,7 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
     def get_active_runs(self, run_match=None):
         pass
 
-    def get_instance(self, instance_id):
+    def get_instance(self, instance_id) -> JobInstance:
         inst = self.get_instances(JobRunCriteria.instance_match(instance_id))
         return inst[0] if inst else None
 
@@ -274,7 +274,7 @@ def create(env_config: EnvironmentConfigUnion):
     raise AssertionError(f"Unsupported environment type: {env_config.type}. This is a programming error.")
 
 
-def local(env_id, persistence=None, connector_layout=None) -> EnvironmentConnector:
+def local(env_id=DEFAULT_LOCAL_ENVIRONMENT, persistence=None, connector_layout=None) -> EnvironmentConnector:
     """
     Factory function to create a connector for the given local environment using standard components.
     This provides a convenient way to get a ready-to-use connector for local environment interaction.
