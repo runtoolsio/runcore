@@ -256,7 +256,7 @@ class PhaseDetail:
                 started_at=phase.started_at,
                 termination=phase.termination
             ),
-            children=[cls.from_phase(child) for child in phase.children] if phase.children else []
+            children=tuple([cls.from_phase(child) for child in phase.children] if phase.children else [])
         )
 
     @classmethod
@@ -305,25 +305,48 @@ class PhaseDetail:
 
         return dto
 
-    def search_descendants(self, predicate: Optional[Callable[['PhaseDetail'], bool]] = None) -> List['PhaseDetail']:
+    def search_phases(self,
+                      predicate: Optional[Callable[['PhaseDetail'], bool]] = None,
+                      *,
+                      include_self: bool = True) -> List['PhaseDetail']:
         """
-        Returns all descendant phases in depth-first order.
-        Includes children, grandchildren, and so on.
+        Searches phases in this view's hierarchy, with an option to include self.
+        The search is performed in a pre-order (depth-first) manner.
 
         Args:
-            predicate: Optional function to filter phases.
+            predicate: Optional function to filter phases. If None, all phases in scope are returned.
+            include_self: If True, the current phase (self) is included in the search.
+                          If False, only descendant phases are searched.
+                          Defaults to True.
 
         Returns:
-            List of descendant phase snapshots, optionally filtered
+            List[PhaseDetail]: A list of matching phase details.
         """
-        result = []
-        for child in self.children or []:
-            if not predicate or predicate(child):
-                result.append(child)
-            result.extend(child.search_descendants(predicate))
-        return result
+        results: List[PhaseDetail] = []
 
-    def find_phase(self, predicate: Callable[['PhaseDetail'], bool]) -> Optional['PhaseDetail']:
+        def _collect_recursively(node: 'PhaseDetail', target_list: List['PhaseDetail']):
+            if not predicate or predicate(node):
+                target_list.append(node)
+            for child in node.children:
+                _collect_recursively(child, target_list)
+
+        if include_self:
+            _collect_recursively(self, results)
+        else:
+            for child_node in self.children:
+                _collect_recursively(child_node, results)
+
+        return results
+
+    def search_descendants(self, predicate: Optional[Callable[['PhaseDetail'], bool]] = None) -> List['PhaseDetail']:
+        """
+        Returns all descendant phases in depth-first order (pre-order).
+        This is a convenience method, equivalent to calling
+        search_phases(predicate, include_self=False).
+        """
+        return self.search_phases(predicate, include_self=False)
+
+    def find_first_phase(self, predicate: Callable[['PhaseDetail'], bool]) -> Optional['PhaseDetail']:
         """
         Finds a phase in this view's hierarchy that matches the given predicate.
 
@@ -338,14 +361,14 @@ class PhaseDetail:
 
         if self.children:
             for child in self.children:
-                result = child.find_phase(predicate)
+                result = child.find_first_phase(predicate)
                 if result:
                     return result
 
         return None
 
     def find_phase_by_id(self, phase_id):
-        return self.find_phase(lambda p: p.phase_id == phase_id)
+        return self.find_first_phase(lambda p: p.phase_id == phase_id)
 
 
 @dataclass

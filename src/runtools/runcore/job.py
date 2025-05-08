@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import timedelta
 from enum import Enum, auto
-from typing import Dict, Any, List, Optional, Tuple, Iterator, ClassVar, Set
+from typing import Dict, Any, List, Optional, Tuple, Iterator, ClassVar, Set, Callable
 
 from runtools.runcore import util
 from runtools.runcore.output import OutputLine
@@ -543,9 +543,29 @@ class JobRun:
         """
         return self.metadata.run_id
 
-    def find_phase(self, predicate):
+    def search_phases(self, predicate: Optional[Callable[['PhaseDetail'], bool]] = None) -> List['PhaseDetail']:
+        """
+        Searches all phases within this job run (including root-level phases and
+        all their descendants) that match the given predicate.
+
+        The search for each root phase and its hierarchy is performed in a
+        pre-order (depth-first) manner.
+
+        Args:
+            predicate: Optional function to filter phases. If None, all phases
+                       (root and descendants across the entire job run) are returned.
+
+        Returns:
+            List[PhaseDetail]: A list of all matching phase details found.
+        """
+        matching_phases: List['PhaseDetail'] = []
+        for phase in self.phases:
+            matching_phases.extend(phase.search_phases(predicate=predicate, include_self=True))
+        return matching_phases
+
+    def find_first_phase(self, predicate):
         for p in self.phases:
-            if found := p.find_phase(predicate):
+            if found := p.find_first_phase(predicate):
                 return found
         return None
 

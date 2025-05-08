@@ -26,7 +26,7 @@ class JobInstanceRemote(JobInstance):
         return self._job_run.metadata
 
     def find_phase_control(self, phase_filter):
-        phase = self._job_run.find_phase(phase_filter)
+        phase = self._job_run.find_first_phase(phase_filter)
         if not phase:
             return None
         return PhaseControlRemote(self._client, self._server_address, self._instance_id, phase.phase_id)
