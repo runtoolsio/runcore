@@ -42,7 +42,7 @@ class JobInstanceRemote(JobInstance):
         pass
 
     def stop(self):
-        pass
+        self._client.stop_instance(self._server_address, self._instance_id)
 
     def interrupted(self):
         pass
