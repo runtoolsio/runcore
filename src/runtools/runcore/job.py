@@ -17,7 +17,7 @@ from typing import Dict, Any, List, Optional, Tuple, Iterator, ClassVar, Set, Ca
 
 from runtools.runcore import util
 from runtools.runcore.output import OutputLine
-from runtools.runcore.run import TerminationStatus, RunState, Fault, PhaseDetail, Stage, RunLifecycle
+from runtools.runcore.run import TerminationStatus, RunState, Fault, PhaseDetail, Stage, RunLifecycle, StopReason
 from runtools.runcore.status import Status
 from runtools.runcore.util import MatchingStrategy, format_dt_iso, unique_timestamp_hex
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
@@ -419,19 +419,13 @@ class JobInstance(abc.ABC):
         """
 
     @abc.abstractmethod
-    def stop(self):
+    def stop(self, reason=StopReason.STOPPED):
         """
         Attempts to cancel a scheduled job or stop a job that is already executing.
 
         Note:
             The way the stop request is handled can vary based on the implementation or the specific job.
             It's possible that not all instances will respond successfully to the stop request.
-        """
-
-    @abc.abstractmethod
-    def interrupted(self):
-        """
-        TODO: Notify about keyboard interruption signal
         """
 
     def add_observer_all_events(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
@@ -987,13 +981,9 @@ class JobInstanceDelegate(JobInstance):
         """Delegates to the wrapped instance's run method"""
         return self._wrapped.run()
 
-    def stop(self):
+    def stop(self, reason=StopReason.STOPPED):
         """Delegates to the wrapped instance's stop method"""
-        return self._wrapped.stop()
-
-    def interrupted(self):
-        """Delegates to the wrapped instance's interrupted method"""
-        return self._wrapped.interrupted()
+        return self._wrapped.stop(reason)
 
     def add_observer_all_events(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
         """Delegates to the wrapped instance's add_observer_all_events method"""

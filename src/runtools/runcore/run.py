@@ -70,6 +70,7 @@ class TerminationStatus(Enum):
     CANCELLED = 11
     STOPPED = 12
     INTERRUPTED = 13
+    SIGNAL = 14
 
     TIMEOUT = 21
     OVERLAP = 22
@@ -92,6 +93,23 @@ class TerminationStatus(Enum):
 
     def __bool__(self):
         return self != TerminationStatus.NONE
+
+
+class StopReason(Enum):
+    STOPPED = auto()  # User explicitly cancelled
+    INTERRUPTED = auto()  # Keyboard interrupt
+    SIGNAL = auto()  # Termination signal received
+    TIMEOUT = auto()  # Execution time exceeded
+
+    @property
+    def termination_status(self):
+        mapping = {
+            StopReason.STOPPED: TerminationStatus.STOPPED,
+            StopReason.INTERRUPTED: TerminationStatus.INTERRUPTED,
+            StopReason.SIGNAL: TerminationStatus.SIGNAL,
+            StopReason.TIMEOUT: TerminationStatus.TIMEOUT,
+        }
+        return mapping.get(self, TerminationStatus.STOPPED)
 
 
 @dataclass
