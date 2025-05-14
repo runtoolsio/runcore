@@ -8,19 +8,19 @@ from typing import Optional, List
 
 @dataclass(frozen=True)
 class Event:
-    text: str
+    message: str
     timestamp: datetime
 
     @classmethod
     def deserialize(cls, data: dict) -> 'Event':
         return cls(
-            text=data['text'],
+            message=data['message'],
             timestamp=datetime.fromisoformat(data['timestamp'])
         )
 
     def serialize(self) -> dict:
         return {
-            'text': self.text,
+            'message': self.message,
             'timestamp': self.timestamp.isoformat(),
         }
 
@@ -154,7 +154,7 @@ class Status:
 
         # Add result or active operations
         if self.result:
-            parts.append(self.result.text)
+            parts.append(self.result.message)
         else:
             # Add active operations
             active_ops = [str(op) for op in self.operations if op.is_active]
@@ -165,11 +165,11 @@ class Status:
             if self.last_event:
                 if parts:  # If we have operations, add the separator
                     parts[-1] = parts[-1] + "..."  # Append directly to last part
-                parts.append(self.last_event.text)
+                parts.append(self.last_event.message)
 
         # Add warnings if present
         if self.warnings:
-            warnings_str = ", ".join(w.text for w in self.warnings)
+            warnings_str = ", ".join(w.message for w in self.warnings)
             parts.append(f"(!{warnings_str})")
 
         return "  ".join(parts) if parts else ""
