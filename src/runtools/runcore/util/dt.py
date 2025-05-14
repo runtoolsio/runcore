@@ -296,8 +296,37 @@ def parse_datetime(str_ts):
 
 
 def parse_duration_to_sec(val):
-    value = float(val[:-1])
-    unit = val[-1].lower()
+    """
+    Parse a duration string to seconds.
+
+    Valid formats:
+    - "123" - plain number treated as seconds
+    - "123s" - seconds
+    - "5m" - minutes
+    - "2h" - hours
+    - "1d" - days
+
+    Args:
+        val: Duration string to parse
+
+    Returns:
+        Float value in seconds
+
+    Raises:
+        ValueError: If the unit is unknown or format is invalid
+    """
+    # Handle plain number (no suffix)
+    if val.isdigit() or (val.replace('.', '', 1).isdigit() and val.count('.') < 2):
+        return float(val)
+
+    if len(val) < 2:
+        raise ValueError(f"Invalid duration format: {val}")
+
+    try:
+        value = float(val[:-1])
+        unit = val[-1].lower()
+    except ValueError:
+        raise ValueError(f"Invalid duration format: {val}")
 
     if unit == 's':
         return value
@@ -308,7 +337,7 @@ def parse_duration_to_sec(val):
     if unit == 'd':
         return value * 60 * 60 * 24
 
-    raise ValueError("Unknown unit: " + unit)
+    raise ValueError("Unknown time unit: " + unit)
 
 
 def parse_iso8601_duration(duration) -> relativedelta:
