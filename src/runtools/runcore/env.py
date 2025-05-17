@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Optional, Literal, Annotated, Union, Dict, Any, Tuple
+from typing import Optional, Literal, Annotated, Union, Dict, Any, Tuple, Set, Iterable
 
 from pydantic import BaseModel, Field, Discriminator, TypeAdapter
 
@@ -50,7 +50,8 @@ class LocalEnvironmentConfig(EnvironmentConfig):
 class IsolatedEnvironmentConfig(EnvironmentConfig):
     """Configuration for isolated environments used primarily in testing."""
     type: Literal["isolated"] = EnvironmentTypes.ISOLATED
-    id: str = Field(default_factory=lambda: "isolated_" + util.unique_timestamp_hex(), description="Environment identifier")
+    id: str = Field(default_factory=lambda: "isolated_" + util.unique_timestamp_hex(),
+                    description="Environment identifier")
     persistence: PersistenceConfig = Field(
         default_factory=PersistenceConfig.in_memory_sqlite,
         description="Persistence configuration; defaults to in-memory SQLite for testing"
@@ -61,6 +62,8 @@ EnvironmentConfigUnion = Annotated[
     Union[LocalEnvironmentConfig, IsolatedEnvironmentConfig],
     Discriminator("type")
 ]
+
+ConfigDict = Dict[str, Any]
 
 
 def get_env_config(env_id: str) -> EnvironmentConfigUnion:
@@ -87,7 +90,8 @@ def get_env_configs(*env_ids: str) -> Dict[str, EnvironmentConfigUnion]:
     Load and validate multiple environment configurations by their identifiers.
 
     Args:
-        env_ids: The environment identifiers to load.
+        env_ids: One or more environment IDs whose configurations should be returned.
+                 If omitted, all discovered environments are included.
 
     Returns:
         A dict mapping each env_id to its validated EnvironmentConfig model instance.
@@ -104,7 +108,26 @@ def get_env_configs(*env_ids: str) -> Dict[str, EnvironmentConfigUnion]:
     }
 
 
-def env_config_from_dict(conf: Dict[str, Any]) -> EnvironmentConfigUnion:
+def get_default_config(env_id: str) -> EnvironmentConfigUnion:
+    """
+    Load and validate the default (packaged) environment configuration for a given env_id.
+
+    Args:
+        env_id: The environment identifier for which to load the default configuration.
+
+    Returns:
+        A validated EnvironmentConfig model instance representing the default configuration.
+
+    Raises:
+        ConfigFileNotFoundError: If the packaged default config file is missing.
+        EnvironmentNotFoundError: If the env_id is not found in the default file.
+        ValidationError: If the loaded configuration dict fails validation.
+    """
+    default_config_dict, _ = load_env_default_config(env_id)
+    return env_config_from_dict(default_config_dict)
+
+
+def env_config_from_dict(conf: ConfigDict) -> EnvironmentConfigUnion:
     """
     Create a Pydantic EnvironmentConfig model based on the 'type' discriminator in the dict.
 
@@ -121,7 +144,7 @@ def env_config_from_dict(conf: Dict[str, Any]) -> EnvironmentConfigUnion:
     return validator.validate_python(conf)
 
 
-def load_env_default_config(env_id: str) -> Tuple[Dict[str, Any], Path]:
+def load_env_default_config(env_id: str) -> Tuple[ConfigDict, Path]:
     """
     Load the default (packaged) environment config for the given env_id.
 
@@ -139,7 +162,7 @@ def load_env_default_config(env_id: str) -> Tuple[Dict[str, Any], Path]:
     return _load_env_config(def_cfg, env_id)[env_id]
 
 
-def load_env_config(env_id: str) -> Tuple[Dict[str, Any], Path]:
+def load_env_config(env_id: str) -> Tuple[ConfigDict, Path]:
     """
     Load a single environment config by its identifier from available config files.
 
@@ -156,12 +179,12 @@ def load_env_config(env_id: str) -> Tuple[Dict[str, Any], Path]:
     return load_env_configs(env_id)[env_id]
 
 
-def load_env_configs(*env_id: str) -> Dict[str, Tuple[Dict[str, Any], Path]]:
+def load_env_configs(*env_ids: str) -> Dict[str, Tuple[ConfigDict, Path]]:
     """
     Load one or more environment configs by their identifiers from files matching '*env*.toml'.
 
     Args:
-        env_id: One or more environment identifiers to load.
+       env_ids: Environment identifiers to load. If empty, loads all found environments.
 
     Returns:
         A dict mapping each requested env_id to a tuple of (raw config dict, source file path).
@@ -171,10 +194,10 @@ def load_env_configs(*env_id: str) -> Dict[str, Tuple[Dict[str, Any], Path]]:
         EnvironmentNotFoundError: If any env_id is not present in the discovered files.
     """
     paths_provider = paths.find_config_files("*env*.toml", raise_if_empty=True)
-    return _load_env_config(paths_provider, *env_id)
+    return _load_env_config(paths_provider, *env_ids)
 
 
-def _load_env_config(path_provider, *env_ids: str) -> Dict[str, Tuple[Dict[str, Any], Path]]:
+def _load_env_config(path_provider, *env_ids: str) -> Dict[str, Tuple[ConfigDict, Path]]:
     """
     Internal helper to load configs from given file paths.
 
@@ -213,7 +236,8 @@ def _load_env_config(path_provider, *env_ids: str) -> Dict[str, Tuple[Dict[str, 
         if missing:
             raise EnvironmentNotFoundError(
                 f"No configuration found for environment(s) `{', '.join(missing)}` "
-                f"in file(s): {', '.join(str(p) for p in config_paths)}"
+                f"in file(s): {', '.join(str(p) for p in config_paths)}",
+                missing
             )
     elif not id_to_config:
         raise EnvironmentNotFoundError(
@@ -225,5 +249,6 @@ def _load_env_config(path_provider, *env_ids: str) -> Dict[str, Tuple[Dict[str, 
 
 class EnvironmentNotFoundError(RuntoolsException):
     """Exception raised when an environment configuration cannot be found."""
-    def __init__(self, message: str):
+    def __init__(self, message: str, env_ids: Optional[Iterable[str]] = None):
         super().__init__(message)
+        self.env_ids: Set[str] = set(env_ids) if env_ids else set()
