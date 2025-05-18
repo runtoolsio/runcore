@@ -21,14 +21,14 @@ import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
 from threading import Event
-from typing import Callable, Optional
+from typing import Callable, Optional, Iterable
 
 from runtools.runcore import paths, util, db
 from runtools.runcore.client import RemoteCallClient
-from runtools.runcore.env import LocalEnvironmentConfig, \
-    EnvironmentConfigUnion, DEFAULT_LOCAL_ENVIRONMENT
 from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.db import SortCriteria, NullPersistence, sqlite
+from runtools.runcore.env import LocalEnvironmentConfig, \
+    EnvironmentConfigUnion, DEFAULT_LOCAL_ENVIRONMENT
 from runtools.runcore.err import run_isolated_collect_exceptions
 from runtools.runcore.job import JobInstanceObservable, JobInstance
 from runtools.runcore.listening import EventReceiver, InstanceEventReceiver
@@ -243,7 +243,7 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
         return inst[0] if inst else None
 
     @abstractmethod
-    def get_instances(self, run_match=None):
+    def get_instances(self, run_match=None) -> Iterable[JobInstance]:
         pass
 
     @abstractmethod

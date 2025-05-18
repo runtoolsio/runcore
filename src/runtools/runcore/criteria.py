@@ -7,7 +7,7 @@ TODO: Remove immutable properties
 from abc import abstractmethod, ABC
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, Any, Optional, TypeVar, Generic
+from typing import Dict, Any, Optional, TypeVar, Generic, Iterable
 
 from runtools.runcore.job import JobInstanceMetadata, JobRun, InstanceID
 from runtools.runcore.run import Outcome, TerminationInfo, RunState, \
@@ -101,8 +101,8 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         return MetadataCriterion(instance_id.job_id, instance_id.run_id)
 
     @classmethod
-    def parse_pattern(cls, pattern: str,
-                      strategy: MatchingStrategy = MatchingStrategy.EXACT) -> 'MetadataCriterion':
+    def parse(cls, pattern: str,
+              strategy: MatchingStrategy = MatchingStrategy.EXACT) -> 'MetadataCriterion':
         """
         Parses the provided pattern and returns the corresponding metadata criterion.
 
@@ -509,10 +509,6 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
         return f"[{', '.join(fields)}]" if fields else "[]"
 
 
-def parse_criteria(pattern: str, strategy: MatchingStrategy = MatchingStrategy.EXACT) -> 'JobRunCriteria':
-    return JobRunCriteria.parse(pattern, strategy)
-
-
 class JobRunCriteria(MatchCriteria[JobRun]):
     """
     Criteria for querying and matching job instances.
@@ -543,9 +539,17 @@ class JobRunCriteria(MatchCriteria[JobRun]):
         }
 
     @classmethod
-    def parse(cls, pattern: str, strategy: MatchingStrategy = MatchingStrategy.EXACT):
+    def parse(cls, pattern: str, strategy: MatchingStrategy = MatchingStrategy.EXACT) -> "JobRunCriteria":
         new = cls()
-        new += MetadataCriterion.parse_pattern(pattern, strategy)
+        new += MetadataCriterion.parse(pattern, strategy)
+        return new
+
+    @classmethod
+    def parse_all(cls, patterns: Iterable[str], strategy: MatchingStrategy = MatchingStrategy.EXACT) \
+            -> "JobRunCriteria":
+        new = cls()
+        for p in patterns:
+            new += MetadataCriterion.parse(p, strategy)
         return new
 
     @classmethod

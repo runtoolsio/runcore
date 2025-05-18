@@ -2,12 +2,13 @@ from datetime import datetime as dt
 
 import pytest
 
-from runtools.runcore.criteria import JobRunCriteria, parse_criteria
+from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.db import sqlite
 from runtools.runcore.run import TerminationStatus
 from runtools.runcore.test.job import fake_job_run
 from runtools.runcore.util import parse_iso8601_duration, MatchingStrategy
 
+parse = JobRunCriteria.parse
 
 @pytest.fixture
 def sut():
@@ -66,23 +67,23 @@ def test_job_id_match(sut):
     sut.store_job_runs(fake_job_run('j1', 'i1'), fake_job_run('j12', 'i12'), fake_job_run('j11', 'i11'),
                        fake_job_run('j111', 'i111'), fake_job_run('j121', 'i121'))
 
-    assert len(sut.read_history_runs(parse_criteria('j1'))) == 1
-    assert len(sut.read_history_runs(parse_criteria('j1@'))) == 1
-    assert len(sut.read_history_runs(parse_criteria('j1@i1'))) == 1
-    assert len(sut.read_history_runs(parse_criteria('@i1'))) == 1
-    assert len(sut.read_history_runs(parse_criteria('i1'))) == 1
+    assert len(sut.read_history_runs(parse('j1'))) == 1
+    assert len(sut.read_history_runs(parse('j1@'))) == 1
+    assert len(sut.read_history_runs(parse('j1@i1'))) == 1
+    assert len(sut.read_history_runs(parse('@i1'))) == 1
+    assert len(sut.read_history_runs(parse('i1'))) == 1
 
-    assert len(sut.read_history_runs(parse_criteria('j1', MatchingStrategy.PARTIAL))) == 5
-    assert len(sut.read_history_runs(parse_criteria('j1@', MatchingStrategy.PARTIAL))) == 5
-    assert len(sut.read_history_runs(parse_criteria('j1@i1', MatchingStrategy.PARTIAL))) == 5
-    assert len(sut.read_history_runs(parse_criteria('@i1', MatchingStrategy.PARTIAL))) == 5
-    assert len(sut.read_history_runs(parse_criteria('i1', MatchingStrategy.PARTIAL))) == 5
+    assert len(sut.read_history_runs(parse('j1', MatchingStrategy.PARTIAL))) == 5
+    assert len(sut.read_history_runs(parse('j1@', MatchingStrategy.PARTIAL))) == 5
+    assert len(sut.read_history_runs(parse('j1@i1', MatchingStrategy.PARTIAL))) == 5
+    assert len(sut.read_history_runs(parse('@i1', MatchingStrategy.PARTIAL))) == 5
+    assert len(sut.read_history_runs(parse('i1', MatchingStrategy.PARTIAL))) == 5
 
-    assert len(sut.read_history_runs(parse_criteria('j1?1', MatchingStrategy.FN_MATCH))) == 2
-    assert len(sut.read_history_runs(parse_criteria('j1?1@', MatchingStrategy.FN_MATCH))) == 2
-    assert len(sut.read_history_runs(parse_criteria('j1?1@i1?1', MatchingStrategy.FN_MATCH))) == 2
-    assert len(sut.read_history_runs(parse_criteria('@i1?1', MatchingStrategy.FN_MATCH))) == 2
-    assert len(sut.read_history_runs(parse_criteria('i1?1', MatchingStrategy.FN_MATCH))) == 2
+    assert len(sut.read_history_runs(parse('j1?1', MatchingStrategy.FN_MATCH))) == 2
+    assert len(sut.read_history_runs(parse('j1?1@', MatchingStrategy.FN_MATCH))) == 2
+    assert len(sut.read_history_runs(parse('j1?1@i1?1', MatchingStrategy.FN_MATCH))) == 2
+    assert len(sut.read_history_runs(parse('@i1?1', MatchingStrategy.FN_MATCH))) == 2
+    assert len(sut.read_history_runs(parse('i1?1', MatchingStrategy.FN_MATCH))) == 2
 
 
 def test_cleanup(sut):
