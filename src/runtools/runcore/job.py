@@ -363,7 +363,7 @@ class JobInstance(abc.ABC):
         """
 
     @property
-    def instance_id(self):
+    def id(self):
         """
         Returns:
             InstanceID: Unique identifier of this instance.
@@ -946,9 +946,9 @@ class JobInstanceDelegate(JobInstance):
         return self._wrapped.metadata
 
     @property
-    def instance_id(self):
+    def id(self):
         """Delegates to the wrapped instance's instance_id"""
-        return self._wrapped.instance_id
+        return self._wrapped.id
 
     @property
     def job_id(self):
