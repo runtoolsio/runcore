@@ -249,6 +249,68 @@ def _load_env_config(path_provider, *env_ids: str) -> Dict[str, Tuple[ConfigDict
 
 class EnvironmentNotFoundError(RuntoolsException):
     """Exception raised when an environment configuration cannot be found."""
+
     def __init__(self, message: str, env_ids: Optional[Iterable[str]] = None):
         super().__init__(message)
         self.env_ids: Set[str] = set(env_ids) if env_ids else set()
+
+
+def resolve_env_configs(*env_ids) -> Dict[str, EnvironmentConfigUnion]:
+    """
+    Loads environment configurations, including the default local environment where appropriate.
+
+    The resolution logic ensures that the default local environment is included when fetching all available environments
+    and that the default config is applied for this environment when not overridden in configuration files.
+
+    Behavior:
+    1. No environments specified:
+       - Load all available environments.
+       - Add default `local` environment if not found in the loaded configs.
+
+    2. Environments specified and include `local`:
+       - Load all specified environments.
+       - Add default `local` environment if not found in the loaded configs.
+
+    3. Environments specified but NOT including `local`:
+       - Load only the specified environments (no default local).
+
+    Args:
+        *env_ids: Environment identifiers to load. If empty, all available environments are loaded
+                 with fallback to default local environment.
+
+    Returns:
+        Dict mapping environment IDs to their validated configuration objects.
+
+    Raises:
+        ConfigFileNotFoundError: If no config files are found and non-default environments were requested.
+        EnvironmentNotFoundError: If specified non-default environments are not found.
+        ValidationError: If any loaded configuration fails validation.
+
+    Examples:
+        # Load all environments with local fallback
+        configs = load_env_configs_with_fallback()
+
+        # Load specific environments without local fallback
+        configs = load_env_configs_with_fallback("prod", "staging")
+
+        # Load specific environments with explicit local fallback
+        configs = load_env_configs_with_fallback("prod", "local")
+    """
+    env_ids_set = set(env_ids)
+    if DEFAULT_LOCAL_ENVIRONMENT in env_ids_set and len(env_ids_set) > 1:
+        mixed_explicit_local = True
+        env_ids_set.remove(DEFAULT_LOCAL_ENVIRONMENT)
+    else:
+        mixed_explicit_local = False
+
+    try:
+        env_configs = get_env_configs(*env_ids_set)
+    except (ConfigFileNotFoundError, EnvironmentNotFoundError) as e:
+        if env_ids_set and env_ids_set != {DEFAULT_LOCAL_ENVIRONMENT}:
+            raise e
+        return {DEFAULT_LOCAL_ENVIRONMENT: get_default_config(DEFAULT_LOCAL_ENVIRONMENT)}
+
+    if (not env_ids_set or mixed_explicit_local) and DEFAULT_LOCAL_ENVIRONMENT not in env_configs:
+        env_configs[DEFAULT_LOCAL_ENVIRONMENT] = get_default_config(DEFAULT_LOCAL_ENVIRONMENT)
+
+    return env_configs
