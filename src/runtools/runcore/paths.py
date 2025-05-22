@@ -49,8 +49,8 @@ def lookup_jobs_file():
     return lookup_file_in_config_path(JOBS_FILE)
 
 
-def find_config_files(pattern: str, *, exclude_cwd: bool = False, raise_if_empty: bool = False) -> Generator[
-    Path, None, None]:
+def find_config_files(pattern: str, *, exclude_cwd: bool = False, raise_if_empty: bool = False) \
+        -> Generator[Path, None, None]:
     """
     Find files matching a pattern in the config search path.
 
@@ -97,9 +97,9 @@ def runtools_config_file_search_path(*, exclude_cwd=False) -> List[Path]:
     search_path = config_file_search_path(exclude_cwd=exclude_cwd)
 
     if exclude_cwd:
-        return [path / CONFIG_DIR for path in search_path]
+        return [path_ / CONFIG_DIR for path_ in search_path]
     else:
-        return [search_path[0]] + [path / CONFIG_DIR for path in search_path[1:]]
+        return [search_path[0]] + [path_ / CONFIG_DIR for path_ in search_path[1:]]
 
 
 def config_file_search_path(*, exclude_cwd=False) -> List[Path]:

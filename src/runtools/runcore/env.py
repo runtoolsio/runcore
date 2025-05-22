@@ -1,5 +1,6 @@
+import itertools
 from pathlib import Path
-from typing import Optional, Literal, Annotated, Union, Dict, Any, Tuple, Set, Iterable
+from typing import Optional, Literal, Annotated, Union, Dict, Any, Set, Iterable
 
 from pydantic import BaseModel, Field, Discriminator, TypeAdapter
 
@@ -21,6 +22,10 @@ class EnvironmentTypes:
 class EnvironmentConfig(BaseModel):
     type: str
     id: str = Field(description="Environment identifier")
+    default: bool = Field(
+        default=False,
+        description="Whether this environment should be treated as the default"
+    )
     persistence: Optional[PersistenceConfig] = Field(
         default=None,
         description="Persistence configuration; if None, persistence is disabled"
@@ -68,156 +73,193 @@ ConfigDict = Dict[str, Any]
 
 def get_env_config(env_id: str) -> EnvironmentConfigUnion:
     """
-    Load and validate a single environment configuration by its identifier.
+    Load, merge, and validate a single environment configuration by its identifier.
+
+    This will read all applicable TOML files (project, user, system, and packaged default),
+    deep-merge the layers, and validate against the Pydantic `EnvironmentConfigUnion` model.
 
     Args:
-        env_id: The environment identifier to load.
+        env_id (str): The environment identifier to load.
 
     Returns:
-        A validated EnvironmentConfig model instance.
+        EnvironmentConfigUnion: The validated configuration model for the given environment.
 
     Raises:
         ConfigFileNotFoundError: If no configuration files are found.
         EnvironmentNotFoundError: If the specified env_id is not present.
         ValidationError: If the loaded configuration dict fails validation.
     """
-    env_config_dict, _ = load_env_config(env_id)
-    return env_config_from_dict(env_config_dict)
+    return env_config_from_dict(load_env_config(env_id))
 
 
 def get_env_configs(*env_ids: str) -> Dict[str, EnvironmentConfigUnion]:
     """
-    Load and validate multiple environment configurations by their identifiers.
+    Load, deep-merge, and validate multiple environment configurations.
+
+    Reads from project-level, user-level, system-level, and packaged default TOML files,
+    applying system<user<project overrides, filtered by any provided env_ids.
 
     Args:
-        env_ids: One or more environment IDs whose configurations should be returned.
-                 If omitted, all discovered environments are included.
+        *env_ids (str): One or more environment IDs to load. If omitted, all discovered
+            environments (plus packaged default if none found) are returned.
 
     Returns:
-        A dict mapping each env_id to its validated EnvironmentConfig model instance.
+        Dict[str, EnvironmentConfigUnion]: A mapping of environment IDs to their validated models.
 
     Raises:
         ConfigFileNotFoundError: If no configuration files are found.
         EnvironmentNotFoundError: If any of the specified env_ids are not present.
         ValidationError: If any loaded configuration dict fails validation.
     """
-    id_to_raw = load_env_configs(*env_ids)
-    return {
-        eid: env_config_from_dict(raw_conf)
-        for eid, (raw_conf, _path) in id_to_raw.items()
-    }
-
-
-def get_default_config(env_id: str) -> EnvironmentConfigUnion:
-    """
-    Load and validate the default (packaged) environment configuration for a given env_id.
-
-    Args:
-        env_id: The environment identifier for which to load the default configuration.
-
-    Returns:
-        A validated EnvironmentConfig model instance representing the default configuration.
-
-    Raises:
-        ConfigFileNotFoundError: If the packaged default config file is missing.
-        EnvironmentNotFoundError: If the env_id is not found in the default file.
-        ValidationError: If the loaded configuration dict fails validation.
-    """
-    default_config_dict, _ = load_env_default_config(env_id)
-    return env_config_from_dict(default_config_dict)
+    return {eid: env_config_from_dict(conf_dict) for eid, conf_dict in load_env_configs(*env_ids).values()}
 
 
 def env_config_from_dict(conf: ConfigDict) -> EnvironmentConfigUnion:
     """
-    Create a Pydantic EnvironmentConfig model based on the 'type' discriminator in the dict.
+    Instantiate the correct Pydantic model based on the 'type' discriminator.
 
     Args:
-        conf: A dict containing environment configuration data.
+        conf (Dict[str, Any]): A raw configuration dictionary containing at least a 'type' key.
 
     Returns:
-        A validated EnvironmentConfig model (LocalEnvironmentConfig or IsolatedEnvironmentConfig).
+        EnvironmentConfigUnion: Either a LocalEnvironmentConfig or IsolatedEnvironmentConfig.
 
     Raises:
-        ValidationError: If the provided dict cannot be validated against models.
+        ValidationError: If the provided dict does not conform to the expected schema.
     """
     validator = TypeAdapter(EnvironmentConfigUnion)
     return validator.validate_python(conf)
 
 
-def load_env_default_config(env_id: str) -> Tuple[ConfigDict, Path]:
+def load_env_config(env_id: str) -> ConfigDict:
     """
-    Load the default (packaged) environment config for the given env_id.
+    Load raw, merged environment configuration for a single env_id (no validation).
 
     Args:
-        env_id: The environment identifier to load.
+        env_id (str): The environment identifier to load.
 
     Returns:
-        Tuple of (raw config dict, source file path).
+        ConfigDict: The merged configuration dict for the given env_id.
 
     Raises:
-        ConfigFileNotFoundError: If the packaged default config file is missing.
-        EnvironmentNotFoundError: If the env_id is not found in the default file.
-    """
-    def_cfg = [paths.package_config_path(config.__package__, ENV_CONFIG_FILE)]
-    return _load_env_config(def_cfg, env_id)[env_id]
-
-
-def load_env_config(env_id: str) -> Tuple[ConfigDict, Path]:
-    """
-    Load a single environment config by its identifier from available config files.
-
-    Args:
-        env_id: The environment identifier to load.
-
-    Returns:
-        Tuple of (raw config dict, source file path).
-
-    Raises:
-        ConfigFileNotFoundError: If no config files are found among '*env*.toml'.
-        EnvironmentNotFoundError: If env_id is not present in any file.
+        ConfigFileNotFoundError: If no config files are found matching '*env*.toml'.
+        EnvironmentNotFoundError: If env_id is not present in any discovered file.
     """
     return load_env_configs(env_id)[env_id]
 
 
-def load_env_configs(*env_ids: str) -> Dict[str, Tuple[ConfigDict, Path]]:
+def load_env_configs(*env_ids: str) -> Dict[str, ConfigDict]:
     """
-    Load one or more environment configs by their identifiers from files matching '*env*.toml'.
+    Collect and deep-merge raw TOML configuration for one or more env IDs.
+
+    Layers (increasing priority):
+      1. Project-level env.toml files (find_config_files)
+      2. Packaged default ENV_CONFIG_FILE
 
     Args:
-       env_ids: Environment identifiers to load. If empty, loads all found environments.
+        *env_ids (str): Environment IDs to load. If empty, loads all discovered environments.
 
     Returns:
-        A dict mapping each requested env_id to a tuple of (raw config dict, source file path).
+        Dict[str, ConfigDict]: Mapping from each requested env_id to its raw merged dict.
 
     Raises:
-        ConfigFileNotFoundError: If no config files are found matching the pattern.
-        EnvironmentNotFoundError: If any env_id is not present in the discovered files.
+        ConfigFileNotFoundError: If no config files are found.
+        EnvironmentNotFoundError: If any specified env_ids are missing.
     """
-    paths_provider = paths.find_config_files("*env*.toml", raise_if_empty=True)
-    return _load_env_config(paths_provider, *env_ids)
+    paths_provider = paths.find_config_files("*env*.toml")
+    chain = itertools.chain(paths_provider, [paths.package_config_path(config.__package__, ENV_CONFIG_FILE)])
+    return _load_env_config(chain, *env_ids)
 
 
-def _load_env_config(path_provider, *env_ids: str) -> Dict[str, Tuple[ConfigDict, Path]]:
+def load_default_env_config() -> ConfigDict:
     """
-    Internal helper to load configs from given file paths.
+    Load the merged raw dict for whichever environment is marked default.
+
+    Falls back to DEFAULT_LOCAL_ENVIRONMENT if no config.default==True is found.
+
+    Returns:
+        ConfigDict: The merged configuration dictionary for the default environment.
+
+    Raises:
+        ConfigFileNotFoundError: If no TOML config files can be found.
+        EnvironmentNotFoundError:
+            - If no environment entries are found at all.
+        MultipleDefaultEnvironmentsError:
+            - If more than one environment is marked default.
+    """
+    all_cfgs = load_env_configs()  # may raise ConfigFileNotFoundError / EnvironmentNotFoundError
+
+    default_envs = [eid for eid, conf in all_cfgs.items() if conf.get("default", False)]
+    if len(default_envs) > 1:
+        raise MultipleDefaultEnvironmentsError(default_envs)
+    if len(default_envs) == 1:
+        return all_cfgs[default_envs[0]]
+
+    # fallback: the packaged default-local TOML should always register DEFAULT_LOCAL_ENVIRONMENT
+    if DEFAULT_LOCAL_ENVIRONMENT in all_cfgs:
+        return all_cfgs[DEFAULT_LOCAL_ENVIRONMENT]
+
+    # if this ever trips, it's a bug in our packaging or path logic
+    assert False, (
+        "Packaged default-local environment missing! "
+        f"Expected to find '{DEFAULT_LOCAL_ENVIRONMENT}' in {list(all_cfgs)!r}"
+    )
+
+
+def get_default_env_config() -> EnvironmentConfigUnion:
+    """
+    Load and validate the default environment config.
+
+    Returns:
+        EnvironmentConfigUnion: A validated Pydantic model (LocalEnvironmentConfig or IsolatedEnvironmentConfig)
+        corresponding to the default environment.
+
+    Raises:
+        ConfigFileNotFoundError: If no TOML config files can be found.
+        EnvironmentNotFoundError: If no environment entries are found at all.
+        ValidationError: If the loaded configuration dict fails Pydantic validation.
+    """
+    return env_config_from_dict(load_default_env_config())
+
+
+def _deep_merge(a: ConfigDict, b: ConfigDict) -> ConfigDict:
+    """
+    Recursively merge dict `b` into dict `a`, returning a new dict.
+    Keys in `b` override or extend those in `a`.
+    """
+    result = a.copy()
+    for k, v in b.items():
+        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
+            result[k] = _deep_merge(result[k], v)
+        else:
+            result[k] = v
+    return result
+
+
+def _load_env_config(path_provider, *env_ids: str) -> Dict[str, ConfigDict]:
+    """
+    Internal helper to deep-merge environment configs from a sequence of TOML files.
+
+    Reads TOML files in reversed priority (lowest first, highest last), extracts all
+    `environment` blocks, and deep-merges repeated IDs so higher-priority layers override.
 
     Args:
-        path_provider: Iterable of Path objects pointing to toml files.
-        env_ids: Environment identifiers to filter; if empty, loads all environments.
+        path_provider (Iterable[Path]): Paths to TOML files, highest-priority first.
+        *env_ids (str): Environment identifiers to filter; if empty, loads all environments.
 
     Returns:
-        A dict mapping env_id to (raw config dict, source file path).
+        Dict[str, ConfigDict]: Mapping from env_id to its merged raw config dict.
 
     Raises:
-        ConfigFileNotFoundError: If path_provider yields no files.
-        EnvironmentNotFoundError: If no matching env_ids are found when specified.
+        ConfigFileNotFoundError: If no files are provided.
+        EnvironmentNotFoundError: If specified env_ids are not found.
     """
     config_paths = list(path_provider)
     if not config_paths:
-        raise ConfigFileNotFoundError("No environment configuration files found")
+        raise ConfigFileNotFoundError("No environment configuration files found")  # TODO Check if needed
 
-    id_to_config: Dict[str, Tuple[Dict[str, Any], Path]] = {}
-    for env_cfg_path in config_paths:
+    id_to_config: Dict[str, ConfigDict] = {}
+    for env_cfg_path in reversed(config_paths):
         env_cfg = files.read_toml_file(env_cfg_path)
         if "environment" not in env_cfg:
             continue
@@ -226,10 +268,12 @@ def _load_env_config(path_provider, *env_ids: str) -> Dict[str, Tuple[ConfigDict
             environments = [environments]
         for env in environments:
             eid = env.get("id")
-            if not eid:
+            if not eid or (env_ids and eid not in env_ids):
                 continue
-            if not env_ids or eid in env_ids:
-                id_to_config[eid] = (env, env_cfg_path)
+            if eid in id_to_config:
+                id_to_config[eid] = _deep_merge(id_to_config[eid], env)
+            else:
+                id_to_config[eid] = env
 
     if env_ids:
         missing = set(env_ids) - set(id_to_config)
@@ -255,62 +299,12 @@ class EnvironmentNotFoundError(RuntoolsException):
         self.env_ids: Set[str] = set(env_ids) if env_ids else set()
 
 
-def resolve_env_configs(*env_ids) -> Dict[str, EnvironmentConfigUnion]:
+class MultipleDefaultEnvironmentsError(RuntoolsException):
     """
-    Loads environment configurations, including the default local environment where appropriate.
-
-    The resolution logic ensures that the default local environment is included when fetching all available environments
-    and that the default config is applied for this environment when not overridden in configuration files.
-
-    Behavior:
-    1. No environments specified:
-       - Load all available environments.
-       - Add default `local` environment if not found in the loaded configs.
-
-    2. Environments specified and include `local`:
-       - Load all specified environments.
-       - Add default `local` environment if not found in the loaded configs.
-
-    3. Environments specified but NOT including `local`:
-       - Load only the specified environments (no default local).
-
-    Args:
-        *env_ids: Environment identifiers to load. If empty, all available environments are loaded
-                 with fallback to default local environment.
-
-    Returns:
-        Dict mapping environment IDs to their validated configuration objects.
-
-    Raises:
-        ConfigFileNotFoundError: If no config files are found and non-default environments were requested.
-        EnvironmentNotFoundError: If specified non-default environments are not found.
-        ValidationError: If any loaded configuration fails validation.
-
-    Examples:
-        # Load all environments with local fallback
-        configs = load_env_configs_with_fallback()
-
-        # Load specific environments without local fallback
-        configs = load_env_configs_with_fallback("prod", "staging")
-
-        # Load specific environments with explicit local fallback
-        configs = load_env_configs_with_fallback("prod", "local")
+    Raised when more than one environment is marked as default.
     """
-    env_ids_set = set(env_ids)
-    if DEFAULT_LOCAL_ENVIRONMENT in env_ids_set and len(env_ids_set) > 1:
-        mixed_explicit_local = True
-        env_ids_set.remove(DEFAULT_LOCAL_ENVIRONMENT)
-    else:
-        mixed_explicit_local = False
 
-    try:
-        env_configs = get_env_configs(*env_ids_set)
-    except (ConfigFileNotFoundError, EnvironmentNotFoundError) as e:
-        if env_ids_set and env_ids_set != {DEFAULT_LOCAL_ENVIRONMENT}:
-            raise e
-        return {DEFAULT_LOCAL_ENVIRONMENT: get_default_config(DEFAULT_LOCAL_ENVIRONMENT)}
-
-    if (not env_ids_set or mixed_explicit_local) and DEFAULT_LOCAL_ENVIRONMENT not in env_configs:
-        env_configs[DEFAULT_LOCAL_ENVIRONMENT] = get_default_config(DEFAULT_LOCAL_ENVIRONMENT)
-
-    return env_configs
+    def __init__(self, default_ids: Iterable[str]):
+        message = f"Multiple environments marked as default: {list(default_ids)!r}"
+        super().__init__(message)
+        self.default_ids = set(default_ids)
