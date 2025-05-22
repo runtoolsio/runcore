@@ -111,7 +111,7 @@ def get_env_configs(*env_ids: str) -> Dict[str, EnvironmentConfigUnion]:
         EnvironmentNotFoundError: If any of the specified env_ids are not present.
         ValidationError: If any loaded configuration dict fails validation.
     """
-    return {eid: env_config_from_dict(conf_dict) for eid, conf_dict in load_env_configs(*env_ids).values()}
+    return {eid: env_config_from_dict(conf_dict) for eid, conf_dict in load_env_configs(*env_ids).items()}
 
 
 def env_config_from_dict(conf: ConfigDict) -> EnvironmentConfigUnion:
