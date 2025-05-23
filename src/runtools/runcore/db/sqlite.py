@@ -9,7 +9,7 @@ import sqlite3
 from datetime import timezone
 from functools import wraps
 from threading import Lock
-from typing import List
+from typing import List, Iterator
 
 from runtools.runcore import paths
 from runtools.runcore.criteria import LifecycleCriterion
@@ -240,11 +240,14 @@ class SQLite(Persistence):
             log.debug('event=[table_created] table=[history]')
             self._conn.commit()
 
-    @ensure_open
-    def read_history_runs(self, run_match=None, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=-1, last=False) \
-            -> JobRuns:
+    def read_history_runs(self, run_match=None, sort=SortCriteria.ENDED, *,
+                          asc=True, limit=-1, offset=-1, last=False) -> JobRuns:
         """
         Fetches ended job instances based on specified criteria.
+
+        This method loads all matching records into memory and returns them as a JobRuns
+        collection. For large result sets, consider using `iter_history_runs()` instead.
+
         Datasource: The database as defined by the configured persistence type.
 
         Args:
@@ -262,7 +265,47 @@ class SQLite(Persistence):
                 If set to True, only the last record for each job is returned. Defaults to False.
 
         Returns:
-            JobRuns: A collection of job instances that match the given criteria.
+            JobRuns: A collection of job runs that match the given criteria.
+
+        Note:
+            This method is implemented using `iter_history_runs()` internally and collects
+            all results into memory. For memory-efficient processing of large datasets,
+            use `iter_history_runs()` directly.
+        """
+        return JobRuns(self.iter_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last))
+
+    @ensure_open
+    def iter_history_runs(self, run_match=None, sort=SortCriteria.ENDED, *,
+                          asc=True, limit=-1, offset=-1, last=False) -> Iterator[JobRun]:
+        """
+        Iterate over ended job instances based on specified criteria.
+
+        This is the core implementation for fetching job history. It yields job instances
+        one at a time, making it memory-efficient for large result sets.
+
+        Datasource: The database as defined by the configured persistence type.
+
+        Args:
+            run_match (InstanceMatchCriteria, optional):
+                Criteria to match specific job instances. None means fetch all. Defaults to None.
+            sort (SortCriteria):
+                Determines the field by which records are sorted. Defaults to `SortCriteria.ENDED`.
+            asc (bool, optional):
+                Determines if the sorting is in ascending order. Defaults to True.
+            limit (int, optional):
+                Maximum number of records to yield. -1 means no limit. Defaults to -1.
+            offset (int, optional):
+                Number of records to skip before starting to yield. -1 means no offset. Defaults to -1.
+            last (bool, optional):
+                If set to True, only the last record for each job is yielded. Defaults to False.
+
+        Yields:
+            JobRun: Individual job instances that match the given criteria.
+
+        Note:
+            The iterator keeps a database cursor open until all results are consumed or
+            the iterator is explicitly closed. The cursor is automatically closed when
+            iteration completes or if an exception occurs.
         """
 
         def sort_exp():
@@ -280,11 +323,13 @@ class SQLite(Persistence):
         if last:
             statement += " GROUP BY h.job_id HAVING ROWID = max(ROWID) "
 
-        statement += " ORDER BY " + sort_exp() + (" ASC" if asc else " DESC") + " LIMIT ? OFFSET ?"
+        statement += " ORDER BY " + sort_exp() + (" ASC" if asc else " DESC")
+        statement += " LIMIT ? OFFSET ?"
 
         log.debug("event=[executing_query] statement=[%s]", statement)
-        print(statement)
-        c = self._conn.execute(statement, (limit, offset))
+
+        cursor = self._conn.cursor()
+        cursor.execute(statement, (limit, offset))
 
         def to_job_run(t):
             metadata = JobInstanceMetadata(InstanceID(t[0], t[1]), json.loads(t[2]) if t[2] else dict())
@@ -294,7 +339,11 @@ class SQLite(Persistence):
             status = Status.deserialize(json.loads(t[11])) if t[11] else None
             return JobRun(metadata, lifecycle, phases, faults, status)
 
-        return JobRuns((to_job_run(row) for row in c.fetchall()))
+        try:
+            while row := cursor.fetchone():
+                yield to_job_run(row)
+        finally:
+            cursor.close()
 
     @ensure_open
     def count_instances(self, run_match):

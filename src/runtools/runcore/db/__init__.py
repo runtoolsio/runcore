@@ -90,6 +90,31 @@ class Persistence(ABC):
         pass
 
     @abstractmethod
+    def iter_history_runs(self, run_match=None, sort=SortCriteria.CREATED, *,
+                          asc=True, limit=-1, offset=-1, last=False):
+        """
+        Iterate over ended job instances based on specified criteria.
+
+        This method provides memory-efficient access to job history by yielding
+        results one at a time rather than loading all records into memory.
+
+        Args:
+            run_match: Criteria to match specific job instances
+            sort: Field by which records are sorted
+            asc: Sort order (True for ascending)
+            limit: Maximum number of records (-1 for unlimited)
+            offset: Number of records to skip (-1 for no offset)
+            last: If True, only the last record for each job
+
+        Yields:
+            JobRun: Individual job instances matching the criteria
+
+        Returns:
+            Iterator[JobRun]: An iterator over JobRun instances.
+        """
+        pass
+
+    @abstractmethod
     def read_history_stats(self, run_match=None):
         pass
 
@@ -122,6 +147,10 @@ class NullPersistence(Persistence):
         return False
 
     def read_history_runs(self, run_match=None, sort=SortCriteria.CREATED, *, asc, limit, offset, last=False):
+        raise PersistenceDisabledError("Persistence is disabled; no history available.")
+
+    def iter_history_runs(self, run_match=None, sort=SortCriteria.CREATED, *,
+                          asc=True, limit=-1, offset=-1, last=False):
         raise PersistenceDisabledError("Persistence is disabled; no history available.")
 
     def read_history_stats(self, run_match=None) -> dict:
