@@ -238,9 +238,37 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
     def get_active_runs(self, run_match=None):
         pass
 
+    @abstractmethod
+    def iter_history_runs(self, run_match=None, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+        """
+        Iterate over ended job instances based on specified criteria.
+
+        This method provides memory-efficient access to job history by yielding
+        results one at a time rather than loading all records into memory.
+        For large result sets, this is preferred over read_history_runs().
+
+        Args:
+            run_match: Criteria to match specific job instances
+            sort: Field by which records are sorted (default: SortCriteria.ENDED)
+            asc: Sort order - True for ascending, False for descending (default: True)
+            limit: Maximum number of records to yield, -1 for unlimited (default: -1)
+            offset: Number of records to skip before yielding (default: 0)
+            last: If True, only yield the last record for each job (default: False)
+
+        Yields:
+            JobRun: Individual job instances matching the criteria
+
+        Returns:
+            Iterator[JobRun]: An iterator over JobRun instances
+
+        Raises:
+            PersistenceDisabledError: If persistence is not enabled for this environment
+        """
+        pass
+
     def get_instance(self, instance_id) -> JobInstance:
         inst = self.get_instances(JobRunCriteria.instance_match(instance_id))
-        return inst[0] if inst else None
+        return next(inst, None)
 
     @abstractmethod
     def get_instances(self, run_match=None) -> Iterable[JobInstance]:
@@ -307,7 +335,6 @@ class LocalConnector(EnvironmentConnector):
     enabling remote management of job instances and collection of their status and history.
     It handles both live job data via RPC calls and historical job data through persistence.
     """
-
     def __init__(self, env_id, connector_layout, persistence, client, event_receiver):
         self._env_id = env_id
         self._layout = connector_layout
@@ -368,6 +395,9 @@ class LocalConnector(EnvironmentConnector):
 
     def read_history_runs(self, run_match, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
         return self._persistence.read_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+
+    def iter_history_runs(self, run_match=None, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+        return self._persistence.iter_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
 
     def read_history_stats(self, run_match=None):
         return self._persistence.read_history_stats(run_match)
