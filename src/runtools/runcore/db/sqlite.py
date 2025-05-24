@@ -1,5 +1,5 @@
 """
-Persistence storage implementation using SQLite. See `runtools.runcore.persistence` module doc for much more details.
+Persistence storage implementation using SQLite with batch fetching to avoid lock starvation.
 """
 
 import datetime
@@ -22,6 +22,9 @@ from runtools.runcore.util import MatchingStrategy, format_dt_sql, parse_dt_sql
 
 log = logging.getLogger(__name__)
 
+# Default batch size for fetching records
+DEFAULT_BATCH_SIZE = 100
+
 
 def create(env_id, database=None, **kwargs):
     """
@@ -38,17 +41,21 @@ def create(env_id, database=None, **kwargs):
             - cached_statements: Number of statements to cache (default: 128)
             - uri: True if database parameter is a URI (default: False)
             - autocommit: Transaction control mode (default: sqlite3.LEGACY_TRANSACTION_CONTROL)
+            - batch_size: Number of records to fetch per batch (default: 1000)
 
     Returns:
         SQLite: Configured SQLite persistence instance
     """
+    # Extract batch_size if provided
+    batch_size = kwargs.pop('batch_size', DEFAULT_BATCH_SIZE)
+
     # Force check_same_thread to False since we're using _conn_lock
     kwargs['check_same_thread'] = False
 
     def connection_factory():
         return sqlite3.connect(database or paths.sqlite_db_path(env_id, create=True), **kwargs)
 
-    return SQLite(connection_factory)
+    return SQLite(connection_factory, batch_size)
 
 
 def ensure_open(f):
@@ -190,14 +197,16 @@ def _build_where_clause(run_match, alias=''):
 
 class SQLite(Persistence):
 
-    def __init__(self, connection_factory):
+    def __init__(self, connection_factory, batch_size=DEFAULT_BATCH_SIZE):
         """
         Args:
             connection_factory: Callable that returns a sqlite3.Connection
+            batch_size: Number of records to fetch per batch
         """
         self._connection_factory = connection_factory
         self._conn = None
         self._conn_lock = Lock()
+        self._batch_size = batch_size
 
     def __enter__(self):
         self.open()
@@ -274,14 +283,14 @@ class SQLite(Persistence):
         """
         return JobRuns(self.iter_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last))
 
-    @ensure_open
     def iter_history_runs(self, run_match=None, sort=SortCriteria.ENDED, *,
                           asc=True, limit=-1, offset=-1, last=False) -> Iterator[JobRun]:
         """
         Iterate over ended job instances based on specified criteria.
 
-        This is the core implementation for fetching job history. It yields job instances
-        one at a time, making it memory-efficient for large result sets.
+        This implementation uses batched fetching to avoid holding the database lock
+        for extended periods. It fetches records in configurable batches and releases
+        the lock between batches.
 
         Datasource: The database as defined by the configured persistence type.
 
@@ -303,18 +312,65 @@ class SQLite(Persistence):
             JobRun: Individual job instances that match the given criteria.
 
         Note:
-            The iterator keeps a database cursor open until all results are consumed or
-            the iterator is explicitly closed. The cursor is automatically closed when
-            iteration completes or if an exception occurs.
+            The iterator fetches records in batches to minimize lock contention. The batch
+            size can be configured when creating the SQLite instance.
+        """
+        total_yielded = 0
+        current_offset = offset if offset >= 0 else 0
+        remaining_limit = limit if limit >= 0 else float('inf')
+
+        while remaining_limit > 0:
+            # Fetch next batch
+            batch_size = min(self._batch_size, remaining_limit) if remaining_limit != float('inf') else self._batch_size
+            batch = self._fetch_batch_history_runs(
+                run_match, sort, asc=asc, batch_offset=current_offset, batch_size=batch_size, last=last
+            )
+
+            if not batch:
+                break
+
+            for job_run in batch:
+                yield job_run
+                total_yielded += 1
+
+            # Update for next iteration
+            current_offset += len(batch)
+            remaining_limit -= len(batch)
+
+            # If we got fewer records than batch size, we've reached the end
+            if len(batch) < self._batch_size:
+                break
+
+    @ensure_open
+    def _fetch_batch_history_runs(self, run_match=None, sort=SortCriteria.ENDED, *,
+                                  asc=True, batch_offset=0, batch_size=DEFAULT_BATCH_SIZE,
+                                  last=False) -> List[JobRun]:
+        """
+        Fetches a batch of job runs from the database.
+
+        This is an internal method that fetches a specific batch of records. It acquires
+        the lock only for the duration of the database query and releases it after
+        fetching the batch.
+
+        Args:
+            run_match: Match criteria for filtering records
+            sort: Sort criteria
+            asc: Sort order
+            batch_offset: Number of records to skip
+            batch_size: Number of records to fetch
+            last: Whether to fetch only the last record per job
+
+        Returns:
+            List[JobRun]: A batch of job runs
         """
 
         def sort_exp():
             if sort == SortCriteria.CREATED:
-                return 'h.created'
+                return 'h.created, h.rowid'
             if sort == SortCriteria.ENDED:
-                return 'h.ended'
+                return 'h.ended, h.rowid'
             if sort == SortCriteria.TIME:
-                return "julianday(h.ended) - julianday(h.created)"
+                return "julianday(h.ended) - julianday(h.created), h.rowid"
             raise ValueError(sort)
 
         statement = "SELECT * FROM history h"
@@ -323,13 +379,18 @@ class SQLite(Persistence):
         if last:
             statement += " GROUP BY h.job_id HAVING ROWID = max(ROWID) "
 
-        statement += " ORDER BY " + sort_exp() + (" ASC" if asc else " DESC")
+        # Apply the sort direction to all columns in the ORDER BY clause
+        sort_direction = " ASC" if asc else " DESC"
+        sort_columns = sort_exp().split(', ')
+        order_by_clause = ', '.join(f"{col.strip()}{sort_direction}" for col in sort_columns)
+        statement += " ORDER BY " + order_by_clause
         statement += " LIMIT ? OFFSET ?"
 
-        log.debug("event=[executing_query] statement=[%s]", statement)
+        log.debug("event=[executing_batch_query] statement=[%s] batch_size=[%d] offset=[%d]",
+                  statement, batch_size, batch_offset)
 
         cursor = self._conn.cursor()
-        cursor.execute(statement, (limit, offset))
+        cursor.execute(statement, (batch_size, batch_offset))
 
         def to_job_run(t):
             metadata = JobInstanceMetadata(InstanceID(t[0], t[1]), json.loads(t[2]) if t[2] else dict())
@@ -340,8 +401,8 @@ class SQLite(Persistence):
             return JobRun(metadata, lifecycle, phases, faults, status)
 
         try:
-            while row := cursor.fetchone():
-                yield to_job_run(row)
+            rows = cursor.fetchall()
+            return [to_job_run(row) for row in rows]
         finally:
             cursor.close()
 
