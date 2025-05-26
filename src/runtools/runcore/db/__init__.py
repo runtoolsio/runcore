@@ -62,18 +62,18 @@ class PersistenceConfig(BaseModel):
         return cls(type="sqlite", enabled=True, database=":memory:")
 
 
-class SortCriteria(Enum):
+class SortOption(str, Enum):
     """
-    Enum representing the criteria by which job instance rows can be sorted.
+    Enum representing the options for sorting job run rows.
 
     Attributes:
     - CREATED: Sort by the timestamp when the job instance was created.
     - ENDED: Sort by the timestamp when the job instance ended or was completed.
     - TIME: Sort by the execution time of the job instance.
     """
-    CREATED = 1
-    ENDED = 2
-    TIME = 3
+    CREATED = "created"
+    ENDED = "ended"
+    TIME = "time"
 
 
 class Persistence(ABC):
@@ -86,11 +86,11 @@ class Persistence(ABC):
         pass
 
     @abstractmethod
-    def read_history_runs(self, run_match=None, sort=SortCriteria.CREATED, *, asc, limit, offset, last=False):
+    def read_history_runs(self, run_match=None, sort=SortOption.CREATED, *, asc, limit, offset, last=False):
         pass
 
     @abstractmethod
-    def iter_history_runs(self, run_match=None, sort=SortCriteria.CREATED, *,
+    def iter_history_runs(self, run_match=None, sort=SortOption.CREATED, *,
                           asc=True, limit=-1, offset=-1, last=False):
         """
         Iterate over ended job instances based on specified criteria.
@@ -146,10 +146,10 @@ class NullPersistence(Persistence):
     def enabled(self) -> bool:
         return False
 
-    def read_history_runs(self, run_match=None, sort=SortCriteria.CREATED, *, asc, limit, offset, last=False):
+    def read_history_runs(self, run_match=None, sort=SortOption.CREATED, *, asc, limit, offset, last=False):
         raise PersistenceDisabledError("Persistence is disabled; no history available.")
 
-    def iter_history_runs(self, run_match=None, sort=SortCriteria.CREATED, *,
+    def iter_history_runs(self, run_match=None, sort=SortOption.CREATED, *,
                           asc=True, limit=-1, offset=-1, last=False):
         raise PersistenceDisabledError("Persistence is disabled; no history available.")
 

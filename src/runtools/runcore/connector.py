@@ -26,7 +26,7 @@ from typing import Callable, Optional, Iterable
 from runtools.runcore import paths, util, db
 from runtools.runcore.client import RemoteCallClient
 from runtools.runcore.criteria import JobRunCriteria
-from runtools.runcore.db import SortCriteria, NullPersistence, sqlite
+from runtools.runcore.db import SortOption, NullPersistence, sqlite
 from runtools.runcore.env import LocalEnvironmentConfig, \
     EnvironmentConfigUnion, DEFAULT_LOCAL_ENVIRONMENT
 from runtools.runcore.err import run_isolated_collect_exceptions
@@ -239,7 +239,7 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
         pass
 
     @abstractmethod
-    def iter_history_runs(self, run_match=None, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+    def iter_history_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
         """
         Iterate over ended job instances based on specified criteria.
 
@@ -275,7 +275,7 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
         pass
 
     @abstractmethod
-    def read_history_runs(self, run_match, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+    def read_history_runs(self, run_match, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
         pass
 
     @abstractmethod
@@ -393,10 +393,10 @@ class LocalConnector(EnvironmentConnector):
 
         return instances
 
-    def read_history_runs(self, run_match, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+    def read_history_runs(self, run_match, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
         return self._persistence.read_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
 
-    def iter_history_runs(self, run_match=None, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+    def iter_history_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
         return self._persistence.iter_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
 
     def read_history_stats(self, run_match=None):

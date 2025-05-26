@@ -13,7 +13,7 @@ from typing import List, Iterator
 
 from runtools.runcore import paths
 from runtools.runcore.criteria import LifecycleCriterion
-from runtools.runcore.db import SortCriteria, Persistence
+from runtools.runcore.db import SortOption, Persistence
 from runtools.runcore.err import InvalidStateError
 from runtools.runcore.job import JobStats, JobRun, JobRuns, JobInstanceMetadata, InstanceID
 from runtools.runcore.run import TerminationStatus, Outcome, PhaseDetail, RunLifecycle, Fault
@@ -249,7 +249,7 @@ class SQLite(Persistence):
             log.debug('event=[table_created] table=[history]')
             self._conn.commit()
 
-    def read_history_runs(self, run_match=None, sort=SortCriteria.ENDED, *,
+    def read_history_runs(self, run_match=None, sort=SortOption.ENDED, *,
                           asc=True, limit=-1, offset=-1, last=False) -> JobRuns:
         """
         Fetches ended job instances based on specified criteria.
@@ -262,7 +262,7 @@ class SQLite(Persistence):
         Args:
             run_match (InstanceMatchCriteria, optional):
                 Criteria to match specific job instances. None means fetch all. Defaults to None.
-            sort (SortCriteria):
+            sort (SortOption):
                 Determines the field by which records are sorted. Defaults to `SortCriteria.ENDED`.
             asc (bool, optional):
                 Determines if the sorting is in ascending order. Defaults to True.
@@ -283,7 +283,7 @@ class SQLite(Persistence):
         """
         return JobRuns(self.iter_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last))
 
-    def iter_history_runs(self, run_match=None, sort=SortCriteria.ENDED, *,
+    def iter_history_runs(self, run_match=None, sort=SortOption.ENDED, *,
                           asc=True, limit=-1, offset=-1, last=False) -> Iterator[JobRun]:
         """
         Iterate over ended job instances based on specified criteria.
@@ -297,7 +297,7 @@ class SQLite(Persistence):
         Args:
             run_match (InstanceMatchCriteria, optional):
                 Criteria to match specific job instances. None means fetch all. Defaults to None.
-            sort (SortCriteria):
+            sort (SortOption):
                 Determines the field by which records are sorted. Defaults to `SortCriteria.ENDED`.
             asc (bool, optional):
                 Determines if the sorting is in ascending order. Defaults to True.
@@ -342,7 +342,7 @@ class SQLite(Persistence):
                 break
 
     @ensure_open
-    def _fetch_batch_history_runs(self, run_match=None, sort=SortCriteria.ENDED, *,
+    def _fetch_batch_history_runs(self, run_match=None, sort=SortOption.ENDED, *,
                                   asc=True, batch_offset=0, batch_size=DEFAULT_BATCH_SIZE,
                                   last=False) -> List[JobRun]:
         """
@@ -365,11 +365,11 @@ class SQLite(Persistence):
         """
 
         def sort_exp():
-            if sort == SortCriteria.CREATED:
+            if sort == SortOption.CREATED:
                 return 'h.created, h.rowid'
-            if sort == SortCriteria.ENDED:
+            if sort == SortOption.ENDED:
                 return 'h.ended, h.rowid'
-            if sort == SortCriteria.TIME:
+            if sort == SortOption.TIME:
                 return "julianday(h.ended) - julianday(h.created), h.rowid"
             raise ValueError(sort)
 
