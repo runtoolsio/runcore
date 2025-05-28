@@ -19,7 +19,7 @@ from enum import Enum, EnumMeta, auto
 from typing import Optional, List, Dict, Any, TypeVar, Callable, Tuple
 
 from runtools.runcore import util
-from runtools.runcore.util import format_dt_iso
+from runtools.runcore.util import format_dt_iso, utc_now
 
 
 class Stage(Enum):
@@ -199,6 +199,23 @@ class RunLifecycle:
         if self.termination:
             return self.termination.terminated_at
         return self.started_at or self.created_at
+
+    @property
+    def elapsed(self) -> Optional[datetime.timedelta]:
+        """
+        For naive-UTC timestamps:
+          - If started_at is None → None
+          - Otherwise: (termination time if ended) or utc_now() minus started_at
+        """
+        if not self.started_at:
+            return None
+
+        end = (
+            self.termination.terminated_at  # assumed also naive UTC, from your parser
+            if self.termination
+            else utc_now()
+        )
+        return end - self.started_at
 
     @property
     def total_run_time(self) -> Optional[datetime.timedelta]:
