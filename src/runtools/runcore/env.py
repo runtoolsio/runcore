@@ -71,25 +71,43 @@ EnvironmentConfigUnion = Annotated[
 ConfigDict = Dict[str, Any]
 
 
-def get_env_config(env_id: str) -> EnvironmentConfigUnion:
+def get_env_config(env_id: Optional[str] = None) -> EnvironmentConfigUnion:
     """
     Load, merge, and validate a single environment configuration by its identifier.
 
-    This will read all applicable TOML files (project, user, system, and packaged default),
-    deep-merge the layers, and validate against the Pydantic `EnvironmentConfigUnion` model.
+    This function reads all applicable TOML configuration files (project, user, system, and packaged default),
+    deep-merges the layers, and validates the result against the Pydantic `EnvironmentConfigUnion` model.
+
+    If no `env_id` is provided, the default environment configuration is loaded.
 
     Args:
-        env_id (str): The environment identifier to load.
+        env_id (str, optional): The environment identifier to load. If None, the default environment is used.
 
     Returns:
-        EnvironmentConfigUnion: The validated configuration model for the given environment.
+        EnvironmentConfigUnion: The validated configuration model for the resolved environment.
 
     Raises:
         ConfigFileNotFoundError: If no configuration files are found.
-        EnvironmentNotFoundError: If the specified env_id is not present.
+        EnvironmentNotFoundError: If the specified `env_id` is not present.
         ValidationError: If the loaded configuration dict fails validation.
     """
-    return env_config_from_dict(load_env_config(env_id))
+    return env_config_from_dict(load_env_config(env_id) if env_id else load_default_env_config())
+
+
+def get_default_env_config() -> EnvironmentConfigUnion:
+    """
+    Load and validate the default environment config.
+
+    Returns:
+        EnvironmentConfigUnion: A validated Pydantic model (LocalEnvironmentConfig or IsolatedEnvironmentConfig)
+        corresponding to the default environment.
+
+    Raises:
+        ConfigFileNotFoundError: If no TOML config files can be found.
+        EnvironmentNotFoundError: If no environment entries are found at all.
+        ValidationError: If the loaded configuration dict fails Pydantic validation.
+    """
+    return env_config_from_dict(load_default_env_config())
 
 
 def get_env_configs(*env_ids: str) -> Dict[str, EnvironmentConfigUnion]:
@@ -148,29 +166,6 @@ def load_env_config(env_id: str) -> ConfigDict:
     return load_env_configs(env_id)[env_id]
 
 
-def load_env_configs(*env_ids: str) -> Dict[str, ConfigDict]:
-    """
-    Collect and deep-merge raw TOML configuration for one or more env IDs.
-
-    Layers (increasing priority):
-      1. Project-level env.toml files (find_config_files)
-      2. Packaged default ENV_CONFIG_FILE
-
-    Args:
-        *env_ids (str): Environment IDs to load. If empty, loads all discovered environments.
-
-    Returns:
-        Dict[str, ConfigDict]: Mapping from each requested env_id to its raw merged dict.
-
-    Raises:
-        ConfigFileNotFoundError: If no config files are found.
-        EnvironmentNotFoundError: If any specified env_ids are missing.
-    """
-    paths_provider = paths.find_config_files("*env*.toml")
-    chain = itertools.chain(paths_provider, [paths.package_config_path(config.__package__, ENV_CONFIG_FILE)])
-    return _load_env_config(chain, *env_ids)
-
-
 def load_default_env_config() -> ConfigDict:
     """
     Load the merged raw dict for whichever environment is marked default.
@@ -206,20 +201,27 @@ def load_default_env_config() -> ConfigDict:
     )
 
 
-def get_default_env_config() -> EnvironmentConfigUnion:
+def load_env_configs(*env_ids: str) -> Dict[str, ConfigDict]:
     """
-    Load and validate the default environment config.
+    Collect and deep-merge raw TOML configuration for one or more env IDs.
+
+    Layers (increasing priority):
+      1. Project-level env.toml files (find_config_files)
+      2. Packaged default ENV_CONFIG_FILE
+
+    Args:
+        *env_ids (str): Environment IDs to load. If empty, loads all discovered environments.
 
     Returns:
-        EnvironmentConfigUnion: A validated Pydantic model (LocalEnvironmentConfig or IsolatedEnvironmentConfig)
-        corresponding to the default environment.
+        Dict[str, ConfigDict]: Mapping from each requested env_id to its raw merged dict.
 
     Raises:
-        ConfigFileNotFoundError: If no TOML config files can be found.
-        EnvironmentNotFoundError: If no environment entries are found at all.
-        ValidationError: If the loaded configuration dict fails Pydantic validation.
+        ConfigFileNotFoundError: If no config files are found.
+        EnvironmentNotFoundError: If any specified env_ids are missing.
     """
-    return env_config_from_dict(load_default_env_config())
+    paths_provider = paths.find_config_files("*env*.toml")
+    chain = itertools.chain(paths_provider, [paths.package_config_path(config.__package__, ENV_CONFIG_FILE)])
+    return _load_env_config(chain, *env_ids)
 
 
 def _deep_merge(a: ConfigDict, b: ConfigDict) -> ConfigDict:
