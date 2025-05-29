@@ -679,3 +679,60 @@ class JobRunCriteria(MatchCriteria[JobRun]):
     def ended(self, since=None, until=None, until_incl=False):
         self._last_lc_criterion().ended = DateTimeRange(since, until, until_incl)
         return self
+
+
+class SortOption(str, Enum):
+    """
+    Options for sorting job run records.
+
+    Attributes:
+        CREATED: Sort by job instance creation timestamp
+        STARTED: Sort by job instance start timestamp
+        ENDED: Sort by job instance completion timestamp
+        TIME: Sort by total execution duration
+        JOB_ID: Sort alphabetically by job identifier
+        RUN_ID: Sort alphabetically by run identifier
+    """
+    CREATED = "created"
+    STARTED = "started"
+    ENDED = "ended"
+    TIME = "time"
+    JOB_ID = "job_id"
+    RUN_ID = "run_id"
+
+    def key_func(self):
+        """
+        Returns a key function for sorting JobRun objects.
+
+        Returns:
+            Callable: Function that extracts the sort key from a JobRun
+        """
+        match self:
+            case SortOption.CREATED:
+                return lambda job_run: job_run.lifecycle.created_at
+            case SortOption.STARTED:
+                return lambda job_run: job_run.lifecycle.started_at or job_run.lifecycle.created_at
+            case SortOption.ENDED:
+                return lambda job_run: (job_run.lifecycle.termination.terminated_at
+                                        if job_run.lifecycle.termination else job_run.lifecycle.created_at)
+            case SortOption.TIME:
+                return lambda job_run: job_run.lifecycle.elapsed.total_seconds() if job_run.lifecycle.elapsed else 0
+            case SortOption.JOB_ID:
+                return lambda job_run: job_run.job_id
+            case SortOption.RUN_ID:
+                return lambda job_run: job_run.run_id
+            case _:
+                raise AssertionError(f"Programmer error - unimplemented key for sort option: {self}")
+
+    def sort_runs(self, job_runs, *, reverse=False):
+        """
+        Sorts a list of JobRun objects using this sort option.
+
+        Args:
+            job_runs: List of JobRun objects to sort
+            reverse: If True, sort in descending order
+
+        Returns:
+            List[JobRun]: Sorted list of job runs
+        """
+        return sorted(job_runs, key=self.key_func(), reverse=reverse)

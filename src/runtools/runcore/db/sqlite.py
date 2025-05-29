@@ -12,8 +12,8 @@ from threading import Lock
 from typing import List, Iterator
 
 from runtools.runcore import paths
-from runtools.runcore.criteria import LifecycleCriterion
-from runtools.runcore.db import SortOption, Persistence
+from runtools.runcore.criteria import LifecycleCriterion, SortOption
+from runtools.runcore.db import Persistence
 from runtools.runcore.err import InvalidStateError
 from runtools.runcore.job import JobStats, JobRun, JobRuns, JobInstanceMetadata, InstanceID
 from runtools.runcore.run import TerminationStatus, Outcome, PhaseDetail, RunLifecycle, Fault
@@ -365,13 +365,21 @@ class SQLite(Persistence):
         """
 
         def sort_exp():
-            if sort == SortOption.CREATED:
-                return 'h.created, h.rowid'
-            if sort == SortOption.ENDED:
-                return 'h.ended, h.rowid'
-            if sort == SortOption.TIME:
-                return "julianday(h.ended) - julianday(h.created), h.rowid"
-            raise ValueError(sort)
+            match sort:
+                case SortOption.CREATED:
+                    return 'h.created, h.rowid'
+                case SortOption.STARTED:
+                    return 'h.started, h.rowid'
+                case SortOption.ENDED:
+                    return 'h.ended, h.rowid'
+                case SortOption.TIME:
+                    return "julianday(h.ended) - julianday(h.created), h.rowid"
+                case SortOption.JOB_ID:
+                    return 'h.job_id, h.rowid'
+                case SortOption.RUN_ID:
+                    return 'h.run_id, h.rowid'
+                case _:
+                    raise ValueError(f"Unsupported sort option: {sort}")
 
         statement = "SELECT * FROM history h"
         statement += _build_where_clause(run_match, alias='h')

@@ -210,11 +210,8 @@ class RunLifecycle:
         if not self.started_at:
             return None
 
-        end = (
-            self.termination.terminated_at  # assumed also naive UTC, from your parser
-            if self.termination
-            else utc_now()
-        )
+        # assumed also naive UTC, from your parser
+        end = self.termination.terminated_at if self.termination else utc_now()
         return end - self.started_at
 
     @property

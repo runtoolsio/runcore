@@ -25,8 +25,8 @@ from typing import Callable, Optional, Iterable
 
 from runtools.runcore import paths, util, db
 from runtools.runcore.client import RemoteCallClient
-from runtools.runcore.criteria import JobRunCriteria
-from runtools.runcore.db import SortOption, NullPersistence, sqlite
+from runtools.runcore.criteria import JobRunCriteria, SortOption
+from runtools.runcore.db import NullPersistence, sqlite
 from runtools.runcore.env import LocalEnvironmentConfig, \
     EnvironmentConfigUnion, DEFAULT_LOCAL_ENVIRONMENT
 from runtools.runcore.err import run_isolated_collect_exceptions

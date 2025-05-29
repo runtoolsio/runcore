@@ -1,12 +1,12 @@
 import importlib
 import pkgutil
 from abc import ABC, abstractmethod
-from enum import Enum
 from typing import Dict, Any, Optional
 
 from pydantic import BaseModel, Field
 
 from runtools import runcore
+from runtools.runcore.criteria import SortOption
 from runtools.runcore.err import RuntoolsException
 from runtools.runcore.job import InstanceStageObserver, InstanceStageEvent
 from runtools.runcore.run import Stage
@@ -60,20 +60,6 @@ class PersistenceConfig(BaseModel):
     @classmethod
     def in_memory_sqlite(cls):
         return cls(type="sqlite", enabled=True, database=":memory:")
-
-
-class SortOption(str, Enum):
-    """
-    Enum representing the options for sorting job run rows.
-
-    Attributes:
-    - CREATED: Sort by the timestamp when the job instance was created.
-    - ENDED: Sort by the timestamp when the job instance ended or was completed.
-    - TIME: Sort by the execution time of the job instance.
-    """
-    CREATED = "created"
-    ENDED = "ended"
-    TIME = "time"
 
 
 class Persistence(ABC):
