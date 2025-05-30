@@ -697,8 +697,8 @@ class SortOption(str, Enum):
     STARTED = "started"
     ENDED = "ended"
     TIME = "time"
-    JOB_ID = "job_id"
-    RUN_ID = "run_id"
+    JOB_ID = "job"
+    RUN_ID = "run"
 
     def key_func(self):
         """

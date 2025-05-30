@@ -495,8 +495,8 @@ class SQLite(Persistence):
             slowest = datetime.timedelta(seconds=t[6]) if t[6] else None
             last_time = datetime.timedelta(seconds=t[7]) if t[7] else None
             last_term_status = TerminationStatus.from_code(t[8]) if t[8] else TerminationStatus.UNKNOWN
-            failed_count = t[9]
-            warn_count = t[10]
+            failed_count = t[9] or 0
+            warn_count = t[10] or 0
 
             return JobStats(
                 job_id, count, first_at, last_at, fastest, average, slowest, last_time, last_term_status, failed_count,

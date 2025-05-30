@@ -183,48 +183,64 @@ class JobStats:
     failed_count: int = 0
     warning_count: int = 0
 
-    def to_dict(self, include_empty=True) -> Dict[str, Any]:
-        result = {
-            'job_id': self.job_id,
-            'count': self.count,
-            'last_state': self.termination_status.name,
-            'failed_count': self.failed_count,
-            'warning_count': self.warning_count,
-        }
 
-        if self.first_created:
-            result['first_created'] = format_dt_iso(self.first_created)
-        else:
-            result['first_created'] = None
+class StatsSortOption(str, Enum):
+    """
+    Options for sorting job statistics records.
 
-        if self.last_created:
-            result['last_created'] = format_dt_iso(self.last_created)
-        else:
-            result['last_created'] = None
+    Attributes:
+        JOB_ID: Sort alphabetically by job identifier
+        FIRST_CREATED: Sort by first instance creation timestamp
+        LAST_CREATED: Sort by last instance creation timestamp
+        AVERAGE_TIME: Sort by average execution duration
+        SLOWEST_TIME: Sort by slowest execution duration
+        FASTEST_TIME: Sort by fastest execution duration
+        LAST_TIME: Sort by most recent execution duration
+        COUNT: Sort by number of executions
+        FAILED_COUNT: Sort by number of failed executions
+    """
+    JOB_ID = "job"
+    FIRST_CREATED = "oldest"
+    LAST_CREATED = "newest"
+    AVERAGE_TIME = "avg"
+    SLOWEST_TIME = "slow"
+    FASTEST_TIME = "fast"
+    LAST_TIME = "last"
+    COUNT = "runs"
+    FAILED_COUNT = "fails"
 
-        if self.fastest_time:
-            result['fastest_time'] = self.fastest_time.total_seconds()
-        else:
-            result['fastest_time'] = None
+    def sort_stats(self, job_stats_list, *, reverse=False):
+        """
+        Sorts a list of JobStats objects using this sort option.
 
-        if self.average_time:
-            result['average_time'] = self.average_time.total_seconds()
-        else:
-            result['average_time'] = None
+        Args:
+            job_stats_list: List of JobStats objects to sort
+            reverse: If True, sort in descending order
 
-        if self.slowest_time:
-            result['slowest_time'] = self.slowest_time.total_seconds()
-        else:
-            result['slowest_time'] = None
-
-        if self.last_time:
-            result['last_time'] = self.last_time.total_seconds()
-        else:
-            result['last_time'] = None
-
-        if not include_empty:
-            result = {k: v for k, v in result.items() if v is not None}
-        return result
+        Returns:
+            List[JobStats]: Sorted list of job statistics
+        """
+        match self:
+            case StatsSortOption.JOB_ID:
+                return sorted(job_stats_list, key=lambda s: s.job_id, reverse=reverse)
+            case StatsSortOption.FIRST_CREATED:
+                return sorted(job_stats_list, key=lambda s: s.first_created or s.last_created, reverse=reverse)
+            case StatsSortOption.LAST_CREATED:
+                return sorted(job_stats_list, key=lambda s: s.last_created, reverse=reverse)
+            case StatsSortOption.AVERAGE_TIME:
+                return sorted(job_stats_list, key=lambda s: s.average_time or s.last_time, reverse=reverse)
+            case StatsSortOption.SLOWEST_TIME:
+                return sorted(job_stats_list, key=lambda s: s.slowest_time or s.last_time, reverse=reverse)
+            case StatsSortOption.FASTEST_TIME:
+                return sorted(job_stats_list, key=lambda s: s.fastest_time or s.last_time, reverse=reverse)
+            case StatsSortOption.LAST_TIME:
+                return sorted(job_stats_list, key=lambda s: s.last_time, reverse=reverse)
+            case StatsSortOption.COUNT:
+                return sorted(job_stats_list, key=lambda s: s.count, reverse=reverse)
+            case StatsSortOption.FAILED_COUNT:
+                return sorted(job_stats_list, key=lambda s: s.failed_count, reverse=reverse)
+            case _:
+                raise AssertionError(f"Programmer error - unimplemented key for sort option: {self}")
 
 
 def iid(job_id, run_id=None):
