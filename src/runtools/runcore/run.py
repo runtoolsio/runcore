@@ -16,7 +16,7 @@ import weakref
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, EnumMeta, auto
-from typing import Optional, List, Dict, Any, TypeVar, Callable, Tuple
+from typing import Optional, List, Dict, Any, TypeVar, Callable, Tuple, Set
 
 from runtools.runcore import util
 from runtools.runcore.util import format_dt_iso, utc_now
@@ -401,6 +401,27 @@ class PhaseDetail:
 
     def find_phase_by_id(self, phase_id):
         return self.find_first_phase(lambda p: p.phase_id == phase_id)
+
+    @property
+    def active_states(self) -> Set[RunState]:
+        """
+        Returns the set of RunState values for this phase and its descendants that are currently active/running.
+
+        A phase is considered active if it's in the RUNNING stage (started but not terminated).
+        This includes phases in states like EXECUTING, EXECUTING_CHILDREN, WAITING, etc.
+
+        Returns:
+            Set[RunState]: Set of unique run states for all active phases in this hierarchy
+        """
+        active_states = set()
+
+        if self.lifecycle.stage == Stage.RUNNING:
+            active_states.add(self.run_state)
+
+        for child in self.children:
+            active_states.update(child.active_states)
+
+        return active_states
 
 
 @dataclass

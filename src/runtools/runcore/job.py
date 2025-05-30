@@ -585,6 +585,10 @@ class JobRun:
                 return found
         return None
 
+    @property
+    def active_states(self) -> Set[RunState]:
+        return {state for p in self.phases for state in p.active_states}
+
 
 class JobRuns(list):
     """
