@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
 
-from runtools.runcore.run import PhaseDetail, RunState, TerminationInfo, TerminationStatus, Fault, RunLifecycle
+from runtools.runcore.run import PhaseDetail, TerminationInfo, TerminationStatus, Fault, RunLifecycle
 from runtools.runcore.util import utc_now
 
 
@@ -10,11 +10,12 @@ def term(status=TerminationStatus.COMPLETED, ended_at=None, fault=None):
     return TerminationInfo(status, ended_at or utc_now().replace(microsecond=0), fault)
 
 
-def phase_detail(phase_id, run_state=RunState.EXECUTING, children=None,
+def phase_detail(phase_id, children=None,
                  *, phase_type='test', created_at=None, started_at=None, termination):
     if not created_at:
         created_at = utc_now().replace(microsecond=0)
-    return PhaseDetail(phase_id, phase_type, run_state, '', None, None, RunLifecycle(created_at, started_at, termination), children or tuple())
+    return PhaseDetail(phase_id, phase_type, False, '', None, None, RunLifecycle(created_at, started_at, termination),
+                       children or tuple())
 
 
 def _determine_container_state(children: Tuple[PhaseDetail,...]) -> tuple[bool, Optional[TerminationInfo]]:
@@ -62,7 +63,6 @@ def _determine_container_state(children: Tuple[PhaseDetail,...]) -> tuple[bool, 
 class FakePhaseDetailBuilder:
     """Builder for creating test phase hierarchies with sequential timestamps"""
     phase_id: str
-    run_state: RunState
     phase_type: str
     parent: Optional['FakePhaseDetailBuilder']
     children: List['FakePhaseDetailBuilder']
@@ -73,13 +73,12 @@ class FakePhaseDetailBuilder:
     _is_container: bool
 
     @classmethod
-    def root(cls, phase_id: str = "root", run_state: RunState = RunState.EXECUTING_CHILDREN,
+    def root(cls, phase_id: str = "root",
              *, phase_type: str = "test", base_ts: Optional[datetime] = None) -> 'FakePhaseDetailBuilder':
         """Create a root builder with initial timestamp"""
         base_ts = base_ts or utc_now().replace(microsecond=0)
         return cls(
             phase_id=phase_id,
-            run_state=run_state,
             phase_type=phase_type,
             parent=None,
             children=[],
@@ -93,7 +92,6 @@ class FakePhaseDetailBuilder:
     def add_phase(
             self,
             phase_id: str,
-            run_state: RunState = RunState.EXECUTING,
             term_status: Optional[TerminationStatus] = None,
             *,
             phase_type: str = "test",
@@ -106,7 +104,6 @@ class FakePhaseDetailBuilder:
 
         Args:
             phase_id: Unique identifier for the phase
-            run_state: Current execution state
             phase_type: Type of the phase
             started: Whether the phase has started
             term_status: Optional termination status
@@ -136,7 +133,6 @@ class FakePhaseDetailBuilder:
 
         child = FakePhaseDetailBuilder(
             phase_id=phase_id,
-            run_state=run_state,
             phase_type=phase_type,
             parent=self,
             children=[],
@@ -170,7 +166,7 @@ class FakePhaseDetailBuilder:
         return PhaseDetail(
             phase_id=self.phase_id,
             phase_type=self.phase_type,
-            run_state=self.run_state,
+            is_idle=False,
             phase_name=self.phase_id,
             attributes=None,
             variables=None,

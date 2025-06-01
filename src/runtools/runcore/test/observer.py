@@ -13,7 +13,7 @@ from typing import List, Callable
 
 from runtools.runcore.job import JobRun, InstanceOutputObserver, InstanceOutputEvent, \
     InstanceStageObserver, InstanceStageEvent
-from runtools.runcore.run import RunState, Stage
+from runtools.runcore.run import Stage
 
 log = logging.getLogger(__name__)
 
@@ -81,14 +81,14 @@ class TestStageObserver(InstanceStageObserver):
         """
         return self._wait_for_state_condition(lambda: exec_state in (e[2].run_state for e in self.events), timeout)
 
-    def wait_for_ended_state(self, timeout: float = 1) -> bool:
+    def wait_for_ended_stage(self, timeout: float = 1) -> bool:
         """
         Wait for receiving notification with a terminal state
 
         :param timeout: Waiting interval in seconds
         :return: True when terminal state received False when timed out
         """
-        terminal_condition = lambda: any((e for e in self.events if e[2].run_state == RunState.ENDED))
+        terminal_condition = lambda: any((e for e in self.events if e.new_stage == Stage.ENDED))
         return self._wait_for_state_condition(terminal_condition, timeout)
 
     def _wait_for_state_condition(self, state_condition: Callable[[], bool], timeout: float):

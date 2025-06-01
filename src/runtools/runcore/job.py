@@ -17,7 +17,7 @@ from typing import Dict, Any, List, Optional, Tuple, Iterator, ClassVar, Set, Ca
 
 from runtools.runcore import util
 from runtools.runcore.output import OutputLine
-from runtools.runcore.run import TerminationStatus, RunState, Fault, PhaseDetail, Stage, RunLifecycle, StopReason
+from runtools.runcore.run import TerminationStatus, Fault, PhaseDetail, Stage, RunLifecycle, StopReason
 from runtools.runcore.status import Status
 from runtools.runcore.util import MatchingStrategy, format_dt_iso, unique_timestamp_hex
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
@@ -585,10 +585,6 @@ class JobRun:
                 return found
         return None
 
-    @property
-    def active_states(self) -> Set[RunState]:
-        return {state for p in self.phases for state in p.active_states}
-
 
 class JobRuns(list):
     """
@@ -610,26 +606,6 @@ class JobRuns(list):
 
     def in_state(self, state):
         return [job_run for job_run in self if job_run.lifecycle.run_state is state]
-
-    @property
-    def scheduled(self):
-        return self.in_state(RunState.CREATED)
-
-    @property
-    def pending(self):
-        return self.in_state(RunState.PENDING)
-
-    @property
-    def queued(self):
-        return self.in_state(RunState.IN_QUEUE)
-
-    @property
-    def executing(self):
-        return self.in_state(RunState.EXECUTING)
-
-    @property
-    def terminal(self):
-        return self.in_state(RunState.ENDED)
 
     def to_dict(self, include_empty=True) -> Dict[str, Any]:
         return {"runs": [run.serialize(include_empty=include_empty) for run in self]}

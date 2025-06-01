@@ -15,8 +15,8 @@ import traceback
 import weakref
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import Enum, EnumMeta, auto
-from typing import Optional, List, Dict, Any, TypeVar, Callable, Tuple, Set
+from enum import Enum, auto
+from typing import Optional, List, Dict, Any, TypeVar, Callable, Tuple
 
 from runtools.runcore import util
 from runtools.runcore.util import format_dt_iso, utc_now
@@ -26,29 +26,6 @@ class Stage(Enum):
     CREATED = auto()
     RUNNING = auto()
     ENDED = auto()
-
-
-class RunStateMeta(EnumMeta):
-    _value2member_map_ = {}
-
-    def __getitem__(self, item):
-        if isinstance(item, int):
-            return self._value2member_map_.get(item, RunState.UNKNOWN)
-        elif isinstance(item, str):
-            return super().__getitem__(item.upper())
-        else:
-            raise KeyError("Invalid key: must be integer or string")
-
-
-class RunState(Enum, metaclass=RunStateMeta):
-    NONE = 0
-    UNKNOWN = -1
-    PENDING = 2
-    WAITING = 3
-    EVALUATING = 4
-    IN_QUEUE = 5
-    EXECUTING = 6
-    EXECUTING_CHILDREN = 7
 
 
 class Outcome(Enum):
@@ -263,7 +240,7 @@ class PhaseDetail:
     # Core phase information
     phase_id: str
     phase_type: str
-    run_state: RunState
+    is_idle: bool
     phase_name: Optional[str]
     attributes: Optional[Dict[str, Any]]
     variables: Optional[Dict[str, Any]]
@@ -279,7 +256,7 @@ class PhaseDetail:
         return cls(
             phase_id=phase.id,
             phase_type=phase.type,
-            run_state=phase.run_state,
+            is_idle=phase.is_idle,
             phase_name=phase.name,
             attributes=phase.attributes,
             variables=phase.variables,
@@ -305,7 +282,7 @@ class PhaseDetail:
         return cls(
             phase_id=as_dict['phase_id'],
             phase_type=as_dict['phase_type'],
-            run_state=RunState[as_dict['run_state']],
+            is_idle=as_dict['is_idle'],
             phase_name=as_dict.get('phase_name'),
             attributes=as_dict.get('attributes'),
             variables=as_dict.get('variables'),
@@ -323,7 +300,7 @@ class PhaseDetail:
         dto = {
             'phase_id': self.phase_id,
             'phase_type': self.phase_type,
-            'run_state': self.run_state.name,
+            'is_idle': self.is_idle,
             'lifecycle': self.lifecycle.serialize(),
         }
         if self.phase_name:
@@ -401,27 +378,6 @@ class PhaseDetail:
 
     def find_phase_by_id(self, phase_id):
         return self.find_first_phase(lambda p: p.phase_id == phase_id)
-
-    @property
-    def active_states(self) -> Set[RunState]:
-        """
-        Returns the set of RunState values for this phase and its descendants that are currently active/running.
-
-        A phase is considered active if it's in the RUNNING stage (started but not terminated).
-        This includes phases in states like EXECUTING, EXECUTING_CHILDREN, WAITING, etc.
-
-        Returns:
-            Set[RunState]: Set of unique run states for all active phases in this hierarchy
-        """
-        active_states = set()
-
-        if self.lifecycle.stage == Stage.RUNNING:
-            active_states.add(self.run_state)
-
-        for child in self.children:
-            active_states.update(child.active_states)
-
-        return active_states
 
 
 @dataclass

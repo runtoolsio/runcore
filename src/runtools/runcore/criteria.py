@@ -10,7 +10,7 @@ from enum import Enum
 from typing import Dict, Any, Optional, TypeVar, Generic, Iterable
 
 from runtools.runcore.job import JobInstanceMetadata, JobRun, InstanceID
-from runtools.runcore.run import Outcome, TerminationInfo, RunState, \
+from runtools.runcore.run import Outcome, TerminationInfo, \
     PhaseDetail, TerminationStatus, RunLifecycle, Stage
 from runtools.runcore.util import MatchingStrategy, to_list, DateTimeRange, TimeRange
 
@@ -431,7 +431,7 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
     Attributes:
         phase_type: Phase type to match
         phase_id: Phase ID to match
-        run_state: Run state to match
+        idle: Idle phase match
         phase_name: Phase name to match
         attributes: Dictionary of attributes to match. None = no attribute matching
         lifecycle: Criteria for matching lifecycle information. For root phase only.
@@ -439,7 +439,7 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
     """
     phase_type: Optional[str] = None
     phase_id: Optional[str] = None
-    run_state: Optional[RunState] = None
+    idle: Optional[bool] = None
     phase_name: Optional[str] = None
     attributes: Optional[Dict[str, Any]] = None
     lifecycle: Optional[LifecycleCriterion] = None
@@ -451,7 +451,7 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
         return cls(
             phase_type=data.get('phase_type'),
             phase_id=data.get('phase_id'),
-            run_state=RunState[data['run_state']] if data.get('run_state') else None,
+            idle=data.get('idle'),
             phase_name=data.get('phase_name'),
             attributes=data.get('attributes'),
             lifecycle=LifecycleCriterion.deserialize(data.get('lifecycle')) if data.get('lifecycle') else None,
@@ -463,7 +463,7 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
         return {
             'phase_type': self.phase_type,
             'phase_id': self.phase_id,
-            'run_state': self.run_state.name if self.run_state else None,
+            'idle': self.idle,
             'phase_name': self.phase_name,
             'attributes': self.attributes,
             'lifecycle': self.lifecycle.serialize() if self.lifecycle else None,
@@ -482,7 +482,7 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
         if self.phase_id and phase_detail.phase_id != self.phase_id:
             return False
 
-        if self.run_state and phase_detail.run_state != self.run_state:
+        if self.idle is not None and phase_detail.is_idle != self.idle:
             return False
 
         if self.phase_name and phase_detail.phase_name != self.phase_name:
@@ -515,7 +515,7 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
 
     def __bool__(self) -> bool:
         """Check if any criteria are set."""
-        return bool(self.phase_type or self.phase_id or self.run_state or
+        return bool(self.phase_type or self.phase_id or self.idle or
                     self.phase_name or self.attributes or self.lifecycle)
 
     def __str__(self) -> str:
@@ -525,8 +525,8 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
             fields.append(f"type='{self.phase_type}'")
         if self.phase_id:
             fields.append(f"id='{self.phase_id}'")
-        if self.run_state:
-            fields.append(f"state={self.run_state.name}")
+        if self.idle:
+            fields.append(f"idle={self.idle}")
         if self.phase_name:
             fields.append(f"name='{self.phase_name}'")
         if self.attributes:
