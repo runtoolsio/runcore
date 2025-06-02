@@ -585,6 +585,17 @@ class JobRun:
                 return found
         return None
 
+    def accept_visitor(self, visitor):
+        """
+        Accept a visitor to traverse all phases in this job run.
+
+        Args:
+            visitor: The visitor to accept
+        """
+        for phase in self.phases:
+            phase.accept_visitor(visitor)
+        return visitor
+
 
 class JobRuns(list):
     """

@@ -232,6 +232,28 @@ class RunLifecycle:
         return dto
 
 
+class PhaseVisitor(ABC):
+    """
+    Abstract base class for phase visitors.
+    Implement this to define custom traversal behavior.
+    """
+
+    @abstractmethod
+    def visit_phase(self, phase_detail: 'PhaseDetail', depth: int, parent_path: List['PhaseDetail']) -> Any:
+        """
+        Visit a single phase node.
+
+        Args:
+            phase_detail: The current phase being visited
+            depth: Current depth in the tree (0 for root)
+            parent_path: List of parent phases from root to current (excluding current)
+
+        Returns:
+            Any value (visitor-specific)
+        """
+        pass
+
+
 @dataclass(frozen=True)
 class PhaseDetail:
     """
@@ -378,6 +400,27 @@ class PhaseDetail:
 
     def find_phase_by_id(self, phase_id):
         return self.find_first_phase(lambda p: p.phase_id == phase_id)
+
+    def accept_visitor(self, visitor: PhaseVisitor, depth: int = 0,
+                       parent_path: Optional[List['PhaseDetail']] = None):
+        """
+        Accept a visitor for tree traversal.
+
+        Args:
+            visitor: The visitor to accept
+            depth: Current depth in traversal
+            parent_path: Path from root to this phase (excluding self)
+        """
+        if parent_path is None:
+            parent_path = []
+
+        visitor.visit_phase(self, depth, parent_path)
+
+        new_path = parent_path + [self]
+        for child in self.children:
+            child.accept_visitor(visitor, depth + 1, new_path)
+
+        return visitor
 
 
 @dataclass
