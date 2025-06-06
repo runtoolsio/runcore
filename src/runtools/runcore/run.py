@@ -16,7 +16,7 @@ import weakref
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Optional, List, Dict, Any, TypeVar, Callable, Tuple
+from typing import Optional, List, Dict, Any, TypeVar, Callable, Tuple, Iterator
 
 from runtools.runcore import util
 from runtools.runcore.util import format_dt_iso, utc_now
@@ -232,6 +232,109 @@ class RunLifecycle:
         return dto
 
 
+class PhasePath(list):
+    """
+    Represents a path from root to a specific phase in the phase hierarchy.
+
+    Provides convenient methods for accessing parent phases and the root phase.
+    """
+
+    def __init__(self, phases=None):
+        """
+        Initialize with optional list of phases from root to current (excluding current).
+        Args:
+            phases (Optional[List['PhaseDetail']]: phases starting from root
+        """
+        super().__init__(phases or [])
+
+    @property
+    def parent(self) -> Optional['PhaseDetail']:
+        """Returns the immediate parent phase, or None if at root."""
+        return self[-1] if self else None
+
+    @property
+    def root(self) -> Optional['PhaseDetail']:
+        """Returns the root phase of the path, or None if path is empty."""
+        return self[0] if self else None
+
+    @property
+    def depth(self) -> int:
+        """Returns the depth in the tree (number of ancestors)."""
+        return len(self)
+
+    def get_ancestor(self, levels_up: int) -> Optional['PhaseDetail']:
+        """
+        Get an ancestor at a specific level up from the current position.
+
+        Args:
+            levels_up: Number of levels to go up (1 = parent, 2 = grandparent, etc.)
+
+        Returns:
+            The ancestor phase or None if levels_up exceeds the path length
+        """
+        if levels_up <= 0 or levels_up > len(self):
+            return None
+        return self[-levels_up]
+
+    def iter_ancestors(self, *, include_root: bool = True, reverse: bool = False) -> Iterator['PhaseDetail']:
+        """
+        Iterate through ancestors.
+
+        Args:
+            include_root: Whether to include the root phase in iteration
+            reverse: If False (default), iterate from parent to root. If True, iterate from root to parent.
+
+        Yields:
+            Ancestor phases in the specified order
+        """
+        if reverse:
+            # Root to parent order
+            start = 0 if include_root else 1
+            for i in range(start, len(self)):
+                yield self[i]
+        else:
+            # Parent to root order (default)
+            for i in range(len(self) - 1, -1 if include_root else 0, -1):
+                yield self[i]
+
+    def has_ancestor(self, phase_id: str) -> bool:
+        """Check if a phase with the given ID exists in the ancestor path."""
+        return any(p.phase_id == phase_id for p in self)
+
+    def any_match(self, predicate: Callable[['PhaseDetail'], bool]) -> bool:
+        """
+        Check if any ancestor phase matches the given predicate.
+
+        Args:
+            predicate: A function that takes a PhaseDetail and returns bool
+
+        Returns:
+            True if any ancestor matches, False otherwise
+        """
+        return any(predicate(phase) for phase in self)
+
+    def extend_with(self, phase) -> 'PhasePath':
+        """
+        Create a new PhasePath with the given phase appended.
+
+        Args:
+            phase (PhaseDetail): The phase to add to the path
+
+        Returns:
+            A new PhasePath instance with the phase added
+        """
+        new_path = PhasePath(self)
+        new_path.append(phase)
+        return new_path
+
+    def __repr__(self) -> str:
+        """String representation showing the phase IDs in the path."""
+        if not self:
+            return "PhasePath([])"
+        path_str = " -> ".join(p.phase_id for p in self)
+        return f"PhasePath([{path_str}])"
+
+
 class PhaseVisitor(ABC):
     """
     Abstract base class for phase visitors.
@@ -239,14 +342,13 @@ class PhaseVisitor(ABC):
     """
 
     @abstractmethod
-    def visit_phase(self, phase_detail: 'PhaseDetail', depth: int, parent_path: List['PhaseDetail']) -> Any:
+    def visit_phase(self, phase_detail, parent_path) -> Any:
         """
         Visit a single phase node.
 
         Args:
-            phase_detail: The current phase being visited
-            depth: Current depth in the tree (0 for root)
-            parent_path: List of parent phases from root to current (excluding current)
+            phase_detail (PhaseDetail): The current phase being visited
+            parent_path (PhasePath): Path containing parent phases from root to current (excluding current)
 
         Returns:
             Any value (visitor-specific)
@@ -401,24 +503,27 @@ class PhaseDetail:
     def find_phase_by_id(self, phase_id):
         return self.find_first_phase(lambda p: p.phase_id == phase_id)
 
-    def accept_visitor(self, visitor: PhaseVisitor, depth: int = 0,
-                       parent_path: Optional[List['PhaseDetail']] = None):
+    @property
+    def any_child_running(self) -> bool:
+        """Returns True if any child phase has started."""
+        return any(child.lifecycle.stage == Stage.RUNNING for child in self.children)
+
+    def accept_visitor(self, visitor, parent_path=None):
         """
         Accept a visitor for tree traversal.
 
         Args:
-            visitor: The visitor to accept
-            depth: Current depth in traversal
-            parent_path: Path from root to this phase (excluding self)
+            visitor (PhaseVisitor): The visitor to accept
+            parent_path (Optional[PhasePath]): Path from root to this phase (excluding self)
         """
         if parent_path is None:
-            parent_path = []
+            parent_path = PhasePath()
 
-        visitor.visit_phase(self, depth, parent_path)
+        visitor.visit_phase(self, parent_path)
 
-        new_path = parent_path + [self]
+        new_path = parent_path.extend_with(self)
         for child in self.children:
-            child.accept_visitor(visitor, depth + 1, new_path)
+            child.accept_visitor(visitor, new_path)
 
         return visitor
 
