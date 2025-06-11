@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from runtools import runcore
 from runtools.runcore.criteria import SortOption
 from runtools.runcore.err import RuntoolsException
-from runtools.runcore.job import InstanceStageObserver, InstanceStageEvent
+from runtools.runcore.job import InstanceLifecycleObserver, InstanceLifecycleEvent
 from runtools.runcore.run import Stage
 
 _db_modules = {}
@@ -155,12 +155,12 @@ class NullPersistence(Persistence):
         pass
 
 
-class PersistingObserver(InstanceStageObserver):
+class PersistingObserver(InstanceLifecycleObserver):
 
     def __init__(self, persistence):
         self._persistence = persistence
 
-    def new_instance_stage(self, event: InstanceStageEvent):
+    def instance_lifecycle_update(self, event: InstanceLifecycleEvent):
         if event.new_stage == Stage.ENDED:
             self._persistence.store_job_runs(event.job_run)
 

@@ -5,7 +5,7 @@ from json import JSONDecodeError
 
 from runtools.runcore import util
 from runtools.runcore.job import JobInstanceMetadata, \
-    InstanceTransitionEvent, InstanceOutputEvent, JobInstanceNotifications, InstanceStageEvent
+    InstanceTransitionEvent, InstanceOutputEvent, JobInstanceNotifications, InstanceLifecycleEvent
 from runtools.runcore.util.socket import SocketServer
 
 log = logging.getLogger(__name__)
@@ -101,8 +101,8 @@ class EventReceiver(SocketServer):
 class InstanceEventReceiver(JobInstanceNotifications):
 
     def __call__(self, event_type, instance_metadata, event):
-        if event_type == InstanceStageEvent.EVENT_TYPE:
-            self._stage_notification.observer_proxy.new_instance_stage(InstanceStageEvent.deserialize(event))
+        if event_type == InstanceLifecycleEvent.EVENT_TYPE:
+            self._stage_notification.observer_proxy.instance_lifecycle_update(InstanceLifecycleEvent.deserialize(event))
         elif event_type == InstanceTransitionEvent.EVENT_TYPE:
             self._transition_notification.observer_proxy.new_instance_transition(
                 InstanceTransitionEvent.deserialize(event))

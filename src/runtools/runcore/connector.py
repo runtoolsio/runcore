@@ -30,7 +30,7 @@ from runtools.runcore.db import NullPersistence, sqlite
 from runtools.runcore.env import LocalEnvironmentConfig, \
     EnvironmentConfigUnion, DEFAULT_LOCAL_ENVIRONMENT
 from runtools.runcore.err import run_isolated_collect_exceptions
-from runtools.runcore.job import JobInstanceObservable, JobInstance
+from runtools.runcore.job import JobInstanceObservable, JobInstance, InstanceLifecycleObserver, InstanceLifecycleEvent
 from runtools.runcore.listening import EventReceiver, InstanceEventReceiver
 from runtools.runcore.remote import JobInstanceRemote
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
@@ -281,6 +281,34 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
     @abstractmethod
     def read_history_stats(self, run_match=None):
         pass
+
+    def lifecycle_watcher(self, run_match, *, timeout=None):
+        connector = self
+        class RunWait(InstanceLifecycleObserver):
+
+            def __init__(self):
+                self.observed_runs = []
+                self._event = Event()
+
+            def instance_lifecycle_update(self, event: InstanceLifecycleEvent):
+                if run_match(event.job_run):
+                    connector.remove_observer_lifecycle(self)
+                    self.observed_runs.append(event.job_run)
+                    self._event.set()
+
+            def wait(self, *, check_history=False):
+                try:
+                    if check_history:
+                        self.observed_runs.extend(connector.read_history_runs(run_match))
+                    if self.observed_runs:
+                        return True
+                    return self._event.wait(timeout)
+                finally:
+                    connector.remove_observer_lifecycle(self)
+
+        run_wait = RunWait()
+        self.add_observer_lifecycle(run_wait)
+        return run_wait
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()

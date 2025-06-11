@@ -623,7 +623,7 @@ class JobRuns(list):
 
 
 @dataclass(frozen=True)
-class InstanceStageEvent:
+class InstanceLifecycleEvent:
     EVENT_TYPE = "instance_stage_update"
 
     instance: JobInstanceMetadata
@@ -651,7 +651,7 @@ class InstanceStageEvent:
         }
 
     @classmethod
-    def deserialize(cls, as_dict: Dict[str, Any]) -> 'InstanceStageEvent':
+    def deserialize(cls, as_dict: Dict[str, Any]) -> 'InstanceLifecycleEvent':
         return cls(
             instance=JobInstanceMetadata.deserialize(as_dict['instance']),
             job_run=JobRun.deserialize(as_dict['job_run']),
@@ -660,10 +660,10 @@ class InstanceStageEvent:
         )
 
 
-class InstanceStageObserver(abc.ABC):
+class InstanceLifecycleObserver(abc.ABC):
 
     @abstractmethod
-    def new_instance_stage(self, event: InstanceStageEvent):
+    def instance_lifecycle_update(self, event: InstanceLifecycleEvent):
         pass
 
 
@@ -892,7 +892,7 @@ class JobInstanceObservable(ABC):
 class JobInstanceNotifications:
 
     def __init__(self):
-        self._stage_notification = ObservableNotification[InstanceStageObserver]()
+        self._stage_notification = ObservableNotification[InstanceLifecycleObserver]()
         self._transition_notification = ObservableNotification[InstanceTransitionObserver]()
         self._output_notification = ObservableNotification[InstanceOutputObserver]()
 
@@ -925,7 +925,7 @@ class JobInstanceNotifications:
         self._output_notification.remove_observer(observer)
 
 
-class InstanceEventsObserver(InstanceStageObserver, InstanceTransitionObserver, InstanceOutputObserver, ABC):
+class InstanceEventsObserver(InstanceLifecycleObserver, InstanceTransitionObserver, InstanceOutputObserver, ABC):
     pass
 
 

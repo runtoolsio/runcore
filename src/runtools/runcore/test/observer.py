@@ -12,7 +12,7 @@ from threading import Condition
 from typing import List, Callable
 
 from runtools.runcore.job import JobRun, InstanceOutputObserver, InstanceOutputEvent, \
-    InstanceStageObserver, InstanceStageEvent
+    InstanceLifecycleObserver, InstanceLifecycleEvent
 from runtools.runcore.run import Stage
 
 log = logging.getLogger(__name__)
@@ -35,14 +35,14 @@ class GenericObserver:
         self.updates.put_nowait(("__call__", args))
 
 
-class TestStageObserver(InstanceStageObserver):
+class TestLifecycleObserver(InstanceLifecycleObserver):
     __test__ = False  # To tell pytest it isn't a test class
 
     def __init__(self):
-        self.events: List[InstanceStageEvent] = []
+        self.events: List[InstanceLifecycleEvent] = []
         self.completion_lock = Condition()
 
-    def new_instance_stage(self, event: InstanceStageEvent):
+    def instance_lifecycle_update(self, event: InstanceLifecycleEvent):
         self.events.append(event)
         self._release_state_waiter()
 
