@@ -282,7 +282,7 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
     def read_history_stats(self, run_match=None):
         pass
 
-    def lifecycle_watcher(self, run_match, *, timeout=None):
+    def lifecycle_watcher(self, run_match):
         connector = self
         class RunWait(InstanceLifecycleObserver):
 
@@ -296,7 +296,7 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
                     self.observed_runs.append(event.job_run)
                     self._event.set()
 
-            def wait(self, *, check_history=False):
+            def wait(self, *, timeout=None, check_history=False):
                 try:
                     if check_history:
                         self.observed_runs.extend(connector.read_history_runs(run_match))

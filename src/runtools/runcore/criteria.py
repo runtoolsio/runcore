@@ -308,32 +308,6 @@ class LifecycleCriterion(MatchCriteria[RunLifecycle]):
     total_run_time: Optional[TimeRange] = None
     termination: Optional[TerminationCriterion] = None
 
-    def matches(self, lifecycle: RunLifecycle) -> bool:
-        """Check if the lifecycle matches all specified criteria."""
-        if self.stage and lifecycle.stage != self.stage:
-            return False
-
-        if self.created and not self.created(lifecycle.created_at):
-            return False
-
-        if self.started and (not lifecycle.started_at or not self.started(lifecycle.started_at)):
-            return False
-
-        if self.total_run_time:
-            if not lifecycle.total_run_time or not self.total_run_time(lifecycle.total_run_time):
-                return False
-
-        if not lifecycle.termination:
-            return not (self.ended or self.termination)
-
-        if self.ended and not self.ended(lifecycle.termination.terminated_at):
-            return False
-
-        if self.termination and not self.termination(lifecycle.termination):
-            return False
-
-        return True
-
     def serialize(self) -> Dict[str, Any]:
         """Serialize to a dictionary."""
         data = {}
@@ -362,6 +336,35 @@ class LifecycleCriterion(MatchCriteria[RunLifecycle]):
             total_run_time=TimeRange.deserialize(data['exec_range']) if data.get('exec_range') else None,
             termination=TerminationCriterion.deserialize(data['termination']) if data.get('termination') else None
         )
+
+    def __call__(self, lifecycle: RunLifecycle):
+        return self.matches(lifecycle)
+
+    def matches(self, lifecycle: RunLifecycle) -> bool:
+        """Check if the lifecycle matches all specified criteria."""
+        if self.stage and lifecycle.stage != self.stage:
+            return False
+
+        if self.created and not self.created(lifecycle.created_at):
+            return False
+
+        if self.started and (not lifecycle.started_at or not self.started(lifecycle.started_at)):
+            return False
+
+        if self.total_run_time:
+            if not lifecycle.total_run_time or not self.total_run_time(lifecycle.total_run_time):
+                return False
+
+        if not lifecycle.termination:
+            return not (self.ended or self.termination)
+
+        if self.ended and not self.ended(lifecycle.termination.terminated_at):
+            return False
+
+        if self.termination and not self.termination(lifecycle.termination):
+            return False
+
+        return True
 
     def set_created(self, since=None, until=None, until_incl=False):
         self.created = DateTimeRange(since, until, until_incl)

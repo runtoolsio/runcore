@@ -23,9 +23,9 @@ from runtools.runcore.util import format_dt_iso, utc_now
 
 
 class Stage(Enum):
-    CREATED = auto()
-    RUNNING = auto()
-    ENDED = auto()
+    CREATED = "created"
+    RUNNING = "running"
+    ENDED = "ended"
 
 
 class Outcome(Enum):
