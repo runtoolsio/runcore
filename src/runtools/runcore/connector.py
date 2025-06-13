@@ -20,7 +20,7 @@ import logging
 import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
-from threading import Event
+from threading import Event, Lock
 from typing import Callable, Optional, Iterable
 
 from runtools.runcore import paths, util, db
@@ -282,33 +282,61 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
     def read_history_stats(self, run_match=None):
         pass
 
-    def lifecycle_watcher(self, run_match):
+    # noinspection PyProtectedMember
+    def watcher(self, run_match, *, stop_count=1, check_history=False):
         connector = self
-        class RunWait(InstanceLifecycleObserver):
+
+        class Watcher(InstanceLifecycleObserver):
 
             def __init__(self):
-                self.observed_runs = []
+                self.matched_runs = []
                 self._event = Event()
+                self._watch_lock = Lock()
+
+            def __bool__(self):
+                return self.remaining_count == 0
+
+            @property
+            def remaining_count(self):
+                return stop_count - len(self.matched_runs)
+
+            def _add_matched(self, matched):
+                if self.remaining_count == 0:
+                    return
+                self.matched_runs.extend(matched[:self.remaining_count])
+                if self.remaining_count == 0:
+                    connector.remove_observer_lifecycle(self)
+                    self._event.set()
+
+            def _watch_history(self):
+                runs = connector.read_history_runs(run_match, limit=stop_count)
+                with self._watch_lock:
+                    self._add_matched(runs)
+
+            def _watch_active(self):
+                runs = connector.get_active_runs(run_match)
+                with self._watch_lock:
+                    self._add_matched(runs)
 
             def instance_lifecycle_update(self, event: InstanceLifecycleEvent):
                 if run_match(event.job_run):
-                    connector.remove_observer_lifecycle(self)
-                    self.observed_runs.append(event.job_run)
-                    self._event.set()
+                    with self._watch_lock:
+                        self._add_matched([event.job_run])
 
-            def wait(self, *, timeout=None, check_history=False):
+            def wait(self, *, timeout=None):
                 try:
-                    if check_history:
-                        self.observed_runs.extend(connector.read_history_runs(run_match))
-                    if self.observed_runs:
-                        return True
                     return self._event.wait(timeout)
                 finally:
                     connector.remove_observer_lifecycle(self)
 
-        run_wait = RunWait()
-        self.add_observer_lifecycle(run_wait)
-        return run_wait
+        watcher = Watcher()
+        self.add_observer_lifecycle(watcher)
+        if check_history:
+            watcher._watch_history()
+        if watcher.remaining_count:
+            watcher._watch_active()
+
+        return watcher
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
@@ -363,6 +391,7 @@ class LocalConnector(EnvironmentConnector):
     enabling remote management of job instances and collection of their status and history.
     It handles both live job data via RPC calls and historical job data through persistence.
     """
+
     def __init__(self, env_id, connector_layout, persistence, client, event_receiver):
         self._env_id = env_id
         self._layout = connector_layout
