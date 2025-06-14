@@ -21,7 +21,7 @@ import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
 from threading import Event, Lock
-from typing import Callable, Optional, Iterable
+from typing import Callable, Optional, Iterable, List
 
 from runtools.runcore import paths, util, db
 from runtools.runcore.client import RemoteCallClient
@@ -30,7 +30,8 @@ from runtools.runcore.db import NullPersistence, sqlite
 from runtools.runcore.env import LocalEnvironmentConfig, \
     EnvironmentConfigUnion, DEFAULT_LOCAL_ENVIRONMENT
 from runtools.runcore.err import run_isolated_collect_exceptions
-from runtools.runcore.job import JobInstanceObservable, JobInstance, InstanceLifecycleObserver, InstanceLifecycleEvent
+from runtools.runcore.job import JobInstanceObservable, JobInstance, InstanceLifecycleObserver, InstanceLifecycleEvent, \
+    JobRun
 from runtools.runcore.listening import EventReceiver, InstanceEventReceiver
 from runtools.runcore.remote import JobInstanceRemote
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
@@ -289,7 +290,7 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
         class Watcher(InstanceLifecycleObserver):
 
             def __init__(self):
-                self.matched_runs = []
+                self.matched_runs: List[JobRun] = []
                 self._event = Event()
                 self._watch_lock = Lock()
 
