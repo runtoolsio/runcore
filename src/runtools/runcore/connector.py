@@ -293,6 +293,7 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
                 self.matched_runs: List[JobRun] = []
                 self._event = Event()
                 self._watch_lock = Lock()
+                self._cancelled = False
 
             def __bool__(self):
                 return self.remaining_count == 0
@@ -301,13 +302,20 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
             def remaining_count(self):
                 return stop_count - len(self.matched_runs)
 
+            @property
+            def is_cancelled(self):
+                return self._cancelled
+
+            def _close(self):
+                connector.remove_observer_lifecycle(self)
+                self._event.set()
+
             def _add_matched(self, matched):
                 if self.remaining_count == 0:
                     return
                 self.matched_runs.extend(matched[:self.remaining_count])
                 if self.remaining_count == 0:
-                    connector.remove_observer_lifecycle(self)
-                    self._event.set()
+                    self._close()
 
             def _watch_history(self):
                 runs = connector.read_history_runs(run_match, limit=stop_count)
@@ -326,9 +334,14 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
 
             def wait(self, *, timeout=None):
                 try:
-                    return self._event.wait(timeout)
+                    completed = self._event.wait(timeout)
+                    return False if self._cancelled else completed
                 finally:
                     connector.remove_observer_lifecycle(self)
+
+            def cancel(self):
+                self._cancelled = True
+                self._close()
 
         watcher = Watcher()
         self.add_observer_lifecycle(watcher)

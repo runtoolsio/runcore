@@ -158,6 +158,14 @@ class NullPersistence(Persistence):
 class PersistingObserver(InstanceLifecycleObserver):
 
     def __init__(self, persistence):
+        """
+        TODO Ensure highest priority so run is stored before other observers are notified
+        This is to prevent race condition in commands like wait:
+        1. Run ended event -> notification before wait set up its observer
+        2. Wait set up observer now and check persistence <-- no event
+        3. Run stored to persistence
+        4. -> Event missed by wait <-
+        """
         self._persistence = persistence
 
     def instance_lifecycle_update(self, event: InstanceLifecycleEvent):
