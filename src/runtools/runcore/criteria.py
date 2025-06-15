@@ -210,7 +210,7 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
             fields.append("match_any_field=True")
         if self.strategy != MatchingStrategy.EXACT:
             fields.append(f"strategy={self.strategy.name}")
-        return f"[{', '.join(fields)}]" if fields else "[]"
+        return f"<{', '.join(fields)}>" if fields else ""
 
 
 def compound_instance_filter(metadata_criteria):
@@ -272,7 +272,7 @@ class TerminationCriterion(MatchCriteria[TerminationInfo]):
             fields.append(f"outcome={self.outcome.name}")
         if self.ended_range:
             fields.append(f"ended{self.ended_range}")
-        return f"[{', '.join(fields)}]" if fields else "[]"
+        return f"<{', '.join(fields)}>" if fields else ""
 
 
 class PhaseMatch(Enum):
@@ -419,7 +419,7 @@ class LifecycleCriterion(MatchCriteria[RunLifecycle]):
             fields.append(f"exec={self.total_run_time}")
         if self.termination:
             fields.append(f"termination={self.termination}")
-        return f"[{', '.join(fields)}]" if fields else "[]"
+        return f"<{', '.join(fields)}>" if fields else ""
 
 
 @dataclass
@@ -538,7 +538,7 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
             fields.append(f"lifecycle{self.lifecycle}")
         if self.match_type != PhaseMatch.ROOT:
             fields.append(f"match_type={self.match_type.name}")
-        return f"[{', '.join(fields)}]" if fields else "[]"
+        return f"<{', '.join(fields)}>" if fields else ""
 
 
 class JobRunCriteria(MatchCriteria[JobRun]):
@@ -664,7 +664,7 @@ class JobRunCriteria(MatchCriteria[JobRun]):
         if self.phase_criteria:
             if criteria_strs := [str(c) for c in self.phase_criteria if bool(c)]:
                 parts.append(f"phase={''.join(criteria_strs)}")
-        return f"{' | '.join(parts)}" if parts else ""
+        return f"{' '.join(parts)}" if parts else ""
 
     def _last_lc_criterion(self):
         if not self.lifecycle_criteria:
