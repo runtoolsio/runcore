@@ -406,7 +406,7 @@ class PhaseDetail:
         return cls(
             phase_id=as_dict['phase_id'],
             phase_type=as_dict['phase_type'],
-            is_idle=as_dict['is_idle'],
+            is_idle=as_dict.get('is_idle', False),
             phase_name=as_dict.get('phase_name'),
             attributes=as_dict.get('attributes'),
             variables=as_dict.get('variables'),

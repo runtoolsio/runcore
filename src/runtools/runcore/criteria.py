@@ -289,13 +289,6 @@ class PhaseMatch(Enum):
     DESCENDANTS_ONLY = "DESCENDANTS_ONLY"
 
 
-class TemporalField(str, Enum):
-    """Specifies which timestamp field to use for filtering."""
-    CREATED = "created"
-    STARTED = "started"
-    ENDED = "ended"
-
-
 @dataclass
 class LifecycleCriterion(MatchCriteria[RunLifecycle]):
     """
@@ -378,26 +371,26 @@ class LifecycleCriterion(MatchCriteria[RunLifecycle]):
         self.ended = DateTimeRange(since, until, until_incl)
         return self
 
-    def set_date_range(self, date_range: DateTimeRange, filter_by: TemporalField) -> 'LifecycleCriterion':
+    def set_date_range(self, date_range: DateTimeRange, for_stage: Stage) -> 'LifecycleCriterion':
         """
         Sets the appropriate date range based on the filter type.
 
         Args:
             date_range: The date range to apply
-            filter_by: Which timestamp field to filter on
+            for_stage: Which stage timestamp field to filter on
 
         Returns:
             Self for method chaining
         """
-        match filter_by:
-            case TemporalField.CREATED:
+        match for_stage:
+            case Stage.CREATED:
                 self.created = date_range
-            case TemporalField.STARTED:
+            case Stage.RUNNING:
                 self.started = date_range
-            case TemporalField.ENDED:
+            case Stage.ENDED:
                 self.ended = date_range
             case _:
-                raise ValueError(f"Unknown temporal field: {filter_by}")
+                raise ValueError(f"Unknown stage field: {for_stage}")
         return self
 
     def __bool__(self) -> bool:
