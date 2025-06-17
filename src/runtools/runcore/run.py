@@ -177,6 +177,17 @@ class RunLifecycle:
             return self.termination.terminated_at
         return self.started_at or self.created_at
 
+    def transition_at(self, stage):
+        match stage:
+            case Stage.CREATED:
+                return self.created_at
+            case Stage.RUNNING:
+                return self.started_at
+            case Stage.ENDED:
+                return self.termination.terminated_at if self.termination else None
+
+        return None
+
     @property
     def elapsed(self) -> Optional[datetime.timedelta]:
         """
