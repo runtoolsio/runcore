@@ -284,7 +284,7 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
         pass
 
     # noinspection PyProtectedMember
-    def watcher(self, run_match, *, stop_count=1, check_history=False):
+    def watcher(self, run_match, *, search_past, stop_count=1):
         connector = self
 
         class Watcher(InstanceLifecycleObserver):
@@ -324,6 +324,7 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
                 self._event.set()
 
             def _add_matched(self, matched):
+                # TODO Check for duplicates
                 if self.remaining_count == 0:
                     return
                 self._matched_runs.extend(matched[:self.remaining_count])
@@ -359,10 +360,10 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
 
         watcher = Watcher()
         self.add_observer_lifecycle(watcher)
-        if check_history:
+        if search_past:
             watcher._watch_history()
-        if watcher.remaining_count:
-            watcher._watch_active()
+            if watcher.remaining_count:
+                watcher._watch_active()
 
         return watcher
 

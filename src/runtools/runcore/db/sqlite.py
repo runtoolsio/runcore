@@ -16,7 +16,7 @@ from runtools.runcore.criteria import LifecycleCriterion, SortOption
 from runtools.runcore.db import Persistence
 from runtools.runcore.err import InvalidStateError
 from runtools.runcore.job import JobStats, JobRun, JobRuns, JobInstanceMetadata, InstanceID
-from runtools.runcore.run import TerminationStatus, Outcome, PhaseDetail, RunLifecycle, Fault
+from runtools.runcore.run import TerminationStatus, Outcome, PhaseDetail, RunLifecycle, Fault, Stage
 from runtools.runcore.status import Status
 from runtools.runcore.util import MatchingStrategy, format_dt_sql, parse_dt_sql
 
@@ -160,7 +160,18 @@ def _build_where_clause(run_match, alias=''):
 
         lifecycle_conditions = []
 
-        # Handle datetime ranges
+        if lifecycle_criterion.stage:
+            match lifecycle_criterion.stage:
+                case Stage.CREATED:
+                    # Created but not started yet
+                    lifecycle_conditions.append(f"{alias}started IS NULL")
+                case Stage.RUNNING:
+                    # Started but not ended yet
+                    lifecycle_conditions.append(f"{alias}started IS NOT NULL AND {alias}ended IS NULL")
+                case Stage.ENDED:
+                    # Has ended timestamp
+                    lifecycle_conditions.append(f"{alias}ended IS NOT NULL")
+
         if lifecycle_criterion.created:
             lifecycle_conditions.extend(add_datetime_conditions('created', lifecycle_criterion.created))
         if lifecycle_criterion.started:
@@ -168,11 +179,9 @@ def _build_where_clause(run_match, alias=''):
         if lifecycle_criterion.ended:
             lifecycle_conditions.extend(add_datetime_conditions('ended', lifecycle_criterion.ended))
 
-        # Handle execution time
         if lifecycle_criterion.total_run_time:
             lifecycle_conditions.extend(add_time_range_conditions(lifecycle_criterion.total_run_time))
 
-        # Handle termination criteria
         if lifecycle_criterion.termination:
             term = lifecycle_criterion.termination
             if term.status:
