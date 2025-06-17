@@ -393,6 +393,33 @@ class LifecycleCriterion(MatchCriteria[RunLifecycle]):
                 raise ValueError(f"Unknown stage field: {for_stage}")
         return self
 
+    def reached_stage(self, stage: Stage) -> 'LifecycleCriterion':
+        """
+        Configure criterion to match runs that have reached or passed the specified stage.
+
+        Args:
+            stage: The stage that must have been reached
+
+        Returns:
+            Self for method chaining
+
+        Examples:
+            # Find all runs that have started (reached RUNNING or ENDED)
+            criteria.reached_stage(Stage.RUNNING)
+
+            # Find all runs that have completed (reached ENDED)
+            criteria.reached_stage(Stage.ENDED)
+        """
+        match stage:
+            case Stage.CREATED:
+                self.created = DateTimeRange.unbounded()
+            case Stage.RUNNING:
+                self.started = DateTimeRange.unbounded()  # Must have a started timestamp
+            case Stage.ENDED:
+                self.ended = DateTimeRange.unbounded()  # Must have an ended timestamp (termination)
+
+        return self
+
     def __bool__(self) -> bool:
         """Check if any criteria are set."""
         return bool(self.stage or self.created or self.started or self.ended or self.total_run_time or self.termination)

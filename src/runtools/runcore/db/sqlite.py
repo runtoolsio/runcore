@@ -135,6 +135,11 @@ def _build_where_clause(run_match, alias=''):
         if not dt_range:
             return dt_conditions
 
+        # Check if this is an unbounded range that just checks for existence
+        if dt_range.is_unbounded():
+            dt_conditions.append(f"{alias}{column} IS NOT NULL")
+            return dt_conditions
+
         if dt_range.since:
             dt_conditions.append(f"{alias}{column} >= '{format_dt_sql(dt_range.since)}'")
         if dt_range.until:

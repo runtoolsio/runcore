@@ -113,20 +113,39 @@ class DateTimeRange:
     Attributes:
         since (Optional[datetime]): Start of the range, inclusive
         until (Optional[datetime]): End of the range
-        until_included (bool): Whether the end point is excluded from the range (default True)
+        until_included (bool): Whether the end point is excluded from the range (default False)
     """
     since: Optional[datetime] = None
     until: Optional[datetime] = None
     until_included: bool = False
 
+    @classmethod
+    def unbounded(cls) -> 'DateTimeRange':
+        """
+        Create an unbounded range that matches any non-None datetime.
+
+        This is useful for checking existence of timestamps, e.g.,
+        "has this run started?" without caring about when.
+
+        Returns:
+            DateTimeRange with no bounds
+        """
+        return cls()
+
     def __iter__(self):
         return iter((self.since, self.until, self.until_included))
 
-    def __bool__(self):
-        return bool(self.since) or bool(self.until)
-
     def __call__(self, tested_dt):
         return self.matches(tested_dt)
+
+    def is_unbounded(self) -> bool:
+        """
+        Check if this range has no bounds (matches any non-None datetime).
+
+        Returns:
+            True if both since and until are None, False otherwise
+        """
+        return self.since is None and self.until is None
 
     def matches(self, tested_dt):
         """
@@ -139,7 +158,7 @@ class DateTimeRange:
             bool: True if the datetime is within the range
         """
         if not tested_dt:
-            return not bool(self)
+            return False
 
         if self.since and tested_dt < self.since:
             return False
@@ -168,7 +187,7 @@ class DateTimeRange:
         return cls(
             since=parse(data['since']) if data.get('since') else None,
             until=parse(data['until']) if data.get('until') else None,
-            until_included=data.get('until_included', True)
+            until_included=data.get('until_included', False)
         )
 
     def serialize(self) -> Dict[str, Any]:
@@ -255,11 +274,9 @@ class DateTimeRange:
 
     def __str__(self) -> str:
         """String representation of the range using mathematical interval notation."""
-        if not self.since and not self.until:
-            return ""
         since_str = str(self.since) if self.since else "-∞"
         until_str = str(self.until) if self.until else "∞"
-        until_bracket = "]" if not self.until_included else ")"
+        until_bracket = "]" if self.until_included else ")"
         return f"[{since_str}, {until_str}{until_bracket}"
 
 
