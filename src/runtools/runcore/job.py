@@ -16,7 +16,7 @@ from enum import Enum, auto
 from typing import Dict, Any, List, Optional, Tuple, Iterator, ClassVar, Set, Callable
 
 from runtools.runcore import util
-from runtools.runcore.output import OutputLine
+from runtools.runcore.output import OutputLine, Output
 from runtools.runcore.run import TerminationStatus, Fault, PhaseDetail, Stage, RunLifecycle, StopReason
 from runtools.runcore.status import Status
 from runtools.runcore.util import MatchingStrategy, format_dt_iso, unique_timestamp_hex
@@ -422,7 +422,7 @@ class JobInstance(abc.ABC):
 
     @property
     @abc.abstractmethod
-    def output(self):
+    def output(self) -> Output:
         pass
 
     @abc.abstractmethod

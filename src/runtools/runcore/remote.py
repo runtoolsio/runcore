@@ -2,7 +2,20 @@ from runtools.runcore.client import TargetNotFoundError, RemoteCallError
 from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.err import RuntoolsException
 from runtools.runcore.job import JobRun, JobInstance, InstanceID
+from runtools.runcore.output import Output, Mode
+from runtools.runcore.run import StopReason
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
+
+
+class _RemoteOutput(Output):
+
+    def __init__(self, client, server_address, instance_id):
+        self._client = client
+        self._server_address = server_address
+        self._instance_id = instance_id
+
+    def tail(self, mode: Mode = Mode.TAIL, max_lines: int = 0):
+        return self._client.get_output_tail(self._server_address, self._instance_id, max_lines)
 
 
 class JobInstanceRemote(JobInstance):
@@ -20,6 +33,7 @@ class JobInstanceRemote(JobInstance):
         if not job_runs:
             raise RemoteInstanceNotFoundError(server_address, instance_id)
         self._job_run: JobRun = job_runs[0]
+        self._output = _RemoteOutput(client, server_address, instance_id)
 
     @property
     def metadata(self):
@@ -35,13 +49,14 @@ class JobInstanceRemote(JobInstance):
         return self._job_run
 
     @property
-    def output(self):
-        pass
+    def output(self) -> Output:
+        return self._output
 
     def run(self):
         pass
 
-    def stop(self):
+    def stop(self, stop_reason=StopReason.STOPPED):
+        # Implement stop reason
         self._client.stop_instance(self._server_address, self._instance_id)
 
     def interrupted(self):
