@@ -107,6 +107,6 @@ class InstanceEventReceiver(JobInstanceNotifications):
             self._transition_notification.observer_proxy.new_instance_transition(
                 InstanceTransitionEvent.deserialize(event))
         elif event_type == InstanceOutputEvent.EVENT_TYPE:
-            self._output_notification.observer_proxy.new_instance_output(InstanceOutputEvent.deserialize(event))
+            self._output_notification.observer_proxy.instance_output_update(InstanceOutputEvent.deserialize(event))
         else:
             log.warning(f"[unknown_event_type] event_type=[{event_type}] instance=[{instance_metadata}]")

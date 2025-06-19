@@ -102,7 +102,7 @@ class TestOutputObserver(InstanceOutputObserver):
     def __init__(self):
         self.outputs = []
 
-    def new_instance_output(self, event: InstanceOutputEvent):
+    def instance_output_update(self, event: InstanceOutputEvent):
         self.outputs.append(event)
 
     @property

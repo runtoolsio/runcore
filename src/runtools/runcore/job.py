@@ -757,7 +757,7 @@ class InstanceOutputEvent:
 class InstanceOutputObserver(abc.ABC):
 
     @abc.abstractmethod
-    def new_instance_output(self, event: InstanceOutputEvent):
+    def instance_output_update(self, event: InstanceOutputEvent):
         pass
 
 
