@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import timedelta
 from enum import Enum, auto
+from types import MappingProxyType
 from typing import Dict, Any, List, Optional, Tuple, Iterator, ClassVar, Set, Callable
 
 from runtools.runcore import util
@@ -331,7 +332,15 @@ class JobInstanceMetadata(ABC):
             These are arbitrary parameters set by the user, and they do not affect the functionality.
     """
     instance_id: InstanceID
-    user_params: Dict[str, Any]
+    user_params: MappingProxyType = field(
+        compare=True,
+        hash=False,
+        default_factory=lambda: MappingProxyType({})
+    )
+
+    def __post_init__(self):
+        # allow callers to pass a regular dict, but store it as MappingProxyType
+        object.__setattr__(self, 'user_params', MappingProxyType(dict(self.user_params)))
 
     @property
     def job_id(self) -> str:
@@ -347,7 +356,7 @@ class JobInstanceMetadata(ABC):
         return {
             "job_id": self.job_id,
             "run_id": self.run_id,
-            "user_params": self.user_params,
+            "user_params": dict(self.user_params),
         }
 
     @classmethod
