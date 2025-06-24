@@ -13,10 +13,33 @@ class Mode(Enum):
     TAIL = auto()
 
 
+@dataclass(frozen=True)
+class OutputLocation:
+    """
+    Immutable descriptor for a location from which output can be read.
+
+    Attributes:
+        type: str - the kind of location (e.g., "file", "sqlite").
+        source: str - identifier or address of the resource (e.g., file path, table name, URI).
+    """
+    type: str
+    source: str
+
+
 class Output(ABC):
 
     @abstractmethod
     def tail(self, mode: Mode = Mode.TAIL, max_lines: int = 0):
+        pass
+
+    @property
+    @abstractmethod
+    def locations(self):
+        """
+
+        Returns:
+
+        """
         pass
 
 

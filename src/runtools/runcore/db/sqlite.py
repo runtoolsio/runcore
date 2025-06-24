@@ -532,7 +532,7 @@ class SQLite(Persistence):
         def to_tuple(r):
             return (r.metadata.job_id,
                     r.metadata.run_id,
-                    json.dumps(r.metadata.user_params) if r.metadata.user_params else None,
+                    json.dumps(dict(r.metadata.user_params)) if r.metadata.user_params else None,
                     format_dt_sql(r.lifecycle.created_at),
                     format_dt_sql(r.lifecycle.started_at),
                     format_dt_sql(r.lifecycle.termination.terminated_at) if r.lifecycle.termination else None,
