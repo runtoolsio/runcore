@@ -20,7 +20,6 @@ from runtools.runcore.err import RuntoolsException
 
 CONFIG_DIR = 'runtools'
 JOBS_FILE = 'jobs.toml'
-_LOG_FILE = 'runcore.log'
 
 
 def expand_user(file):
@@ -133,33 +132,89 @@ def xdg_config_home() -> Path:
 
 def xdg_config_dirs() -> List[Path]:
     if os.environ.get('XDG_CONFIG_DIRS'):
-        return [Path(path) for path in re.split(r":", os.environ['XDG_CONFIG_DIRS'])]
+        return [Path(p) for p in re.split(r":", os.environ['XDG_CONFIG_DIRS'])]
     else:
         return [Path('/etc/xdg')]
 
 
-def log_file_dir(create: bool) -> Path:
+def log_file_dir(create: bool = False) -> Path:
     """
-    1. Root user: /var/log/runtools
-    2. Non-root user: ${XDG_CACHE_HOME}/runtools or default to ${HOME}/.cache/runtools
+    Returns the directory for general runtools application logs.
 
-    :param create: create path directories if not exist
-    :return: log dir path
+    Behavior:
+    - If running as root: use system-wide log directory `/var/log/runtools`
+    - If non-root user:
+        - Use `${XDG_CACHE_HOME}/runtools` if XDG_CACHE_HOME is set
+        - Otherwise fallback to `${HOME}/.cache/runtools`
+
+    :param create: Whether to create the directory if it does not exist
+    :return: Path to the application log directory
     """
-
     if _is_root():
-        path_ = Path('/var/log')
+        # Root user: use standard system log location
+        path_ = Path("/var/log/runtools")
     else:
-        if os.environ.get('XDG_CACHE_HOME'):
-            path_ = Path(os.environ['XDG_CACHE_HOME'])
-        else:
-            home = Path.home()
-            path_ = home / '.cache'
+        # Non-root: prefer XDG-compliant user cache directory
+        cache_base = os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")
+        path_ = Path(cache_base) / "runtools"
 
     if create:
-        os.makedirs(path_ / 'runtools', exist_ok=True)
+        path_.mkdir(parents=True, exist_ok=True)
 
-    return path_ / 'runtools'
+    return path_
+
+
+def state_dir(create: bool = False) -> Path:
+    """Returns the base directory for storing persistent local state data.
+
+    Root behavior:
+        /var/lib/runtools
+
+    Non-root behavior:
+        $XDG_STATE_HOME/runtools or fallback to ~/.local/state/runtools
+
+    Args:
+        create: If True, create the directory if it doesn't exist.
+
+    Returns:
+        Path to the base state directory.
+    """
+    if _is_root():
+        path_ = Path("/var/lib/runtools")
+    else:
+        base = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
+        path_ = base / "runtools"
+
+    if create:
+        path_.mkdir(parents=True, exist_ok=True)
+
+    return path_
+
+
+def job_log_dir(env: str, job_id: str, create: bool = False) -> Path:
+    """Returns the path to a job log dir under a specific environment.
+
+    Uses:
+    - log_file_dir() for root (system-wide logs)
+    - state_dir() for non-root (persistent local state)
+
+    Path format: {base}/{env}/output/{job_id}
+
+    Args:
+        env: Name of the environment.
+        job_id: Identifier of the job.
+        create: If True, create parent directories as needed.
+
+    Returns:
+        Path to the job log dir.
+    """
+    base_dir = log_file_dir(create=create) if _is_root() else state_dir(create=create)
+    log_file = base_dir / env / "output" / job_id
+
+    if create:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+
+    return log_file
 
 
 """
