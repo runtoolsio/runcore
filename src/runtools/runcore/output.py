@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
-from threading import Lock
+from itertools import count
 from typing import List, Optional
 
 from runtools.runcore import util
@@ -70,17 +70,13 @@ class OutputLine:
 
 
 class OutputLineFactory:
-
     def __init__(self, default_source=None):
         self.default_source = default_source
-        self._atomic_lock = Lock()
-        self._last = 0
+        self._counter = count(1)
 
     def __call__(self, text, is_error=False, source=None) -> OutputLine:
-        with self._atomic_lock:
-            self._last = ordinal = self._last + 1
+        ordinal = next(self._counter)
         return OutputLine(text, ordinal, is_error, source)
-
 
 class OutputObserver(ABC):
 
