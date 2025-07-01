@@ -79,8 +79,8 @@ class ObservableNotification(Generic[O]):
     def remove_observer(self, observer: O) -> None:
         self._prioritized_observers = [(priority, o) for priority, o in self._prioritized_observers if o != observer]
 
-    def observer_context(self, observer: O, priority: int = DEFAULT_OBSERVER_PRIORITY) -> 'ObserverContext[O]':
-        return ObserverContext(self, observer, priority)
+    def observer_context(self, *observers: O, priority: int = DEFAULT_OBSERVER_PRIORITY) -> 'ObserverContext[O]':
+        return ObserverContext(self, *observers, priority=priority)
 
 
 class _Proxy(Generic[O]):
@@ -118,14 +118,15 @@ class _Proxy(Generic[O]):
 
 class ObserverContext(Generic[O]):
 
-    def __init__(self, notification: ObservableNotification[O], observer: O, priority: int):
+    def __init__(self, notification: ObservableNotification[O], *observers: O, priority: int = DEFAULT_OBSERVER_PRIORITY):
         self._notification = notification
-        self._observer = observer
+        self._observers = observers
         self._priority = priority
 
     def __enter__(self) -> O:
-        self._notification.add_observer(self._observer, self._priority)
-        return self._observer
+        for observer in self._observers:
+            self._notification.add_observer(observer, self._priority)
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self._notification.remove_observer(self._observer)
+        for observer in self._observers:
+            self._notification.remove_observer(observer)
