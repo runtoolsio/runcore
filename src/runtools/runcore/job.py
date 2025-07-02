@@ -13,11 +13,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import timedelta
 from enum import Enum, auto
-from types import MappingProxyType
 from typing import Dict, Any, List, Optional, Tuple, Iterator, ClassVar, Set, Callable
 
 from runtools.runcore import util
-from runtools.runcore.output import OutputLine, Output
+from runtools.runcore.output import OutputLine, Output, OutputLocation
 from runtools.runcore.run import TerminationStatus, Fault, PhaseDetail, Stage, RunLifecycle, StopReason
 from runtools.runcore.status import Status
 from runtools.runcore.util import MatchingStrategy, format_dt_iso, unique_timestamp_hex
@@ -513,6 +512,7 @@ class JobRun:
     metadata: JobInstanceMetadata
     lifecycle: RunLifecycle
     phases: Tuple[PhaseDetail, ...]
+    output_locations: Tuple[OutputLocation, ...] = ()
     faults: Tuple[Fault, ...] = ()
     status: Optional[Status] = None
 

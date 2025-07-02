@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
 from itertools import count
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 from runtools.runcore import util
 from runtools.runcore.err import InvalidStateError
@@ -24,6 +24,21 @@ class OutputLocation:
     """
     type: str
     source: str
+
+    def serialize(self) -> Dict[str, str]:
+        """Serialize the location to a dictionary."""
+        return {
+            "type": self.type,
+            "source": self.source
+        }
+
+    @classmethod
+    def deserialize(cls, data: Dict[str, str]) -> 'OutputLocation':
+        """Deserialize a location from a dictionary."""
+        return cls(
+            type=data["type"],
+            source=data["source"]
+        )
 
 
 class Output(ABC):
@@ -77,6 +92,7 @@ class OutputLineFactory:
     def __call__(self, text, is_error=False, source=None) -> OutputLine:
         ordinal = next(self._counter)
         return OutputLine(text, ordinal, is_error, source)
+
 
 class OutputObserver(ABC):
 
