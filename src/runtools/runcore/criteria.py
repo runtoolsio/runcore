@@ -128,6 +128,11 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         # Handle plain text (match against job_id or run_id)
         return cls(pattern, pattern, True, strategy)
 
+    @classmethod
+    def parse_strict(cls, id_string):
+        instance_id = InstanceID.parse(id_string)
+        return cls(instance_id.job_id, instance_id.run_id, match_any_field=False, strategy=MatchingStrategy.EXACT)
+
     def _matches_id(self, actual: str, criteria: str) -> bool:
         """
         Internal method to match a single ID against its criteria.
@@ -602,6 +607,12 @@ class JobRunCriteria(MatchCriteria[JobRun]):
         new = cls()
         for p in patterns:
             new += MetadataCriterion.parse(p, strategy)
+        return new
+
+    @classmethod
+    def parse_strict(cls, id_string) -> "JobRunCriteria":
+        new = cls()
+        new += MetadataCriterion.parse_strict(id_string)
         return new
 
     @classmethod
