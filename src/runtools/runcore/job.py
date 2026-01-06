@@ -317,7 +317,7 @@ class InstanceID(Sequence):
 
 
 @dataclass(frozen=True)
-class JobInstanceMetadata(ABC):
+class JobInstanceMetadata:
     """
     A dataclass that contains descriptive information about a specific job instance. This object is designed
     to represent essential information about a job run in a compact and serializable format.
@@ -422,6 +422,7 @@ class JobInstance(abc.ABC):
     @abc.abstractmethod
     def snapshot(self):
         """
+        # TODO Rename to as_job_run()?
         Creates a consistent, thread-safe snapshot of the job instance's current state.
 
         Returns:

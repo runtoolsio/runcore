@@ -33,7 +33,7 @@ from runtools.runcore.err import run_isolated_collect_exceptions
 from runtools.runcore.job import JobInstanceObservable, JobInstance, InstanceLifecycleObserver, InstanceLifecycleEvent, \
     JobRun
 from runtools.runcore.listening import EventReceiver, InstanceEventReceiver
-from runtools.runcore.remote import JobInstanceRemote
+from runtools.runcore.proxy import JobInstanceProxy
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
 
 log = logging.getLogger(__name__)
@@ -475,7 +475,7 @@ class LocalConnector(EnvironmentConnector):
 
             server_address = result.server_address
             for job_run in result.retval:
-                instances.append(JobInstanceRemote(self._client, server_address, job_run.instance_id))
+                instances.append(JobInstanceProxy(self._client, server_address, job_run.instance_id))
 
         return instances
 

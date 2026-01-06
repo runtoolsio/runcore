@@ -45,6 +45,7 @@ class Output(ABC):
 
     @abstractmethod
     def tail(self, mode: Mode = Mode.TAIL, max_lines: int = 0):
+        # TODO Rename to tail buffer?
         pass
 
     @property
