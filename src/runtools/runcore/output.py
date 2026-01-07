@@ -61,27 +61,40 @@ class Output(ABC):
 
 @dataclass(frozen=True)
 class OutputLine:
-    text: str
+    """
+    A single unit of output from a job, supporting both plain text and structured data.
+
+    Attributes:
+        message: Human-readable text content
+        ordinal: Sequence number for ordering
+        is_error: Whether this is error output (stderr)
+        source: Optional identifier of the output source
+        fields: Structured key-value data (e.g., from logging extras)
+    """
+    message: str
     ordinal: int
     is_error: bool = False
     source: Optional[str] = None
+    fields: Dict[str, any] = None
 
     @classmethod
     def deserialize(cls, data: dict) -> 'OutputLine':
         return cls(
-            text=data["text"],
+            message=data["message"],
             ordinal=data["ordinal"],
             is_error=data["is_error"],
             source=data.get("source"),
+            fields=data.get("fields"),
         )
 
     def serialize(self, truncate_length: Optional[int] = None, truncated_suffix: str = ".. (truncated)"):
-        text = util.truncate(self.text, truncate_length, truncated_suffix) if truncate_length is not None else self.text
+        message = util.truncate(self.message, truncate_length, truncated_suffix) if truncate_length is not None else self.message
         return {
-            "text": text,
+            "message": message,
             "ordinal": self.ordinal,
             "is_error": self.is_error,
-            "source": self.source
+            "source": self.source,
+            "fields": self.fields,
         }
 
 
@@ -90,9 +103,9 @@ class OutputLineFactory:
         self.default_source = default_source
         self._counter = count(1)
 
-    def __call__(self, text, is_error=False, source=None) -> OutputLine:
+    def __call__(self, message, is_error=False, source=None, fields=None) -> OutputLine:
         ordinal = next(self._counter)
-        return OutputLine(text, ordinal, is_error, source)
+        return OutputLine(message, ordinal, is_error, source or self.default_source, fields)
 
 
 class OutputObserver(ABC):

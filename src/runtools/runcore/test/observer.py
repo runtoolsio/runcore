@@ -106,5 +106,5 @@ class TestOutputObserver(InstanceOutputObserver):
         self.outputs.append(event)
 
     @property
-    def last_text(self):
-        return self.outputs[-1].output_line.text
+    def last_message(self):
+        return self.outputs[-1].output_line.message
