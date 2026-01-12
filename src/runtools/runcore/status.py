@@ -146,28 +146,22 @@ class Status:
 
     def __str__(self) -> str:
         """
-        Formats a status line showing active operations and the last event.
-        Format: [op1] [op2]...  last_event_text  (!warning1, warning2)
+        Formats a status line showing active operations or the last event.
+        Format: [op1] [op2]  (!warning1, warning2)
+        Or if no active operations: last_event_text  (!warning1, warning2)
         If there's a result, shows: result  (!warning1, warning2)
         """
         parts = []
 
-        # Add result or active operations
         if self.result:
             parts.append(self.result.message)
         else:
-            # Add active operations
             active_ops = [str(op) for op in self.operations if op.is_active]
             if active_ops:
                 parts.append(" ".join(active_ops))
-
-            # Add last event if present
-            if self.last_event:
-                if parts:  # If we have operations, add the separator
-                    parts[-1] = parts[-1] + "..."  # Append directly to last part
+            elif self.last_event:
                 parts.append(self.last_event.message)
 
-        # Add warnings if present
         if self.warnings:
             warnings_str = ", ".join(w.message for w in self.warnings)
             parts.append(f"(!{warnings_str})")
