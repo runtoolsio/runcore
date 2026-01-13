@@ -714,6 +714,54 @@ class JobRunCriteria(MatchCriteria[JobRun]):
         self._last_lc_criterion().ended = DateTimeRange(since, until, until_incl)
         return self
 
+    def add_date_filters(self, for_stage: Stage, from_date=None, to_date=None,
+                         today=False, yesterday=False, week=False, fortnight=False,
+                         three_weeks=False, four_weeks=False, month=False, days_back=None):
+        """
+        Apply date filtering options using OR logic on specified timestamp field.
+
+        Args:
+            for_stage: Which timestamp field to filter on (CREATED, RUNNING, ENDED)
+            from_date: Start date string
+            to_date: End date string
+            today: Filter for today
+            yesterday: Filter for yesterday
+            week: Filter for last week
+            fortnight: Filter for last 2 weeks
+            three_weeks: Filter for last 3 weeks
+            four_weeks: Filter for last 4 weeks
+            month: Filter for last month
+            days_back: Filter for N days back
+
+        Returns:
+            Self for method chaining
+        """
+        date_ranges = []
+
+        if from_date or to_date:
+            date_ranges.append(DateTimeRange.parse_to_utc(from_date, to_date))
+        if today:
+            date_ranges.append(DateTimeRange.today(to_utc=True))
+        if yesterday:
+            date_ranges.append(DateTimeRange.yesterday(to_utc=True))
+        if week:
+            date_ranges.append(DateTimeRange.week_back(to_utc=True))
+        if fortnight:
+            date_ranges.append(DateTimeRange.days_range(-14, to_utc=True))
+        if three_weeks:
+            date_ranges.append(DateTimeRange.days_range(-21, to_utc=True))
+        if four_weeks:
+            date_ranges.append(DateTimeRange.days_range(-28, to_utc=True))
+        if month:
+            date_ranges.append(DateTimeRange.days_range(-31, to_utc=True))
+        if days_back is not None:
+            date_ranges.append(DateTimeRange.days_range(-days_back, to_utc=True))
+
+        for date_range in date_ranges:
+            self += LifecycleCriterion().set_date_range(date_range, for_stage)
+
+        return self
+
 
 class SortOption(str, Enum):
     """
