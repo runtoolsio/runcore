@@ -1,7 +1,5 @@
 """
 This module provides various criteria objects used to match job instances or their parts.
-
-TODO: Remove immutable properties
 """
 
 from abc import abstractmethod, ABC

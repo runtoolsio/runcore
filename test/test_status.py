@@ -36,7 +36,7 @@ def test_status_str():
     assert str(Status(None, [op], [], None)) == "[Copy 45/100 files (45%)]"
 
     # Test with operation and event
-    assert str(Status(Event("Working batch 2", now), [op], [], None)) == "[Copy 45/100 files (45%)]...  Working batch 2"
+    assert str(Status(Event("Working batch 2", now), [op], [], None)) == "[Copy 45/100 files (45%)]"
 
     # Test with multiple operations and event
     ops = [
@@ -44,7 +44,7 @@ def test_status_str():
         Operation("Validate", 20, 50, "records", now, now)
     ]
     assert str(Status(Event("Processing batch 2", now), ops, [],
-                      None)) == "[Copy 45/100 files (45%)] [Validate 20/50 records (40%)]...  Processing batch 2"
+                      None)) == "[Copy 45/100 files (45%)] [Validate 20/50 records (40%)]"
 
     # Test with finished operation (should not show in status)
     finished_op = Operation("Copy", 100, 100, "files", now, now, is_active=False)
@@ -71,7 +71,7 @@ def test_status_str_with_warnings():
 
     assert str(
         Status(Event("Processing batch 2", now), [op], [Event("Low disk space", now), Event("Network unstable", now)],
-               None)) == "[Copy 45/100 files (45%)]...  Processing batch 2  (!Low disk space, Network unstable)"
+               None)) == "[Copy 45/100 files (45%)]  (!Low disk space, Network unstable)"
 
     # Test that warnings are included with result
     assert str(Status(Event("Processing", now), [op], [Event("Low disk space", now)],

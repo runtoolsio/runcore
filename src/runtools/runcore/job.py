@@ -420,9 +420,8 @@ class JobInstance(abc.ABC):
         return self.find_phase_control(lambda phase: phase.phase_id == phase_id)
 
     @abc.abstractmethod
-    def snapshot(self):
+    def to_run(self):
         """
-        # TODO Rename to as_job_run()?
         Creates a consistent, thread-safe snapshot of the job instance's current state.
 
         Returns:
@@ -985,9 +984,9 @@ class JobInstanceDelegate(JobInstance):
         """Delegates to the wrapped instance's find_phase_control_by_id method"""
         return self._wrapped.find_phase_control_by_id(phase_id)
 
-    def snapshot(self) -> JobRun:
+    def to_run(self) -> JobRun:
         """Delegates to the wrapped instance's snapshot method"""
-        return self._wrapped.snapshot()
+        return self._wrapped.to_run()
 
     @property
     def output(self):
