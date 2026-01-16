@@ -147,6 +147,10 @@ class StandardLocalConnectorLayout(LocalConnectorLayout):
         """
         return cls(*ensure_component_dir(env_id, connector_dir_prefix, root_dir))
 
+    @classmethod
+    def from_config(cls, env_config, connector_dir_prefix: str = "connector_"):
+        return cls.create(env_config.id, env_config.layout.root_dir, connector_dir_prefix)
+
     @property
     def client_socket_path(self) -> Path:
         """
@@ -291,6 +295,7 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
 
             def __init__(self):
                 self._matched_runs: List[JobRun] = []
+                self._matched_ids: set = set()
                 self._event = Event()
                 self._watch_lock = Lock()
                 self._timed_out = False
@@ -324,12 +329,16 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
                 self._event.set()
 
             def _add_matched(self, matched):
-                # TODO Check for duplicates
                 if self.remaining_count == 0:
                     return
-                self._matched_runs.extend(matched[:self.remaining_count])
-                if self.remaining_count == 0:
-                    self._close()
+                for run in matched:
+                    if run.instance_id in self._matched_ids:
+                        continue
+                    self._matched_ids.add(run.instance_id)
+                    self._matched_runs.append(run)
+                    if self.remaining_count == 0:
+                        self._close()
+                        return
 
             def _watch_history(self):
                 runs = connector.read_history_runs(run_match, limit=stop_count)
@@ -381,7 +390,7 @@ def create(env_config: EnvironmentConfigUnion):
             persistence = db.create_persistence(env_config.id, env_config.persistence)
         else:
             persistence = NullPersistence()
-        layout = StandardLocalConnectorLayout.create(env_config.id, env_config.layout.root_dir)  # TODO fact fnc for cfg
+        layout = StandardLocalConnectorLayout.from_config(env_config)
         return local(env_config.id, persistence, layout)
 
     raise AssertionError(f"Unsupported environment type: {env_config.type}. This is a programming error.")
@@ -470,7 +479,8 @@ class LocalConnector(EnvironmentConnector):
 
         for result in run_results:
             if result.error:
-                # TODO Skip servers with errors
+                log.warning(f"event=[remote_call_error] op=[get_instances] server=[{result.server_address}]",
+                            exc_info=result.error)
                 continue
 
             server_address = result.server_address

@@ -23,11 +23,6 @@ from runtools.runcore.util import MatchingStrategy, format_dt_iso, unique_timest
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 
 
-class JobType(Enum):
-    BATCH = auto()
-    LONG_RUNNING = auto()
-
-
 class Job:
     """
     Represents a job definition.
@@ -40,7 +35,7 @@ class Job:
         _properties (Dict[str, str]): Additional properties or metadata associated with the job.
     """
 
-    def __init__(self, job_id: str, job_type: JobType, properties: Dict[str, str] = None):
+    def __init__(self, job_id: str, properties: Dict[str, str] = None):
         """
         Initialize a new Job object.
 
@@ -49,7 +44,6 @@ class Job:
             properties (Dict[str, str], optional): Additional properties or metadata. Defaults to an empty dictionary.
         """
         self._id = job_id
-        self._type = job_type
         self._properties = properties or {}
 
     @property
@@ -61,16 +55,6 @@ class Job:
             str: The job's unique identifier.
         """
         return self._id
-
-    @property
-    def type(self) -> JobType:
-        """
-        Returns the type of the job.
-
-        Returns:
-            str: The job's type.
-        """
-        return self._type
 
     @property
     def properties(self) -> Dict[str, str]:
@@ -321,7 +305,6 @@ class JobInstanceMetadata:
     """
     A dataclass that contains descriptive information about a specific job instance. This object is designed
     to represent essential information about a job run in a compact and serializable format.
-    TODO Add job type
 
     Attributes:
         instance_id (InstanceID):
@@ -412,9 +395,7 @@ class JobInstance(abc.ABC):
 
     @abc.abstractmethod
     def find_phase_control(self, phase_filter):
-        """
-        TODO
-        """
+        """Find a phase control matching the given filter."""
 
     def find_phase_control_by_id(self, phase_id: str):
         return self.find_phase_control(lambda phase: phase.phase_id == phase_id)

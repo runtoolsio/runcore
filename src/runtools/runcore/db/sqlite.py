@@ -261,7 +261,9 @@ class SQLite(Persistence):
                          ''')
             c.execute('''CREATE INDEX job_id_index ON history (job_id)''')
             c.execute('''CREATE INDEX run_id_index ON history (run_id)''')
-            c.execute('''CREATE INDEX ended_index ON history (ended)''')  # TODO created + exec_time idx too
+            c.execute('''CREATE INDEX ended_index ON history (ended)''')
+            c.execute('''CREATE INDEX created_index ON history (created)''')
+            c.execute('''CREATE INDEX exec_time_index ON history (exec_time)''')
             log.debug('event=[table_created] table=[history]')
             self._conn.commit()
 

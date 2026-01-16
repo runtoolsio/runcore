@@ -258,7 +258,7 @@ def _load_env_config(path_provider, *env_ids: str) -> Dict[str, ConfigDict]:
     """
     config_paths = list(path_provider)
     if not config_paths:
-        raise ConfigFileNotFoundError("No environment configuration files found")  # TODO Check if needed
+        raise ConfigFileNotFoundError("No environment configuration files found")
 
     id_to_config: Dict[str, ConfigDict] = {}
     for env_cfg_path in reversed(config_paths):

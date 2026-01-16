@@ -281,7 +281,7 @@ class DateTimeRange:
 
 
 def to_naive_utc(dt):
-    return dt.astimezone().astimezone(timezone.utc).replace(tzinfo=None)  # TODO better timezone aware?
+    return dt.astimezone().astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def parse(str_val):

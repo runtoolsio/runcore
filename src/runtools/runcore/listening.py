@@ -94,8 +94,10 @@ class EventReceiver(SocketServer):
         if event_type in self._event_handlers:
             handlers.append(self._event_handlers[event_type])
         for handler in handlers:
-            # TODO catch exc
-            handler(event_type, instance_meta, req_body_json.get("event"))
+            try:
+                handler(event_type, instance_meta, req_body_json.get("event"))
+            except Exception:
+                log.exception("event=[event_handler_failed] event_type=[%s] instance=[%s]", event_type, instance_meta)
 
 
 class InstanceEventReceiver(JobInstanceNotifications):
