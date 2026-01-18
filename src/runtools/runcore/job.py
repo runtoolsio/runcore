@@ -444,7 +444,7 @@ class JobInstance(abc.ABC):
         self.remove_observer_output(observer)
 
     @abc.abstractmethod
-    def add_observer_lifecycle(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, reply_last_event=False):
+    def add_observer_lifecycle(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
         pass
 
     @abc.abstractmethod
@@ -990,9 +990,9 @@ class JobInstanceDelegate(JobInstance):
         """Delegates to the wrapped instance's remove_observer_all_events method"""
         self._wrapped.remove_observer_all_events(observer)
 
-    def add_observer_lifecycle(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, reply_last_event=False):
+    def add_observer_lifecycle(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
         """Delegates to the wrapped instance's add_observer_stage method"""
-        self._wrapped.add_observer_lifecycle(observer, priority, reply_last_event)
+        self._wrapped.add_observer_lifecycle(observer, priority)
 
     def remove_observer_lifecycle(self, observer):
         """Delegates to the wrapped instance's remove_observer_stage method"""

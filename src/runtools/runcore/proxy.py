@@ -63,7 +63,7 @@ class JobInstanceProxy(JobInstance):
     def interrupted(self):
         pass
 
-    def add_observer_lifecycle(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, reply_last_event=False):
+    def add_observer_lifecycle(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
         pass
 
     def remove_observer_lifecycle(self, observer):
