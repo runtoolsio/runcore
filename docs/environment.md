@@ -12,7 +12,7 @@ Files are searched in the following locations, listed from **lowest to highest p
 
 | Priority | Location | Description |
 |----------|----------|-------------|
-| 1 (lowest) | Packaged default | Built-in default shipped with runcore |
+| 1 (lowest) | [Packaged default](https://github.com/runtoolsio/runcore/blob/main/src/runtools/runcore/config/env.toml) | Built-in default shipped with runcore |
 | 2 | `/etc/runtools/` | System-wide configuration |
 | 3 | `/etc/xdg/runtools/` | XDG system configuration |
 | 4 | `~/.config/runtools/` | User configuration |
@@ -77,6 +77,8 @@ timeout = 5.0             # Optional: database-specific parameters
 ### Local
 
 A local environment is restricted to a single machine. Communication between job instances and connectors happens via Unix domain sockets, which only work on the same host. This is the standard environment type for running and monitoring jobs.
+
+The default `local` environment is defined in the [packaged configuration](https://github.com/runtoolsio/runcore/blob/main/src/runtools/runcore/config/env.toml) and can be customized by adding your own `env.toml` file in any of the higher-priority locations.
 
 ### Isolated
 

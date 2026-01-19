@@ -4,4 +4,4 @@ Core library for managing and monitoring jobs. Defines the runspec API for commu
 
 ## Documentation
 
-- [Environment Configuration](docs/configuration.md)
+- [Environment Configuration](docs/environment.md)
