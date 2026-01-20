@@ -106,61 +106,126 @@ class PersistenceConfig(BaseModel):
 
 
 class Persistence(ABC):
+    """
+    Abstract base class defining the storage interface for job run history.
+
+    Environment nodes use persistence (via :class:`PersistingObserver`) to automatically store job runs
+    when they complete. Connectors use persistence to read job history for querying and monitoring.
+
+    Implementations must provide methods for reading, writing, and cleaning up job run records.
+    The default implementation is :class:`~runtools.runcore.db.sqlite.SQLite`. Use :class:`NullPersistence`
+    when persistence should be disabled.
+
+    Lifecycle:
+        Call :meth:`open` before any read/write operations, and :meth:`close` when done.
+        Supports context manager protocol for automatic resource management.
+
+    See Also:
+        :func:`create_persistence`: Factory function to create instances from configuration.
+        :class:`PersistingObserver`: Observer that auto-persists job runs on completion.
+    """
 
     @property
     def enabled(self):
+        """Whether this persistence instance is enabled. Returns False for :class:`NullPersistence`."""
         return True
 
     def open(self):
+        """Open the persistence connection. Must be called before any read/write operations."""
         pass
 
     @abstractmethod
     def read_history_runs(self, run_match=None, sort=SortOption.CREATED, *, asc, limit, offset, last=False):
+        """
+        Fetch ended job runs matching the specified criteria.
+
+        Loads all matching records into memory. For large result sets, use :meth:`iter_history_runs` instead.
+
+        Args:
+            run_match (JobRunCriteria): Criteria to filter job instances. None returns all records.
+            sort (SortOption): Field to sort by (default: CREATED).
+            asc (bool): Sort ascending if True, descending if False.
+            limit (int): Maximum records to return (-1 for unlimited).
+            offset (int): Number of records to skip (-1 for no offset).
+            last (bool): If True, return only the most recent run for each job.
+
+        Returns:
+            List[JobRun]: Collection of matching job runs.
+        """
         pass
 
     @abstractmethod
     def iter_history_runs(self, run_match=None, sort=SortOption.CREATED, *,
                           asc=True, limit=-1, offset=-1, last=False):
         """
-        Iterate over ended job instances based on specified criteria.
+        Iterate over ended job runs matching the specified criteria.
 
         This method provides memory-efficient access to job history by yielding
         results one at a time rather than loading all records into memory.
 
         Args:
-            run_match: Criteria to match specific job instances
-            sort: Field by which records are sorted
-            asc: Sort order (True for ascending)
-            limit: Maximum number of records (-1 for unlimited)
-            offset: Number of records to skip (-1 for no offset)
-            last: If True, only the last record for each job
-
-        Yields:
-            JobRun: Individual job instances matching the criteria
+            run_match (JobRunCriteria): Criteria to match specific job instances. None returns all records.
+            sort (SortOption): Field by which records are sorted.
+            asc (bool): Sort order (True for ascending).
+            limit (int): Maximum number of records (-1 for unlimited).
+            offset (int): Number of records to skip (-1 for no offset).
+            last (bool): If True, only the last record for each job.
 
         Returns:
-            Iterator[JobRun]: An iterator over JobRun instances.
+            Iterator[JobRun]: Iterator over matching job run records.
         """
         pass
 
     @abstractmethod
     def read_history_stats(self, run_match=None):
+        """
+        Compute aggregate statistics for jobs matching the specified criteria.
+
+        Args:
+            run_match (JobRunCriteria): Criteria to filter job instances. None includes all records.
+
+        Returns:
+            List[JobStats]: Statistics for each job including count, timing, and failure information.
+        """
         pass
 
     @abstractmethod
     def store_job_runs(self, *job_runs):
+        """
+        Store one or more completed job runs.
+
+        Args:
+            *job_runs (JobRun): Job run instances to persist.
+        """
         pass
 
     @abstractmethod
     def remove_job_runs(self, run_match):
+        """
+        Remove job runs matching the specified criteria.
+
+        Args:
+            run_match (JobRunCriteria): Criteria identifying which job runs to delete.
+
+        Raises:
+            ValueError: If no criteria provided (to prevent accidental deletion of all records).
+        """
         pass
 
     @abstractmethod
     def clean_up(self, max_records, max_age):
+        """
+        Remove old records based on count or age limits.
+
+        Args:
+            max_records (int): Maximum number of records to keep (-1 to skip this check).
+            max_age (datetime.timedelta): Maximum age of records. Records older than this are deleted. None to skip.
+        """
         pass
 
     @abstractmethod
     def close(self):
+        """Close the persistence connection and release resources."""
         pass
 
 
@@ -217,4 +282,9 @@ class PersistingObserver(InstanceLifecycleObserver):
 
 
 class PersistenceDisabledError(RuntoolsException):
+    """
+    Raised when attempting to read from or query a disabled persistence layer.
+
+    This error is thrown by :class:`NullPersistence` to distinguish between "no data found" and "persistence is disabled".
+    """
     pass
