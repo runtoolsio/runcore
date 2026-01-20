@@ -1,3 +1,26 @@
+"""
+Persistence layer for storing and retrieving job run history.
+
+This package provides a pluggable persistence abstraction with database-specific implementations
+loaded dynamically via :func:`load_database_module`. The default implementation uses SQLite.
+
+Environment nodes use :class:`PersistingObserver` to automatically store job runs on completion,
+while connectors use persistence for reading job run history.
+
+Key Components:
+    Persistence: Abstract base class defining the storage interface for job runs.
+    NullPersistence: No-op implementation used when persistence is disabled.
+    PersistenceConfig: Pydantic model for configuring persistence settings.
+    PersistingObserver: Lifecycle observer that auto-persists job runs on completion.
+
+Factory Functions:
+    create_persistence: Creates a Persistence instance from config.
+    load_database_module: Dynamically loads a database backend module.
+
+See Also:
+    runtools.runcore.db.sqlite: SQLite implementation with batch fetching.
+"""
+
 import importlib
 import pkgutil
 from abc import ABC, abstractmethod
@@ -16,10 +39,20 @@ _db_modules = {}
 
 def load_database_module(db_type):
     """
-    Loads the database module specified by the parameter.
+    Load a database backend module by type name.
+
+    Searches for a submodule named `db_type` within the ``runtools.runcore.db`` package
+    and returns it. The module is expected to provide a ``create()`` factory function
+    that returns a :class:`Persistence` instance.
 
     Args:
-        db_type (str): Type of the database to be loaded
+        db_type: Database type identifier (e.g., "sqlite").
+
+    Returns:
+        The loaded database module.
+
+    Raises:
+        DatabaseNotFoundError: If no matching module is found.
     """
     db_module = _db_modules.get(db_type)
     if db_module:
@@ -33,11 +66,21 @@ def load_database_module(db_type):
 
 
 def create_persistence(env_id, persistence_config):
+    """
+    Create a Persistence instance from configuration.
+
+    Args:
+        env_id: Environment identifier, used to locate the database for the environment when not provided in the config.
+        persistence_config: A :class:`PersistenceConfig` specifying the database type and settings.
+
+    Returns:
+        A :class:`Persistence` instance, or None if persistence is disabled.
+    """
     if not persistence_config.enabled:
         return None
 
-    return load_database_module(persistence_config.type).create(env_id, persistence_config.database,
-                                                                **persistence_config.params)
+    return load_database_module(persistence_config.type).create(
+        env_id, persistence_config.database, **persistence_config.params)
 
 
 class DatabaseNotFoundError(RuntoolsException):
