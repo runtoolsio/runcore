@@ -34,6 +34,8 @@ from runtools.runcore.err import RuntoolsException
 from runtools.runcore.job import InstanceLifecycleObserver, InstanceLifecycleEvent
 from runtools.runcore.run import Stage
 
+PERSISTING_OBSERVER_PRIORITY = 10  # High priority (low number) to ensure persistence before event dispatch
+
 _db_modules = {}
 
 
@@ -264,15 +266,26 @@ class NullPersistence(Persistence):
 
 
 class PersistingObserver(InstanceLifecycleObserver):
+    """
+    Lifecycle observer that automatically persists job runs when they complete.
 
-    def __init__(self, persistence):
-        """
-        TODO Ensure highest priority so run is stored before other observers are notified
-        This is to prevent race condition in commands like wait:
+    Important:
+        Register this observer with high priority (low number) to ensure runs are stored before
+        other observers are notified. This prevents race conditions where another observer checks
+        persistence for a run that hasn't been stored yet.
+
+    Example race condition with wait command if priority is not set correctly::
+
         1. Run ended event -> notification before wait set up its observer
         2. Wait set up observer now and check persistence <-- no event
         3. Run stored to persistence
         4. -> Event missed by wait <-
+    """
+
+    def __init__(self, persistence):
+        """
+        Args:
+            persistence (Persistence): The persistence instance to store job runs to.
         """
         self._persistence = persistence
 
