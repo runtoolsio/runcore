@@ -144,40 +144,47 @@ def _build_where_clause(run_match, alias=''):
         conditions.append('(' + ' OR '.join(metadata_conditions) + ')')
         params.extend(metadata_params)
 
-    def add_datetime_conditions(column: str, dt_range) -> list:
+    def add_datetime_conditions(column: str, dt_range) -> tuple[list[str], list]:
         dt_conditions = []
+        dt_params = []
         if not dt_range:
-            return dt_conditions
+            return dt_conditions, dt_params
 
         # Check if this is an unbounded range that just checks for existence
         if dt_range.is_unbounded():
             dt_conditions.append(f"{alias}{column} IS NOT NULL")
-            return dt_conditions
+            return dt_conditions, dt_params
 
         if dt_range.since:
-            dt_conditions.append(f"{alias}{column} >= '{format_dt_sql(dt_range.since)}'")
+            dt_conditions.append(f"{alias}{column} >= ?")
+            dt_params.append(format_dt_sql(dt_range.since))
         if dt_range.until:
             if dt_range.until_included:
-                dt_conditions.append(f"{alias}{column} <= '{format_dt_sql(dt_range.until)}'")
+                dt_conditions.append(f"{alias}{column} <= ?")
             else:
-                dt_conditions.append(f"{alias}{column} < '{format_dt_sql(dt_range.until)}'")
-        return dt_conditions
+                dt_conditions.append(f"{alias}{column} < ?")
+            dt_params.append(format_dt_sql(dt_range.until))
+        return dt_conditions, dt_params
 
-    def add_time_range_conditions(time_range) -> list:
+    def add_time_range_conditions(time_range) -> tuple[list[str], list]:
         """Add SQL conditions for TimeRange on exec_time column."""
         conditions_ = []
+        params_ = []
         if time_range.min is not None:
-            conditions_.append(f"{alias}exec_time >= {time_range.min.total_seconds()}")
+            conditions_.append(f"{alias}exec_time >= ?")
+            params_.append(time_range.min.total_seconds())
         if time_range.max is not None:
-            conditions_.append(f"{alias}exec_time <= {time_range.max.total_seconds()}")
-        return conditions_
+            conditions_.append(f"{alias}exec_time <= ?")
+            params_.append(time_range.max.total_seconds())
+        return conditions_, params_
 
-    def add_lifecycle_conditions(lifecycle_criterion: LifecycleCriterion) -> list:
+    def add_lifecycle_conditions(lifecycle_criterion: LifecycleCriterion) -> tuple[list[str], list]:
         """Add SQL conditions for lifecycle criteria."""
         if not lifecycle_criterion:
-            return []
+            return [], []
 
         lifecycle_conditions = []
+        lifecycle_params = []
 
         if lifecycle_criterion.stage:
             match lifecycle_criterion.stage:
@@ -192,33 +199,46 @@ def _build_where_clause(run_match, alias=''):
                     lifecycle_conditions.append(f"{alias}ended IS NOT NULL")
 
         if lifecycle_criterion.created:
-            lifecycle_conditions.extend(add_datetime_conditions('created', lifecycle_criterion.created))
+            conds, prms = add_datetime_conditions('created', lifecycle_criterion.created)
+            lifecycle_conditions.extend(conds)
+            lifecycle_params.extend(prms)
         if lifecycle_criterion.started:
-            lifecycle_conditions.extend(add_datetime_conditions('started', lifecycle_criterion.started))
+            conds, prms = add_datetime_conditions('started', lifecycle_criterion.started)
+            lifecycle_conditions.extend(conds)
+            lifecycle_params.extend(prms)
         if lifecycle_criterion.ended:
-            lifecycle_conditions.extend(add_datetime_conditions('ended', lifecycle_criterion.ended))
+            conds, prms = add_datetime_conditions('ended', lifecycle_criterion.ended)
+            lifecycle_conditions.extend(conds)
+            lifecycle_params.extend(prms)
 
         if lifecycle_criterion.total_run_time:
-            lifecycle_conditions.extend(add_time_range_conditions(lifecycle_criterion.total_run_time))
+            conds, prms = add_time_range_conditions(lifecycle_criterion.total_run_time)
+            lifecycle_conditions.extend(conds)
+            lifecycle_params.extend(prms)
 
         if lifecycle_criterion.termination:
             term = lifecycle_criterion.termination
             if term.status:
-                lifecycle_conditions.append(f"{alias}termination_status = '{term.status.name}'")
+                lifecycle_conditions.append(f"{alias}termination_status = ?")
+                lifecycle_params.append(term.status.value)
 
             if term.outcome != Outcome.ANY:
                 start, end = term.outcome.value.start, term.outcome.value.stop
-                lifecycle_conditions.append(f"({alias}termination_status BETWEEN {start} AND {end})")
+                lifecycle_conditions.append(f"({alias}termination_status BETWEEN ? AND ?)")
+                lifecycle_params.extend([start, end])
 
             if term.ended_range:
-                lifecycle_conditions.extend(add_datetime_conditions('ended', term.ended_range))
+                conds, prms = add_datetime_conditions('ended', term.ended_range)
+                lifecycle_conditions.extend(conds)
+                lifecycle_params.extend(prms)
 
-        return lifecycle_conditions
+        return lifecycle_conditions, lifecycle_params
 
     for lc in run_match.lifecycle_criteria:
-        phase_conditions = []
-        phase_conditions.extend(add_lifecycle_conditions(lc))
-        conditions.append('(' + ' AND '.join(phase_conditions) + ')')
+        phase_conditions, phase_params = add_lifecycle_conditions(lc)
+        if phase_conditions:
+            conditions.append('(' + ' AND '.join(phase_conditions) + ')')
+            params.extend(phase_params)
 
     return (" WHERE " + " AND ".join(conditions), params) if conditions else ("", [])
 
