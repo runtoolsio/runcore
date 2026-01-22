@@ -299,6 +299,7 @@ class SQLite(Persistence):
             c.execute('''CREATE INDEX exec_time_index ON history (exec_time)''')
             log.debug('event=[table_created] table=[history]')
             self._conn.commit()
+        c.close()
 
     def read_history_runs(self, run_match=None, sort=SortOption.ENDED, *,
                           asc=True, limit=-1, offset=-1, last=False) -> JobRuns:
@@ -489,6 +490,7 @@ class SQLite(Persistence):
     def _max_rows(self, limit):
         c = self._conn.execute("SELECT COUNT(*) FROM history")
         count = c.fetchone()[0]
+        c.close()
         if count > limit:
             self._conn.execute(
                 "DELETE FROM history WHERE rowid not in (SELECT rowid FROM history ORDER BY ended DESC LIMIT (?))",
@@ -497,7 +499,7 @@ class SQLite(Persistence):
 
     def _delete_old_jobs(self, max_age):
         self._conn.execute("DELETE FROM history WHERE ended < (?)",
-                           ((datetime.datetime.now(tz=timezone.utc) - max_age),))
+                           (format_dt_sql(datetime.datetime.now(tz=timezone.utc) - max_age),))
         self._conn.commit()
 
     @ensure_open
