@@ -72,64 +72,77 @@ def ensure_open(f):
 
 def _build_where_clause(run_match, alias=''):
     """
-    TODO Post fetch filter for criteria not supported in WHERE (instance parameters, etc.)
-    Builds a SQL WHERE clause from the provided run match criteria.
+    Builds a parameterized SQL WHERE clause from the provided run match criteria.
+
+    TODO: Post fetch filter for criteria not supported in WHERE (instance parameters, etc.)
     Only root phase details are stored as direct fields in the database.
     Phase criteria are only applied if they target the root phase.
     Other phase criteria require post-fetch filtering.
 
     Args:
-        run_match: The run match criteria
-        alias: Optional table alias prefix
+        run_match (JobRunCriteria): The run match criteria.
+        alias (str): Optional table alias prefix.
 
     Returns:
-        str: The WHERE clause, or empty string if no criteria
+        tuple[str, list]: WHERE clause with ? placeholders, and list of parameter values.
     """
     if not run_match:
-        return ""
+        return "", []
 
     if alias and not alias.endswith('.'):
         alias = alias + "."
 
     conditions = []
+    params = []
 
     metadata_conditions = []
+    metadata_params = []
     for c in run_match.metadata_criteria:
         if c.strategy == MatchingStrategy.ALWAYS_TRUE:
             metadata_conditions.clear()
+            metadata_params.clear()
             break
         if c.strategy == MatchingStrategy.ALWAYS_FALSE:
-            return " WHERE 1=0"  # Early return as nothing can match
+            return " WHERE 1=0", []  # Early return as nothing can match
 
         id_conditions = []
+        id_params = []
         if c.job_id:
             match c.strategy:
                 case MatchingStrategy.PARTIAL:
-                    id_conditions.append(f'{alias}job_id GLOB "*{c.job_id}*"')
+                    id_conditions.append(f'{alias}job_id GLOB ?')
+                    id_params.append(f'*{c.job_id}*')
                 case MatchingStrategy.FN_MATCH:
-                    id_conditions.append(f'{alias}job_id GLOB "{c.job_id}"')
+                    id_conditions.append(f'{alias}job_id GLOB ?')
+                    id_params.append(c.job_id)
                 case MatchingStrategy.EXACT:
-                    id_conditions.append(f'{alias}job_id = "{c.job_id}"')
+                    id_conditions.append(f'{alias}job_id = ?')
+                    id_params.append(c.job_id)
                 case _:
                     continue
 
         if c.run_id:
             match c.strategy:
                 case MatchingStrategy.PARTIAL:
-                    id_conditions.append(f'{alias}run_id GLOB "*{c.run_id}*"')
+                    id_conditions.append(f'{alias}run_id GLOB ?')
+                    id_params.append(f'*{c.run_id}*')
                 case MatchingStrategy.FN_MATCH:
-                    id_conditions.append(f'{alias}run_id GLOB "{c.run_id}"')
+                    id_conditions.append(f'{alias}run_id GLOB ?')
+                    id_params.append(c.run_id)
                 case MatchingStrategy.EXACT:
-                    id_conditions.append(f'{alias}run_id = "{c.run_id}"')
+                    id_conditions.append(f'{alias}run_id = ?')
+                    id_params.append(c.run_id)
                 case _:
                     continue
 
         if id_conditions:
             join_op = ' OR ' if c.match_any_field else ' AND '
             metadata_conditions.append('(' + join_op.join(id_conditions) + ')')
+            metadata_params.extend(id_params)
 
     if metadata_conditions:
         conditions.append('(' + ' OR '.join(metadata_conditions) + ')')
+        params.extend(metadata_params)
 
     def add_datetime_conditions(column: str, dt_range) -> list:
         dt_conditions = []
@@ -207,7 +220,7 @@ def _build_where_clause(run_match, alias=''):
         phase_conditions.extend(add_lifecycle_conditions(lc))
         conditions.append('(' + ' AND '.join(phase_conditions) + ')')
 
-    return " WHERE " + " AND ".join(conditions) if conditions else ""
+    return (" WHERE " + " AND ".join(conditions), params) if conditions else ("", [])
 
 
 class SQLite(Persistence):
@@ -400,7 +413,8 @@ class SQLite(Persistence):
                     raise ValueError(f"Unsupported sort option: {sort}")
 
         statement = "SELECT * FROM history h"
-        statement += _build_where_clause(run_match, alias='h')
+        where_clause, where_params = _build_where_clause(run_match, alias='h')
+        statement += where_clause
 
         if last:
             statement += " GROUP BY h.job_id HAVING ROWID = max(ROWID) "
@@ -416,7 +430,7 @@ class SQLite(Persistence):
                   statement, batch_size, batch_offset)
 
         cursor = self._conn.cursor()
-        cursor.execute(statement, (batch_size, batch_offset))
+        cursor.execute(statement, where_params + [batch_size, batch_offset])
 
         def to_job_run(t):
             metadata = JobInstanceMetadata(InstanceID(t[0], t[1]), json.loads(t[2]) if t[2] else dict())
@@ -479,7 +493,7 @@ class SQLite(Persistence):
                 Criteria to match records used to calculate the statistics. None means fetch all. Defaults to None.
         """
 
-        where = _build_where_clause(run_match, alias='h')
+        where_clause, where_params = _build_where_clause(run_match, alias='h')
         sql = f'''
             SELECT
                 h.job_id,
@@ -496,13 +510,13 @@ class SQLite(Persistence):
             FROM
                 history h
             INNER JOIN
-                (SELECT job_id, exec_time, termination_status FROM history h {where} GROUP BY job_id HAVING ROWID = max(ROWID)) AS last
+                (SELECT job_id, exec_time, termination_status FROM history h {where_clause} GROUP BY job_id HAVING ROWID = max(ROWID)) AS last
                 ON h.job_id = last.job_id
-            {where}
+            {where_clause}
             GROUP BY
                 h.job_id
         '''
-        c = self._conn.execute(sql)
+        c = self._conn.execute(sql, where_params + where_params)
 
         def to_job_stats(t):
             job_id = t[0]
@@ -568,10 +582,10 @@ class SQLite(Persistence):
             run_match (InstanceMatchCriteria): Criteria to filter job instances for removal.
         """
 
-        where_clause = _build_where_clause(run_match)
+        where_clause, where_params = _build_where_clause(run_match)
         if not where_clause:
             raise ValueError("No rows to remove")
-        self._conn.execute("DELETE FROM history" + where_clause)
+        self._conn.execute("DELETE FROM history" + where_clause, where_params)
         self._conn.commit()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
