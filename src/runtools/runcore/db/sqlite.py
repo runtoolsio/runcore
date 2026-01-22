@@ -42,7 +42,7 @@ def create(env_id, database=None, **kwargs):
             - cached_statements: Number of statements to cache (default: 128)
             - uri: True if database parameter is a URI (default: False)
             - autocommit: Transaction control mode (default: sqlite3.LEGACY_TRANSACTION_CONTROL)
-            - batch_size: Number of records to fetch per batch (default: 1000)
+            - batch_size: Number of records to fetch per batch (default: 100)
 
     Returns:
         SQLite: Configured SQLite persistence instance
@@ -366,7 +366,6 @@ class SQLite(Persistence):
             The iterator fetches records in batches to minimize lock contention. The batch
             size can be configured when creating the SQLite instance.
         """
-        total_yielded = 0
         current_offset = offset if offset >= 0 else 0
         remaining_limit = limit if limit >= 0 else float('inf')
 
@@ -382,7 +381,6 @@ class SQLite(Persistence):
 
             for job_run in batch:
                 yield job_run
-                total_yielded += 1
 
             # Update for next iteration
             current_offset += len(batch)
@@ -614,3 +612,4 @@ class SQLite(Persistence):
     def close(self):
         if self._conn:
             self._conn.close()
+            self._conn = None
