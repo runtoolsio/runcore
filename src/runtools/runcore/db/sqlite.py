@@ -303,69 +303,16 @@ class SQLite(Persistence):
 
     def read_history_runs(self, run_match=None, sort=SortOption.ENDED, *,
                           asc=True, limit=-1, offset=-1, last=False) -> JobRuns:
-        """
-        Fetches ended job instances based on specified criteria.
-
-        This method loads all matching records into memory and returns them as a JobRuns
-        collection. For large result sets, consider using `iter_history_runs()` instead.
-
-        Datasource: The database as defined by the configured persistence type.
-
-        Args:
-            run_match (InstanceMatchCriteria, optional):
-                Criteria to match specific job instances. None means fetch all. Defaults to None.
-            sort (SortOption):
-                Determines the field by which records are sorted. Defaults to `SortCriteria.ENDED`.
-            asc (bool, optional):
-                Determines if the sorting is in ascending order. Defaults to True.
-            limit (int, optional):
-                Maximum number of records to return. -1 means no limit. Defaults to -1.
-            offset (int, optional):
-                Number of records to skip before starting to return. -1 means no offset. Defaults to -1.
-            last (bool, optional):
-                If set to True, only the last record for each job is returned. Defaults to False.
-
-        Returns:
-            JobRuns: A collection of job runs that match the given criteria.
-
-        Note:
-            This method is implemented using `iter_history_runs()` internally and collects
-            all results into memory. For memory-efficient processing of large datasets,
-            use `iter_history_runs()` directly.
-        """
+        """See `Persistence.read_history_runs`."""
         return JobRuns(self.iter_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last))
 
     def iter_history_runs(self, run_match=None, sort=SortOption.ENDED, *,
                           asc=True, limit=-1, offset=-1, last=False) -> Iterator[JobRun]:
-        """
-        Iterate over ended job instances based on specified criteria.
-
-        This implementation uses batched fetching to avoid holding the database lock
-        for extended periods. It fetches records in configurable batches and releases
-        the lock between batches.
-
-        Datasource: The database as defined by the configured persistence type.
-
-        Args:
-            run_match (InstanceMatchCriteria, optional):
-                Criteria to match specific job instances. None means fetch all. Defaults to None.
-            sort (SortOption):
-                Determines the field by which records are sorted. Defaults to `SortCriteria.ENDED`.
-            asc (bool, optional):
-                Determines if the sorting is in ascending order. Defaults to True.
-            limit (int, optional):
-                Maximum number of records to yield. -1 means no limit. Defaults to -1.
-            offset (int, optional):
-                Number of records to skip before starting to yield. -1 means no offset. Defaults to -1.
-            last (bool, optional):
-                If set to True, only the last record for each job is yielded. Defaults to False.
-
-        Yields:
-            JobRun: Individual job instances that match the given criteria.
+        """See `Persistence.iter_history_runs`.
 
         Note:
-            The iterator fetches records in batches to minimize lock contention. The batch
-            size can be configured when creating the SQLite instance.
+            Uses batched fetching to minimize lock contention. Batch size is configurable
+            via the `batch_size` parameter when creating the SQLite instance.
         """
         current_offset = offset if offset >= 0 else 0
         remaining_limit = limit if limit >= 0 else float('inf')
@@ -504,14 +451,7 @@ class SQLite(Persistence):
 
     @ensure_open
     def read_history_stats(self, run_match=None) -> List[JobStats]:
-        """
-        Returns job statistics for each job based on specified criteria.
-        Datasource: The database as defined by the configured persistence type.
-
-        Args:
-            run_match (InstanceMatchCriteria, optional):
-                Criteria to match records used to calculate the statistics. None means fetch all. Defaults to None.
-        """
+        """See `Persistence.read_history_stats`."""
 
         where_clause, where_params = _build_where_clause(run_match, alias='h')
         sql = f'''
@@ -560,13 +500,7 @@ class SQLite(Persistence):
 
     @ensure_open
     def store_job_runs(self, *job_runs):
-        """
-        Stores the provided job instances to the configured persistence source.
-        After storing, it also initiates a cleanup based on configured criteria.
-
-        Args:
-            *job_runs (JobInst): Variable number of job instances to be stored.
-        """
+        """See `Persistence.store_job_runs`."""
 
         def to_tuple(r: JobRun):
             return (r.metadata.job_id,
@@ -595,12 +529,7 @@ class SQLite(Persistence):
 
     @ensure_open
     def remove_job_runs(self, run_match):
-        """
-        Removes job instances based on the specified match criteria from the configured persistence source.
-
-        Args:
-            run_match (InstanceMatchCriteria): Criteria to filter job instances for removal.
-        """
+        """See `Persistence.remove_job_runs`."""
 
         where_clause, where_params = _build_where_clause(run_match)
         if not where_clause:
