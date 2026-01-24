@@ -87,7 +87,7 @@ class TargetNotFoundError(RemoteCallError):
         server_address: Optional address of the target server
     """
 
-    def __init__(self, server_address: str = None):
+    def __init__(self, server_address: Optional[str] = None):
         super().__init__(server_address)
 
 

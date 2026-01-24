@@ -7,8 +7,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
 from threading import Thread, RLock
-from types import coroutine
-from typing import List, NamedTuple, Optional
+from typing import Generator, List, NamedTuple, Optional
 
 # Default=32768, Max= 262142, https://docstore.mik.ua/manuals/hp-ux/en/B2355-60130/UNIX.7P.html
 RECV_BUFFER_LENGTH = 65536  # Can be increased to 163840?
@@ -36,7 +35,7 @@ class SocketServer(abc.ABC):
     def __init__(self, socket_path, *, allow_ping=False):
         self._socket_path = socket_path
         self._allow_ping = allow_ping
-        self._server: socket = None
+        self._server: Optional[socket.socket] = None
         self._serving_thread = Thread(target=self._serve, name='Thread-Socket-Server')
         self._lock = RLock()
         self._stopped = False
@@ -138,7 +137,8 @@ class SocketServer(abc.ABC):
         self.wait()
 
 
-class ErrorType(Enum):
+class SocketErrorType(Enum):
+    """Classification of socket-level errors."""
     COMMUNICATION = auto()  # Socket protocol/communication errors other than timeouts and stale sockets
     TIMEOUT = auto()        # Connection timeouts
     STALE = auto()          # Dead/stale sockets
@@ -150,14 +150,14 @@ class SocketRequestResult(NamedTuple):
     error: Optional[Exception] = None
 
     @property
-    def error_type(self) -> Optional[ErrorType]:
+    def error_type(self) -> Optional[SocketErrorType]:
         if not self.error:
             return None
         if isinstance(self.error, (socket.timeout, TimeoutError)):
-            return ErrorType.TIMEOUT
+            return SocketSocketErrorType.TIMEOUT
         if isinstance(self.error, ConnectionRefusedError):
-            return ErrorType.STALE
-        return ErrorType.COMMUNICATION
+            return SocketSocketErrorType.STALE
+        return SocketErrorType.COMMUNICATION
 
 
 @dataclass
@@ -172,11 +172,11 @@ class SocketClient:
 
     def __init__(self, server_sockets_provider=None, *, client_address=None, timeout=2):
         """
-
         Args:
-            server_sockets_provider: TBS
-            client_address (str): bidirectional communication is assumed when this parameter is set
-            timeout: TBS
+            server_sockets_provider: Callable returning iterable of server socket paths.
+            client_address: Client socket path for receiving responses. If set, enables
+                bidirectional communication.
+            timeout: Socket timeout in seconds for receiving responses.
         """
         self._server_sockets_provider = server_sockets_provider
         self._client = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
@@ -186,13 +186,24 @@ class SocketClient:
             self._client.bind(client_address)
             self._client.settimeout(timeout)
 
-    @coroutine
-    def servers(self, addresses=()):
+    def servers(self, addresses=()) -> Generator[SocketRequestResult | None, str | None, None]:
         """
+        Generator for iterating over servers and sending requests.
 
-        :param addresses: server IDs exact match filter
-        :return: response if bidirectional
-        :raises PayloadTooLarge: when request payload is too large
+        This is a coroutine-style generator that yields responses and receives requests via send().
+        Use next() to advance to next server, send(request) to send a request to current server.
+
+        Args:
+            addresses: Server addresses to communicate with. If empty, uses server_sockets_provider.
+
+        Yields:
+            SocketRequestResult with response, or None initially.
+
+        Receives:
+            Request body string to send, or None/empty to move to next server.
+
+        Raises:
+            PayloadTooLarge: When request payload exceeds socket limits.
         """
         req_body = '_'  # Dummy initialization to remove warnings
         res = None
@@ -254,9 +265,9 @@ class SocketClient:
         for resp in responses:
             if resp.error_type is None:
                 active.append(resp.server_address)
-            elif resp.error_type == ErrorType.TIMEOUT:
+            elif resp.error_type == SocketErrorType.TIMEOUT:
                 timed_out.append(resp.server_address)
-            elif resp.error_type == ErrorType.STALE:
+            elif resp.error_type == SocketErrorType.STALE:
                 stale.append(Path(resp.server_address))
             else:
                 failed.append(resp.server_address)
