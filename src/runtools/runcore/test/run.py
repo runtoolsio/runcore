@@ -6,18 +6,6 @@ from runtools.runcore.run import PhaseDetail, TerminationInfo, TerminationStatus
 from runtools.runcore.util import utc_now
 
 
-def term(status=TerminationStatus.COMPLETED, ended_at=None, fault=None):
-    return TerminationInfo(status, ended_at or utc_now().replace(microsecond=0), fault)
-
-
-def phase_detail(phase_id, children=None,
-                 *, phase_type='test', created_at=None, started_at=None, termination):
-    if not created_at:
-        created_at = utc_now().replace(microsecond=0)
-    return PhaseDetail(phase_id, phase_type, False, '', None, None, RunLifecycle(created_at, started_at, termination),
-                       children or tuple())
-
-
 def _determine_container_state(children: Tuple[PhaseDetail,...]) -> tuple[bool, Optional[TerminationInfo]]:
     """Determine container state based on children"""
     if not children:

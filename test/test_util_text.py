@@ -1,7 +1,3 @@
-"""
-Tests :mod:`util` module
-Description: Util module tests
-"""
 import pytest
 
 from runtools.runcore import util

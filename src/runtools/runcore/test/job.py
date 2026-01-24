@@ -5,10 +5,8 @@ from runtools.runcore.run import TerminationStatus, Fault
 from runtools.runcore.test.run import FakePhaseDetailBuilder
 from runtools.runcore.util import utc_now, unique_timestamp_hex
 
-INIT = 'init'
 APPROVAL = 'approval'
 PROGRAM = 'program'
-TERM = 'term'
 
 
 def job_run(job_id, phase, *, run_id=None, user_params=None):

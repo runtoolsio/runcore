@@ -605,8 +605,8 @@ class JobRuns(list):
     def in_protected_phase(self, protection_type, protection_id):
         return JobRuns([job_run for job_run in self if job_run.in_protected_phase(protection_type, protection_id)])
 
-    def in_state(self, state):
-        return [job_run for job_run in self if job_run.lifecycle.run_state is state]
+    def in_stage(self, stage):
+        return [job_run for job_run in self if job_run.lifecycle.stage is stage]
 
     def to_dict(self, include_empty=True) -> Dict[str, Any]:
         return {"runs": [run.serialize(include_empty=include_empty) for run in self]}
