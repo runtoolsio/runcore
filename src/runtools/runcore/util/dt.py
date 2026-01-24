@@ -92,18 +92,6 @@ class TimeRange:
         return f"[{' AND '.join(parts)}]" if parts else "[]"
 
 
-def dtrange(since=None, until=None, *, until_incl=False) -> 'DateTimeRange':
-    """
-    Create a datetime range with optional bounds.
-
-    Args:
-        since: Start datetime (inclusive)
-        until: End datetime
-        until_incl: Whether end is inclusive (default: True)
-    """
-    return DateTimeRange(since, until, until_incl)
-
-
 @dataclass
 class DateTimeRange:
     """

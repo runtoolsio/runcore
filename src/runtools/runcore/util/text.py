@@ -50,11 +50,11 @@ def partial_match(string, pattern):
     return bool(re.search(pattern, string))
 
 
-def always_true(*_):
+def _always_true(*_):
     return True
 
 
-def always_false(*_):
+def _always_false(*_):
     return False
 
 
@@ -66,8 +66,8 @@ class MatchingStrategy(Enum):
     EXACT = (eq,)
     FN_MATCH = (fnmatch,)
     PARTIAL = (partial_match,)
-    ALWAYS_TRUE = (always_true,)
-    ALWAYS_FALSE = (always_false,)
+    ALWAYS_TRUE = (_always_true,)
+    ALWAYS_FALSE = (_always_false,)
 
     def __call__(self, *args, **kwargs):
         return self.value[0](*args, **kwargs)
