@@ -5,7 +5,7 @@ Core component of the runtools package providing:
  3. Environment connectors for local and remote job management
 
 runtools is a framework for creating, executing, and managing job workflows.
-Requires Python 3.11+.
+Requires Python 3.12+.
 """
 
 __version__ = "0.1.0"

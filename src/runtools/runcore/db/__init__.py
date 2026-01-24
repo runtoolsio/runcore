@@ -24,7 +24,7 @@ See Also:
 import importlib
 import pkgutil
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, override
 
 from pydantic import BaseModel, Field
 
@@ -234,33 +234,41 @@ class Persistence(ABC):
 class NullPersistence(Persistence):
     """
     A no-op persistence. .enabled == False, and any attempt to read/write
-    will raise PersistenceDisabledError so callers can distinguish “no-data”
-    from “disabled”.
+    will raise PersistenceDisabledError so callers can distinguish "no-data"
+    from "disabled".
     """
 
     @property
+    @override
     def enabled(self) -> bool:
         return False
 
+    @override
     def read_history_runs(self, run_match=None, sort=SortOption.CREATED, *, asc, limit, offset, last=False):
         raise PersistenceDisabledError("Persistence is disabled; no history available.")
 
+    @override
     def iter_history_runs(self, run_match=None, sort=SortOption.CREATED, *,
                           asc=True, limit=-1, offset=-1, last=False):
         raise PersistenceDisabledError("Persistence is disabled; no history available.")
 
+    @override
     def read_history_stats(self, run_match=None) -> dict:
         raise PersistenceDisabledError("Persistence is disabled; no stats available.")
 
+    @override
     def store_job_runs(self, *job_runs) -> None:
         pass
 
+    @override
     def remove_job_runs(self, run_match) -> None:
         pass
 
+    @override
     def clean_up(self, max_records: int, max_age: float) -> None:
         pass
 
+    @override
     def close(self) -> None:
         pass
 

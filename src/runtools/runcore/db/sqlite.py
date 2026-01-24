@@ -9,7 +9,7 @@ import sqlite3
 from datetime import timezone
 from functools import wraps
 from threading import Lock
-from typing import List, Iterator
+from typing import List, Iterator, override
 
 from runtools.runcore import paths
 from runtools.runcore.criteria import LifecycleCriterion, SortOption
@@ -260,6 +260,7 @@ class SQLite(Persistence):
         self.open()
         return self
 
+    @override
     def open(self):
         if self._conn is not None:
             raise InvalidStateError("Database connection already opened")
@@ -301,11 +302,13 @@ class SQLite(Persistence):
             self._conn.commit()
         c.close()
 
+    @override
     def read_history_runs(self, run_match=None, sort=SortOption.ENDED, *,
                           asc=True, limit=-1, offset=-1, last=False) -> JobRuns:
         """See `Persistence.read_history_runs`."""
         return JobRuns(self.iter_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last))
 
+    @override
     def iter_history_runs(self, run_match=None, sort=SortOption.ENDED, *,
                           asc=True, limit=-1, offset=-1, last=False) -> Iterator[JobRun]:
         """See `Persistence.iter_history_runs`.
@@ -427,6 +430,7 @@ class SQLite(Persistence):
         """
         return sum(s.count for s in (self.read_history_stats(run_match)))
 
+    @override
     @ensure_open
     def clean_up(self, max_records, max_age):
         if max_records >= 0:
@@ -449,6 +453,7 @@ class SQLite(Persistence):
                            (format_dt_sql(datetime.datetime.now(tz=timezone.utc) - max_age),))
         self._conn.commit()
 
+    @override
     @ensure_open
     def read_history_stats(self, run_match=None) -> List[JobStats]:
         """See `Persistence.read_history_stats`."""
@@ -498,6 +503,7 @@ class SQLite(Persistence):
 
         return [to_job_stats(row) for row in c.fetchall()]
 
+    @override
     @ensure_open
     def store_job_runs(self, *job_runs):
         """See `Persistence.store_job_runs`."""
@@ -527,6 +533,7 @@ class SQLite(Persistence):
         )
         self._conn.commit()
 
+    @override
     @ensure_open
     def remove_job_runs(self, run_match):
         """See `Persistence.remove_job_runs`."""
@@ -540,6 +547,7 @@ class SQLite(Persistence):
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
+    @override
     def close(self):
         if self._conn:
             self._conn.close()
