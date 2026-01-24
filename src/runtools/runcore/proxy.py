@@ -14,6 +14,10 @@ class _ProxyOutput(Output):
         self._server_address = server_address
         self._instance_id = instance_id
 
+    @property
+    def locations(self):
+        return ()
+
     def tail(self, mode: Mode = Mode.TAIL, max_lines: int = 0):
         return self._client.get_output_tail(self._server_address, self._instance_id, max_lines)
 

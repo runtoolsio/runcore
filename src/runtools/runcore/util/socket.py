@@ -30,7 +30,7 @@ class SocketServerStoppedAlready(SocketServerException):
     pass
 
 
-class SocketServer(abc.ABC):
+class DatagramSocketServer(abc.ABC):
 
     def __init__(self, socket_path, *, allow_ping=False):
         self._socket_path = socket_path
@@ -75,7 +75,7 @@ class SocketServer(abc.ABC):
                 datagram, client_address = server.recvfrom(RECV_BUFFER_LENGTH)
             except OSError as e:
                 if e.errno == 9 and self._stopped:
-                    break  # MacOS behaviour on close
+                    break  # macOS behaviour on close
                 raise e
             if not datagram:
                 break  # Linux behaviour on close
@@ -154,9 +154,9 @@ class SocketRequestResult(NamedTuple):
         if not self.error:
             return None
         if isinstance(self.error, (socket.timeout, TimeoutError)):
-            return SocketSocketErrorType.TIMEOUT
+            return SocketErrorType.TIMEOUT
         if isinstance(self.error, ConnectionRefusedError):
-            return SocketSocketErrorType.STALE
+            return SocketErrorType.STALE
         return SocketErrorType.COMMUNICATION
 
 
@@ -168,7 +168,7 @@ class PingResult:
     stale_sockets: List[Path]
 
 
-class SocketClient:
+class DatagramSocketClient:
 
     def __init__(self, server_sockets_provider=None, *, client_address=None, timeout=2):
         """
@@ -292,3 +292,225 @@ class PayloadTooLarge(Exception):
 
     def __init__(self, payload_size):
         super().__init__("Datagram payload is too large: " + str(payload_size))
+
+
+# --- Stream socket helpers and classes for RPC communication ---
+
+def _recv_exact(conn: socket.socket, n: int) -> bytes:
+    """Receive exactly n bytes from connection."""
+    data = b''
+    while len(data) < n:
+        chunk = conn.recv(n - len(data))
+        if not chunk:
+            raise ConnectionError("Connection closed")
+        data += chunk
+    return data
+
+
+def _send_message(conn: socket.socket, data: str) -> None:
+    """Send length-prefixed message."""
+    encoded = data.encode()
+    header = len(encoded).to_bytes(4, 'big')
+    conn.sendall(header + encoded)
+
+
+def _recv_message(conn: socket.socket) -> str:
+    """Receive length-prefixed message."""
+    header = _recv_exact(conn, 4)
+    length = int.from_bytes(header, 'big')
+    return _recv_exact(conn, length).decode()
+
+
+class StreamSocketServer(abc.ABC):
+    """Stream-based socket server for RPC (request/response) communication."""
+
+    def __init__(self, socket_path, *, allow_ping=False):
+        self._socket_path = socket_path
+        self._allow_ping = allow_ping
+        self._server: Optional[socket.socket] = None
+        self._serving_thread = Thread(target=self._serve, name='Thread-Stream-Server')
+        self._lock = RLock()
+        self._stopped = False
+
+    def _bind_socket(self):
+        if self._stopped:
+            raise SocketServerStoppedAlready
+        self._server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            self._server.bind(str(self._socket_path))
+        except (FileNotFoundError, PermissionError) as e:
+            raise SocketCreationException(self._socket_path) from e
+
+    @property
+    def address(self) -> str:
+        return str(self._socket_path)
+
+    def start(self):
+        with self._lock:
+            self._bind_socket()
+            self._server.listen(5)
+            self._serving_thread.start()
+
+    def wait(self):
+        self._serving_thread.join()
+
+    def serve(self):
+        with self._lock:
+            self._bind_socket()
+            self._server.listen(5)
+        self._serve()
+
+    def _serve(self):
+        log.debug('event=[stream_server_started]')
+        server = self._server
+        while not self._stopped:
+            try:
+                conn, _ = server.accept()
+            except OSError as e:
+                if self._stopped:
+                    break
+                raise
+            Thread(target=self._handle_connection, args=(conn,), daemon=True).start()
+        log.debug('event=[stream_server_stopped]')
+
+    def _handle_connection(self, conn: socket.socket):
+        try:
+            with conn:
+                req_body = _recv_message(conn)
+                if self._allow_ping and req_body == 'ping':
+                    resp_body = 'pong'
+                else:
+                    resp_body = self.handle(req_body)
+                if resp_body:
+                    _send_message(conn, resp_body)
+        except (ConnectionError, OSError) as e:
+            log.debug(f'event=[connection_error] error=[{e}]')
+
+    @abc.abstractmethod
+    def handle(self, req_body) -> Optional[str]:
+        """Handle request and return response."""
+        pass
+
+    def stop(self):
+        self.close()
+
+    def close(self):
+        with self._lock:
+            self._stopped = True
+
+            if self._server is None:
+                return
+
+            socket_name = self._server.getsockname()
+            try:
+                try:
+                    self._server.shutdown(socket.SHUT_RD)
+                except OSError as e:
+                    if e.errno == 57:  # macOS: Socket is not connected
+                        pass
+                    else:
+                        raise
+                self._server.close()
+            finally:
+                self._server = None
+                if os.path.exists(socket_name):
+                    os.remove(socket_name)
+
+    def close_and_wait(self):
+        self.close()
+        self.wait()
+
+
+class StreamSocketClient:
+    """Stream-based socket client for RPC communication."""
+
+    def __init__(self, server_sockets_provider=None, *, timeout=2):
+        self._server_sockets_provider = server_sockets_provider
+        self._timeout = timeout
+
+    def servers(self, addresses=()) -> Generator[SocketRequestResult | None, str | None, None]:
+        """
+        Generator for iterating over servers and sending requests.
+
+        This is a coroutine-style generator that yields responses and receives requests via send().
+        Use next() to advance to next server, send(request) to send a request to current server.
+
+        Args:
+            addresses: Server addresses to communicate with. If empty, uses server_sockets_provider.
+
+        Yields:
+            SocketRequestResult with response, or None initially.
+
+        Receives:
+            Request body string to send, or None/empty to move to next server.
+        """
+        req_body = '_'
+        res = None
+        skip = False
+        for server_socket in (addresses or self._server_sockets_provider()):
+            server_address = str(server_socket)
+            while True:
+                if not skip:
+                    req_body = yield res
+                skip = False
+                if not req_body:
+                    break
+
+                try:
+                    conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    conn.settimeout(self._timeout)
+                    conn.connect(server_address)
+                    try:
+                        _send_message(conn, req_body)
+                        response = _recv_message(conn)
+                        res = SocketRequestResult(server_address, response)
+                    finally:
+                        conn.close()
+                except (socket.timeout, TimeoutError) as e:
+                    log.warning(f'event=[socket_timeout] socket=[{server_socket}]')
+                    res = SocketRequestResult(server_address, None, e)
+                except (ConnectionRefusedError, FileNotFoundError) as e:
+                    log.debug(f'event=[stale_socket] socket=[{server_socket}]')
+                    skip = True
+                    break
+                except OSError as e:
+                    res = SocketRequestResult(server_address, None, e)
+
+    def communicate(self, req: str, addresses=()) -> List[SocketRequestResult]:
+        server = self.servers(addresses)
+        responses = []
+        while True:
+            try:
+                next(server)
+                responses.append(server.send(req))
+            except StopIteration:
+                break
+        return responses
+
+    def ping(self) -> PingResult:
+        """
+        Pings all available servers to check their status.
+
+        Returns:
+            PingResult containing lists of active, timed out, and stale servers
+        """
+        responses = self.communicate('ping')
+        active = []
+        timed_out = []
+        failed = []
+        stale = []
+
+        for resp in responses:
+            if resp.error_type is None:
+                active.append(resp.server_address)
+            elif resp.error_type == SocketErrorType.TIMEOUT:
+                timed_out.append(resp.server_address)
+            elif resp.error_type == SocketErrorType.STALE:
+                stale.append(Path(resp.server_address))
+            else:
+                failed.append(resp.server_address)
+
+        return PingResult(active, timed_out, failed, stale)
+
+    def close(self):
+        pass  # No persistent connection to close

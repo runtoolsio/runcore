@@ -34,7 +34,7 @@ from runtools.runcore.err import RuntoolsException
 from runtools.runcore.job import JobRun, InstanceID
 from runtools.runcore.output import OutputLine
 from runtools.runcore.util.json import JsonRpcResponse, JsonRpcParseError, ErrorType, ErrorCode
-from runtools.runcore.util.socket import SocketClient, SocketRequestResult
+from runtools.runcore.util.socket import StreamSocketClient, SocketRequestResult
 
 log = logging.getLogger(__name__)
 
@@ -202,18 +202,19 @@ def _job_runs_retval_mapper(retval: Any) -> List[JobRun]:
     return [JobRun.deserialize(job_run) for job_run in retval]
 
 
-class RemoteCallClient(SocketClient):
+class RemoteCallClient(StreamSocketClient):
     """Client for making JSON-RPC 2.0 calls to job instances.
 
     Provides methods for querying and controlling job instances through remote procedure calls.
     Supports both single-target operations and broadcasting to multiple servers.
+    Uses stream sockets for reliable communication without message size limits.
 
     The client implements context manager protocol for proper resource cleanup.
     """
 
-    def __init__(self, server_sockets_provider, response_socket=None):
-        """Initialize the client with default socket configuration."""
-        super().__init__(server_sockets_provider, client_address=str(response_socket) if response_socket else None)
+    def __init__(self, server_sockets_provider):
+        """Initialize the client with server socket provider."""
+        super().__init__(server_sockets_provider)
         self._request_id = 0
 
     def __enter__(self):

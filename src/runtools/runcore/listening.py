@@ -6,7 +6,7 @@ from json import JSONDecodeError
 from runtools.runcore import util
 from runtools.runcore.job import JobInstanceMetadata, \
     InstanceTransitionEvent, InstanceOutputEvent, JobInstanceNotifications, InstanceLifecycleEvent
-from runtools.runcore.util.socket import SocketServer
+from runtools.runcore.util.socket import DatagramSocketServer
 
 log = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ def _read_metadata(req_body_json):
     return event_type, JobInstanceMetadata.deserialize(instance_metadata)
 
 
-class EventReceiver(SocketServer):
+class EventReceiver(DatagramSocketServer):
     """
     Generic event receiver that uses composition to handle different event types.
     """

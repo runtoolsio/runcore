@@ -57,19 +57,10 @@ class LocalConnectorLayout(ABC):
     between a connector and environment nodes. Implementations must provide:
 
       - Base directories for environment and connector components.
-      - Socket file names and full paths for client RPC and event listening.
+      - Socket file names and full paths for event listening.
       - A provider for locating RPC server socket paths of environment nodes.
       - A cleanup mechanism for removing created resources when connector is closed.
     """
-
-    @property
-    @abstractmethod
-    def client_socket_path(self) -> Path:
-        """
-        Returns:
-            Path: Path to socket file used by connector for receiving RPC responses.
-        """
-        pass
 
     @property
     @abstractmethod
@@ -113,7 +104,6 @@ class StandardLocalConnectorLayout(LocalConnectorLayout):
     /tmp/runtools/env/{env_id}/                      # Directory for the specific environment (env_path)
     │
     └── connector_789xyz/                            # Connector directory (connector_path)
-        ├── client-rpc.sock                          # Connector's RPC client socket
         ├── listener-events.sock                     # Connector's events listener socket
         └── ...                                      # Other connector-specific sockets
     """
@@ -130,7 +120,6 @@ class StandardLocalConnectorLayout(LocalConnectorLayout):
         self._env_path = env_path
         self._component_path = connector_path
         self._server_socket_name = "server-rpc.sock"
-        self._client_socket_name = "client-rpc.sock"
         self._listener_events_socket_name = "listener-events.sock"
 
     @classmethod
@@ -150,14 +139,6 @@ class StandardLocalConnectorLayout(LocalConnectorLayout):
     @classmethod
     def from_config(cls, env_config, connector_dir_prefix: str = "connector_"):
         return cls.create(env_config.id, env_config.layout.root_dir, connector_dir_prefix)
-
-    @property
-    def client_socket_path(self) -> Path:
-        """
-        Returns:
-            Path: Full path of RPC client domain socket used for receiving responses from RPC server
-        """
-        return self._component_path / self._client_socket_name
 
     @property
     def listener_events_socket_path(self) -> Path:
@@ -415,7 +396,7 @@ def local(env_id=DEFAULT_LOCAL_ENVIRONMENT, persistence=None, connector_layout=N
     """
     layout = connector_layout or StandardLocalConnectorLayout.create(env_id)
     persistence = persistence or sqlite.create(str(paths.sqlite_db_path(env_id, create=True)))
-    client = RemoteCallClient(layout.server_sockets_provider, layout.client_socket_path)
+    client = RemoteCallClient(layout.server_sockets_provider)
     event_receiver = EventReceiver(layout.listener_events_socket_path)
     return LocalConnector(env_id, layout, persistence, client, event_receiver)
 
