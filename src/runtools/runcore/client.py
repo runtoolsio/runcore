@@ -255,7 +255,7 @@ class RemoteCallClient(StreamSocketClient):
         """
         request_results = self._send_requests(method, *params, server_addresses=[server_address])
         if not request_results:
-            raise TargetNotFoundError
+            raise TargetNotFoundError(server_address)
 
         json_rpc_res = _parse_retval_or_raise_error(request_results[0])
         return retval_mapper(json_rpc_res)
