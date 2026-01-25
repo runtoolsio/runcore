@@ -1,4 +1,4 @@
-from runtools.runcore.client import TargetNotFoundError, RemoteCallError
+from runtools.runcore.client import TargetNotFoundError, InstanceCallError
 from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.err import RuntoolsException
 from runtools.runcore.job import JobRun, JobInstance, InstanceID
@@ -33,7 +33,7 @@ class JobInstanceProxy(JobInstance):
             job_runs = client.get_active_runs(server_address, JobRunCriteria.instance_match(instance_id))
         except TargetNotFoundError:
             raise ProxyInstanceNotFoundError(server_address, instance_id)
-        except RemoteCallError as e:
+        except InstanceCallError as e:
             raise ProxyInstanceUnavailableError(server_address, instance_id) from e
         if not job_runs:
             raise ProxyInstanceNotFoundError(server_address, instance_id)
@@ -84,7 +84,7 @@ class PhaseControlProxy:
     """Proxy for controlling a phase in another process.
 
     This class provides a clean interface for executing operations on a phase
-    through the RemoteCallClient.
+    through the LocalInstanceClient.
     """
 
     def __init__(self, client, server_address, instance_id, phase_id: str):
@@ -106,8 +106,8 @@ class PhaseControlProxy:
         Raises:
             PhaseNotFoundError: If the phase doesn't exist on the server
             TargetNotFoundError: If the instance or server is not found
-            RemoteCallServerError: For server-side errors during execution
-            RemoteCallClientError: For client-side errors during execution
+            InstanceCallServerError: For server-side errors during execution
+            InstanceCallClientError: For client-side errors during execution
         """
         return self._client.exec_phase_op(self._server_address, self._instance_id, self._phase_id, op_name, *op_args)
 

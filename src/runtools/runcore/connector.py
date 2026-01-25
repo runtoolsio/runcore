@@ -24,7 +24,7 @@ from threading import Event, Lock
 from typing import Callable, Optional, Iterable, List
 
 from runtools.runcore import paths, util, db
-from runtools.runcore.client import RemoteCallClient
+from runtools.runcore.client import LocalInstanceClient
 from runtools.runcore.criteria import JobRunCriteria, SortOption
 from runtools.runcore.db import NullPersistence, sqlite
 from runtools.runcore.env import LocalEnvironmentConfig, \
@@ -396,7 +396,7 @@ def local(env_id=DEFAULT_LOCAL_ENVIRONMENT, persistence=None, connector_layout=N
     """
     layout = connector_layout or StandardLocalConnectorLayout.create(env_id)
     persistence = persistence or sqlite.create(str(paths.sqlite_db_path(env_id, create=True)))
-    client = RemoteCallClient(layout.server_sockets_provider)
+    client = LocalInstanceClient(layout.server_sockets_provider)
     event_receiver = EventReceiver(layout.listener_events_socket_path)
     return LocalConnector(env_id, layout, persistence, client, event_receiver)
 

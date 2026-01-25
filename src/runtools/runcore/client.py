@@ -1,14 +1,14 @@
 """
-This module provides a simple JSON-RPC 2.0 client interface for communicating with job instances.
+Client for communicating with job instances in a local environment via Unix domain sockets.
 
-The RemoteCallClient allows sending RPC commands to running job instances to:
+Uses JSON-RPC 2.0 protocol over stream sockets to send commands to running job instances:
 - Query active job runs
 - Stop running instances
 - Get output logs
 - Execute phase-specific operations
 
 Example usage:
-    with RemoteCallClient() as client:
+    with LocalInstanceClient(socket_provider) as client:
         # Get all active runs
         results = client.collect_active_runs()
 
@@ -20,7 +20,7 @@ Example usage:
 
 The client handles JSON-RPC protocol details and error handling while providing
 a simple API for common job instance operations. It supports both single-target
-and broadcast operations across multiple servers.
+and broadcast operations across multiple instance servers.
 """
 
 import json
@@ -41,7 +41,7 @@ log = logging.getLogger(__name__)
 T = TypeVar('T')
 
 
-class RemoteCallError(RuntoolsException):
+class InstanceCallError(RuntoolsException):
     """Base exception class for remote call errors.
 
     Args:
@@ -54,7 +54,7 @@ class RemoteCallError(RuntoolsException):
         super().__init__(f"Server '{server_id}' {message or ''}")
 
 
-class RemoteCallClientError(RemoteCallError):
+class InstanceCallClientError(InstanceCallError):
     """Exception raised when client-side error occurs during remote call.
     This exception mean that the client implementation is probably incorrect
     or expects different version of the server.
@@ -68,7 +68,7 @@ class RemoteCallClientError(RemoteCallError):
         super().__init__(server_address, message)
 
 
-class RemoteCallServerError(RemoteCallError):
+class InstanceCallServerError(InstanceCallError):
     """Exception raised when server-side error occurs during remote call.
 
     Args:
@@ -80,7 +80,7 @@ class RemoteCallServerError(RemoteCallError):
         super().__init__(server_address, message)
 
 
-class TargetNotFoundError(RemoteCallError):
+class TargetNotFoundError(InstanceCallError):
     """Exception raised when specified target server or method target is not found.
 
     Args:
@@ -91,7 +91,7 @@ class TargetNotFoundError(RemoteCallError):
         super().__init__(server_address)
 
 
-class PhaseNotFoundError(RemoteCallError):
+class PhaseNotFoundError(InstanceCallError):
     """Exception raised when specified phase is not found on target server.
 
     Args:
@@ -106,7 +106,7 @@ R = TypeVar("R")
 
 
 @dataclass
-class RemoteCallResult(Generic[R]):
+class InstanceCallResult(Generic[R]):
     """Contains result of a remote call operation.
 
     Args:
@@ -116,7 +116,7 @@ class RemoteCallResult(Generic[R]):
     """
     server_address: str
     retval: Optional[R]
-    error: Optional[RemoteCallError] = None
+    error: Optional[InstanceCallError] = None
 
 
 def _parse_retval_or_raise_error(resp: SocketRequestResult) -> Any:
@@ -129,60 +129,60 @@ def _parse_retval_or_raise_error(resp: SocketRequestResult) -> Any:
         Parsed return value from the response
 
     Raises:
-        RemoteCallServerError: For server-side errors
-        RemoteCallClientError: For client-side errors
+        InstanceCallServerError: For server-side errors
+        InstanceCallClientError: For client-side errors
         TargetNotFoundError: When target doesn't exist
         PhaseNotFoundError: When phase doesn't exist
     """
     sid = resp.server_address
     if resp.error:
-        raise RemoteCallServerError(sid, 'Socket based error occurred') from resp.error
+        raise InstanceCallServerError(sid, 'Socket based error occurred') from resp.error
 
     try:
         response_body = json.loads(resp.response)
     except JSONDecodeError as e:
-        raise RemoteCallServerError(sid, 'Cannot parse API response JSON payload') from e
+        raise InstanceCallServerError(sid, 'Cannot parse API response JSON payload') from e
 
     try:
         json_rpc_resp = JsonRpcResponse.deserialize(response_body)
     except JsonRpcParseError as e:
-        raise RemoteCallServerError(sid, 'Invalid JSON-RPC 2.0 response') from e
+        raise InstanceCallServerError(sid, 'Invalid JSON-RPC 2.0 response') from e
 
     if err := json_rpc_resp.error:
         if err.code.type == ErrorType.CLIENT:
-            raise RemoteCallClientError(sid, str(err))
+            raise InstanceCallClientError(sid, str(err))
         elif err.code.type == ErrorType.SERVER:
-            raise RemoteCallServerError(sid, str(err))
+            raise InstanceCallServerError(sid, str(err))
         elif err.code.type == ErrorType.SIGNAL:
             if err.code == ErrorCode.TARGET_NOT_FOUND:
                 raise TargetNotFoundError(sid)
             elif err.code == ErrorCode.PHASE_NOT_FOUND:
                 raise PhaseNotFoundError(sid)
             else:
-                raise RemoteCallClientError(sid, f"Unknown signaling error: {err.code}")
+                raise InstanceCallClientError(sid, f"Unknown signaling error: {err.code}")
         else:
-            raise RemoteCallClientError(sid, f"Unknown error type: {err.code.type}")
+            raise InstanceCallClientError(sid, f"Unknown error type: {err.code.type}")
 
     if "retval" not in json_rpc_resp.result:
-        raise RemoteCallServerError(sid, f"Retval is missing in JSON-RPC result: {json_rpc_resp.result}")
+        raise InstanceCallServerError(sid, f"Retval is missing in JSON-RPC result: {json_rpc_resp.result}")
     return json_rpc_resp.result["retval"]
 
 
-def _convert_result(resp: SocketRequestResult, retval_mapper: Callable[[Any], R]) -> RemoteCallResult:
-    """Parse JSON-RPC response into RemoteCallResult without raising exceptions.
+def _convert_result(resp: SocketRequestResult, retval_mapper: Callable[[Any], R]) -> InstanceCallResult:
+    """Parse JSON-RPC response into InstanceCallResult without raising exceptions.
 
     Args:
         resp: Socket request result to parse
         retval_mapper: Function to transform the return value
 
     Returns:
-        RemoteCallResult containing either the mapped return value or error details
+        InstanceCallResult containing either the mapped return value or error details
     """
     try:
         retval = _parse_retval_or_raise_error(resp)
-        return RemoteCallResult(resp.server_address, retval_mapper(retval))
-    except RemoteCallError as e:
-        return RemoteCallResult(resp.server_address, None, e)
+        return InstanceCallResult(resp.server_address, retval_mapper(retval))
+    except InstanceCallError as e:
+        return InstanceCallResult(resp.server_address, None, e)
 
 
 def _no_retval_mapper(retval: Any) -> Any:
@@ -202,7 +202,7 @@ def _job_runs_retval_mapper(retval: Any) -> List[JobRun]:
     return [JobRun.deserialize(job_run) for job_run in retval]
 
 
-class RemoteCallClient(StreamSocketClient):
+class LocalInstanceClient(StreamSocketClient):
     """Client for making JSON-RPC 2.0 calls to job instances.
 
     Provides methods for querying and controlling job instances through remote procedure calls.
@@ -248,8 +248,8 @@ class RemoteCallClient(StreamSocketClient):
             Method return value (transformed by mapper if provided)
 
         Raises:
-            RemoteCallServerError: For server-side errors
-            RemoteCallClientError: For client-side errors
+            InstanceCallServerError: For server-side errors
+            InstanceCallClientError: For client-side errors
             TargetNotFoundError: When target doesn't exist
             PhaseNotFoundError: When phase doesn't exist
         """
@@ -261,7 +261,7 @@ class RemoteCallClient(StreamSocketClient):
         return retval_mapper(json_rpc_res)
 
     def broadcast_method(self, method: str, *params: Any, retval_mapper: Callable[[Any], R] = _no_retval_mapper) \
-            -> List[RemoteCallResult[R]]:
+            -> List[InstanceCallResult[R]]:
         """Send a method call to all available servers.
 
         Args:
@@ -270,7 +270,7 @@ class RemoteCallClient(StreamSocketClient):
             retval_mapper: Optional function to transform return values
 
         Returns:
-            List of RemoteCallResult containing responses from each server
+            List of InstanceCallResult containing responses from each server
         """
         request_results: List[SocketRequestResult] = self._send_requests(method, *params)
         return [_convert_result(req_res, retval_mapper) for req_res in request_results]
@@ -298,14 +298,14 @@ class RemoteCallClient(StreamSocketClient):
         }
         return self.communicate(json.dumps(request), server_addresses)
 
-    def collect_active_runs(self, run_match) -> List[RemoteCallResult[List[JobRun]]]:
+    def collect_active_runs(self, run_match) -> List[InstanceCallResult[List[JobRun]]]:
         """Retrieves information about all active job instances from all available servers.
 
         Args:
             run_match: Filter criteria for matching specific instances
 
         Returns:
-            List of RemoteCallResult containing JobRun objects for matching instances
+            List of InstanceCallResult containing JobRun objects for matching instances
             from each responding server
         """
         if not run_match:
@@ -323,8 +323,8 @@ class RemoteCallClient(StreamSocketClient):
             List of JobRun objects for matching instances
 
         Raises:
-            RemoteCallServerError: For server-side errors
-            RemoteCallClientError: For client-side errors
+            InstanceCallServerError: For server-side errors
+            InstanceCallClientError: For client-side errors
             TargetNotFoundError: When target doesn't exist
         """
         return self.call_method(
