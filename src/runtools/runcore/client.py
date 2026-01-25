@@ -42,7 +42,7 @@ T = TypeVar('T')
 
 
 class InstanceCallError(RuntoolsException):
-    """Base exception class for remote call errors.
+    """Base exception class for errors when calling instance methods.
 
     Args:
         server_id: Identifier of the server where error occurred
@@ -55,9 +55,8 @@ class InstanceCallError(RuntoolsException):
 
 
 class InstanceCallClientError(InstanceCallError):
-    """Exception raised when client-side error occurs during remote call.
-    This exception mean that the client implementation is probably incorrect
-    or expects different version of the server.
+    """Exception raised when client-side error occurs during an instance call.
+    This exception means the client implementation is probably incorrect or expects a different version of the server.
 
     Args:
         server_address: Address of the target server
@@ -69,7 +68,7 @@ class InstanceCallClientError(InstanceCallError):
 
 
 class InstanceCallServerError(InstanceCallError):
-    """Exception raised when server-side error occurs during remote call.
+    """Exception raised when server-side error occurs during an instance call.
 
     Args:
         server_address: Address of the target server
@@ -203,11 +202,11 @@ def _job_runs_retval_mapper(retval: Any) -> List[JobRun]:
 
 
 class LocalInstanceClient(StreamSocketClient):
-    """Client for making JSON-RPC 2.0 calls to job instances.
+    """Client for communicating with job instances in a local environment.
 
-    Provides methods for querying and controlling job instances through remote procedure calls.
-    Supports both single-target operations and broadcasting to multiple servers.
-    Uses stream sockets for reliable communication without message size limits.
+    Uses JSON-RPC 2.0 over Unix domain sockets to query and control job instances
+    running on the same machine. Supports both single-target operations and
+    broadcasting to multiple instance servers.
 
     The client implements context manager protocol for proper resource cleanup.
     """
