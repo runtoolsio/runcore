@@ -205,9 +205,7 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
         pass
 
     def __enter__(self):
-        """
-        Open the environment node.
-        """
+        """Open the connector."""
         self.open()
         return self
 
@@ -253,8 +251,8 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
         pass
 
     def get_instance(self, instance_id) -> JobInstance:
-        inst = self.get_instances(JobRunCriteria.instance_match(instance_id))
-        return next(inst, None)
+        instances = self.get_instances(JobRunCriteria.instance_match(instance_id))
+        return next(iter(instances), None)
 
     @abstractmethod
     def get_instances(self, run_match=None) -> Iterable[JobInstance]:
@@ -405,10 +403,9 @@ class LocalConnector(EnvironmentConnector):
     """
     Concrete implementation of the EnvironmentConnector for interacting with local environments.
 
-    Local environments are those running within the same operating system.
-    LocalConnector uses socket-based communication to connect to environment nodes,
-    enabling remote management of job instances and collection of their status and history.
-    It handles both live job data via RPC calls and historical job data through persistence.
+    Local environments are those running within the same operating system. LocalConnector uses Unix domain sockets
+    to communicate with environment nodes, enabling management of job instances and collection of their status
+    and history. It handles both live job data via RPC calls and historical job data through persistence.
     """
 
     def __init__(self, env_id, connector_layout, persistence, client, event_receiver):
@@ -447,7 +444,7 @@ class LocalConnector(EnvironmentConnector):
 
         for result in run_results:
             if result.error:
-                log.warning(f"[remote_call_error] op=[collect_active_runs] server=[{result.server_address}]",
+                log.warning(f"[instance_call_error] op=[collect_active_runs] server=[{result.server_address}]",
                             exc_info=result.error)
                 continue
             active_runs.extend(result.retval)
@@ -460,7 +457,7 @@ class LocalConnector(EnvironmentConnector):
 
         for result in run_results:
             if result.error:
-                log.warning(f"event=[remote_call_error] op=[get_instances] server=[{result.server_address}]",
+                log.warning(f"event=[instance_call_error] op=[get_instances] server=[{result.server_address}]",
                             exc_info=result.error)
                 continue
 

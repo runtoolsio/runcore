@@ -106,11 +106,11 @@ R = TypeVar("R")
 
 @dataclass
 class InstanceCallResult(Generic[R]):
-    """Contains result of a remote call operation.
+    """Contains result of an instance call operation.
 
     Args:
         server_address: Address of the server that handled the request
-        retval: Return value from the remote call if successful
+        retval: Return value from the instance call if successful
         error: Error details if the call failed
     """
     server_address: str
