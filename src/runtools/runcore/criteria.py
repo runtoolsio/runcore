@@ -64,11 +64,6 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         return cls(strategy=MatchingStrategy.ALWAYS_TRUE)
 
     @classmethod
-    def none_match(cls) -> 'MetadataCriterion':
-        """Creates a criterion that matches no instances."""
-        return cls(strategy=MatchingStrategy.ALWAYS_FALSE)
-
-    @classmethod
     def all_except(cls, instance_id: InstanceID) -> 'MetadataCriterion':
         """
         Creates a criterion that matches any job run except the specified one.
@@ -85,8 +80,8 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
             match_any_field=True,
         )
 
-    @staticmethod
-    def exact_match(instance_id: InstanceID) -> 'MetadataCriterion':
+    @classmethod
+    def exact_match(cls, instance_id: InstanceID) -> 'MetadataCriterion':
         """
         Creates a criterion that matches a specific instance.
 
@@ -96,7 +91,7 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         Returns:
             MetadataCriterion: A criteria object that will match the given job instance.
         """
-        return MetadataCriterion(instance_id.job_id, instance_id.run_id)
+        return cls(instance_id.job_id, instance_id.run_id)
 
     @classmethod
     def parse(cls, pattern: str,
@@ -127,7 +122,19 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         return cls(pattern, pattern, True, strategy)
 
     @classmethod
-    def parse_strict(cls, id_string):
+    def parse_strict(cls, id_string: str) -> 'MetadataCriterion':
+        """
+        Parses an instance ID string and returns a criterion for exact matching.
+
+        Unlike `parse()`, this method requires a valid instance ID format and always uses exact matching
+        with match_any_field=False. Use this when you need to match a specific known instance.
+
+        Args:
+            id_string: Instance ID string in "job_id@run_id" format.
+
+        Returns:
+            A criterion configured for exact matching of the specified instance.
+        """
         instance_id = InstanceID.parse(id_string)
         return cls(instance_id.job_id, instance_id.run_id, match_any_field=False, strategy=MatchingStrategy.EXACT)
 
@@ -216,13 +223,6 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         return f"<{', '.join(fields)}>" if fields else ""
 
 
-def compound_instance_filter(metadata_criteria):
-    def match(metadata):
-        return not metadata_criteria or any(criteria(metadata) for criteria in metadata_criteria)
-
-    return match
-
-
 @dataclass
 class TerminationCriterion(MatchCriteria[TerminationInfo]):
     """
@@ -230,14 +230,14 @@ class TerminationCriterion(MatchCriteria[TerminationInfo]):
     """
     status: Optional[TerminationStatus] = None
     outcome: Outcome = Outcome.ANY
-    ended_range: DateTimeRange = None
+    ended_range: Optional[DateTimeRange] = None
 
     @classmethod
-    def deserialize(cls, data: Dict[str, Any]) -> 'TerminationCriterion':
+    def deserialize(cls, as_dict: Dict[str, Any]) -> 'TerminationCriterion':
         return cls(
-            status=TerminationStatus[data['status']] if data.get('status') else None,
-            outcome=Outcome[data.get('outcome', Outcome.ANY.name)],
-            ended_range=DateTimeRange.deserialize(data['ended_range']) if data.get('ended_range') else None
+            status=TerminationStatus[as_dict['status']] if as_dict.get('status') else None,
+            outcome=Outcome[as_dict.get('outcome', Outcome.ANY.name)],
+            ended_range=DateTimeRange.deserialize(as_dict['ended_range']) if as_dict.get('ended_range') else None
         )
 
     def serialize(self) -> Dict[str, Any]:
@@ -322,15 +322,15 @@ class LifecycleCriterion(MatchCriteria[RunLifecycle]):
         return data
 
     @classmethod
-    def deserialize(cls, data: Dict[str, Any]) -> 'LifecycleCriterion':
+    def deserialize(cls, as_dict: Dict[str, Any]) -> 'LifecycleCriterion':
         """Deserialize from a dictionary."""
         return cls(
-            stage=Stage[data['stage']] if data.get('stage') else None,
-            created=DateTimeRange.deserialize(data['created_range']) if data.get('created_range') else None,
-            started=DateTimeRange.deserialize(data['started_range']) if data.get('started_range') else None,
-            ended=DateTimeRange.deserialize(data['ended_range']) if data.get('ended_range') else None,
-            total_run_time=TimeRange.deserialize(data['exec_range']) if data.get('exec_range') else None,
-            termination=TerminationCriterion.deserialize(data['termination']) if data.get('termination') else None
+            stage=Stage[as_dict['stage']] if as_dict.get('stage') else None,
+            created=DateTimeRange.deserialize(as_dict['created_range']) if as_dict.get('created_range') else None,
+            started=DateTimeRange.deserialize(as_dict['started_range']) if as_dict.get('started_range') else None,
+            ended=DateTimeRange.deserialize(as_dict['ended_range']) if as_dict.get('ended_range') else None,
+            total_run_time=TimeRange.deserialize(as_dict['exec_range']) if as_dict.get('exec_range') else None,
+            termination=TerminationCriterion.deserialize(as_dict['termination']) if as_dict.get('termination') else None
         )
 
     def __call__(self, lifecycle: RunLifecycle):
@@ -472,16 +472,16 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
     match_type: PhaseMatch = PhaseMatch.ROOT
 
     @classmethod
-    def deserialize(cls, data: Dict[str, Any]) -> 'PhaseCriterion':
+    def deserialize(cls, as_dict: Dict[str, Any]) -> 'PhaseCriterion':
         """Deserialize a dictionary into a PhaseCriterion instance."""
         return cls(
-            phase_type=data.get('phase_type'),
-            phase_id=data.get('phase_id'),
-            idle=data.get('idle'),
-            phase_name=data.get('phase_name'),
-            attributes=data.get('attributes'),
-            lifecycle=LifecycleCriterion.deserialize(data.get('lifecycle')) if data.get('lifecycle') else None,
-            match_type=PhaseMatch[data.get('match_type', PhaseMatch.ROOT.name)]
+            phase_type=as_dict.get('phase_type'),
+            phase_id=as_dict.get('phase_id'),
+            idle=as_dict.get('idle'),
+            phase_name=as_dict.get('phase_name'),
+            attributes=as_dict.get('attributes'),
+            lifecycle=LifecycleCriterion.deserialize(as_dict.get('lifecycle')) if as_dict.get('lifecycle') else None,
+            match_type=PhaseMatch[as_dict.get('match_type', PhaseMatch.ROOT.name)]
         )
 
     def serialize(self) -> Dict[str, Any]:
@@ -496,12 +496,13 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
             'match_type': self.match_type.name
         }
 
-    def matches_phase(self, phase_detail: PhaseDetail) -> bool:
-        """
-        Check if a single phase matches this criterion.
+    def _matches_phase(self, phase_detail: PhaseDetail, check_lifecycle: bool = False) -> bool:
+        """Check if a single phase matches this criterion.
 
+        Args:
+            phase_detail: The phase to check
+            check_lifecycle: Whether to check lifecycle criteria (only for root phase)
         """
-        # Check basic fields for all match types
         if self.phase_type and phase_detail.phase_type != self.phase_type:
             return False
 
@@ -521,23 +522,32 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
                 if phase_detail.attributes.get(key) != value:
                     return False
 
-        if self.lifecycle and not self.lifecycle.matches(phase_detail.lifecycle):
+        if check_lifecycle and self.lifecycle and not self.lifecycle.matches(phase_detail.lifecycle):
             return False
 
         return True
+
+    def _matches_any_descendant(self, phase: PhaseDetail) -> bool:
+        """Recursively check if any descendant phase matches (without lifecycle)."""
+        for child in phase.children:
+            if self._matches_phase(child) or self._matches_any_descendant(child):
+                return True
+        return False
 
     def __call__(self, phase: PhaseDetail):
         return self.matches(phase)
 
     def matches(self, phase: PhaseDetail) -> bool:
-        """Check if phase or its children match based on match_type."""
+        """Check if phase or its descendants match based on match_type."""
         match self.match_type:
             case PhaseMatch.ROOT:
-                return self.matches_phase(phase)
+                return self._matches_phase(phase, check_lifecycle=True)
             case PhaseMatch.ALL:
-                return self.matches_phase(phase) or any(self.matches_phase(c) for c in phase.children)
+                return self._matches_phase(phase, check_lifecycle=True) or self._matches_any_descendant(phase)
             case PhaseMatch.DESCENDANTS_ONLY:
-                return any(self.matches_phase(c) for c in phase.children)
+                return self._matches_any_descendant(phase)
+            case _:
+                raise AssertionError(f"Unknown match type: {self.match_type}")
 
     def __bool__(self) -> bool:
         """Check if any criteria are set."""
@@ -551,7 +561,7 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
             fields.append(f"type='{self.phase_type}'")
         if self.phase_id:
             fields.append(f"id='{self.phase_id}'")
-        if self.idle:
+        if self.idle is not None:
             fields.append(f"idle={self.idle}")
         if self.phase_name:
             fields.append(f"name='{self.phase_name}'")
@@ -694,6 +704,10 @@ class JobRunCriteria(MatchCriteria[JobRun]):
             if criteria_strs := [str(c) for c in self.phase_criteria if bool(c)]:
                 parts.append(f"phase={''.join(criteria_strs)}")
         return f"{' '.join(parts)}" if parts else ""
+
+    def __repr__(self) -> str:
+        return (f"JobRunCriteria(metadata_criteria={self.metadata_criteria!r}, "
+                f"lifecycle_criteria={self.lifecycle_criteria!r}, phase_criteria={self.phase_criteria!r})")
 
     def _last_lc_criterion(self):
         if not self.lifecycle_criteria:
