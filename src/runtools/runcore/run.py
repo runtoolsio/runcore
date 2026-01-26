@@ -190,21 +190,30 @@ class RunLifecycle:
 
     @property
     def elapsed(self) -> Optional[datetime.timedelta]:
-        """
-        For naive-UTC timestamps:
-          - If started_at is None → None
-          - Otherwise: (termination time if ended) or utc_now() minus started_at
+        """Time elapsed since the run started, including still-running jobs.
+
+        Returns the duration from started_at to now (if running) or to termination (if ended).
+        Use this for display/sorting when you need a value for both running and completed jobs.
+
+        Returns:
+            None if not started, otherwise the elapsed duration.
         """
         if not self.started_at:
             return None
 
-        # assumed also naive UTC, from your parser
         end = self.termination.terminated_at if self.termination else utc_now()
         return end - self.started_at
 
     @property
     def total_run_time(self) -> Optional[datetime.timedelta]:
-        """Calculates the duration between start and end of the phase."""
+        """Final run duration for completed jobs only.
+
+        Returns the duration from started_at to terminated_at. Only available for jobs that have
+        both started and terminated. Use this for filtering/statistics on completed jobs.
+
+        Returns:
+            None if not started or not terminated, otherwise the total duration.
+        """
         if not self.started_at or not self.termination:
             return None
         return self.termination.terminated_at - self.started_at

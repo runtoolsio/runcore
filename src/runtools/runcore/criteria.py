@@ -25,7 +25,7 @@ class MatchCriteria(ABC, Generic[T]):
         :param tested: The item to check against the criteria.
         :return: True if the item matches the criteria, False otherwise.
         """
-        pass
+        raise NotImplementedError
 
 
 def negate_id(id_value: str) -> str:
@@ -204,10 +204,10 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
             match_any = as_dict.get('match_any_id', False)
 
         return cls(
-            as_dict['job_id'],
-            as_dict['run_id'],
+            as_dict.get('job_id', ''),
+            as_dict.get('run_id', ''),
             match_any,
-            MatchingStrategy[as_dict['strategy'].upper()],
+            MatchingStrategy[as_dict.get('strategy', 'exact').upper()],
         )
 
     def __str__(self) -> str:
@@ -316,7 +316,7 @@ class LifecycleCriterion(MatchCriteria[RunLifecycle]):
         if self.ended:
             data['ended_range'] = self.ended.serialize()
         if self.total_run_time:
-            data['exec_range'] = self.total_run_time.serialize()
+            data['total_run_time_range'] = self.total_run_time.serialize()
         if self.termination:
             data['termination'] = self.termination.serialize()
         return data
@@ -329,7 +329,7 @@ class LifecycleCriterion(MatchCriteria[RunLifecycle]):
             created=DateTimeRange.deserialize(as_dict['created_range']) if as_dict.get('created_range') else None,
             started=DateTimeRange.deserialize(as_dict['started_range']) if as_dict.get('started_range') else None,
             ended=DateTimeRange.deserialize(as_dict['ended_range']) if as_dict.get('ended_range') else None,
-            total_run_time=TimeRange.deserialize(as_dict['exec_range']) if as_dict.get('exec_range') else None,
+            total_run_time=TimeRange.deserialize(as_dict['total_run_time_range']) if as_dict.get('total_run_time_range') else None,
             termination=TerminationCriterion.deserialize(as_dict['termination']) if as_dict.get('termination') else None
         )
 
@@ -710,19 +710,28 @@ class JobRunCriteria(MatchCriteria[JobRun]):
                 f"lifecycle_criteria={self.lifecycle_criteria!r}, phase_criteria={self.phase_criteria!r})")
 
     def _last_lc_criterion(self):
+        """Get or create the last lifecycle criterion for fluent modification.
+
+        Note: The fluent methods (created, started, ended) modify the last lifecycle criterion in place.
+        Calling them multiple times on the same instance updates the same criterion rather than adding new ones.
+        To add separate OR conditions, use `+=` with new LifecycleCriterion instances instead.
+        """
         if not self.lifecycle_criteria:
             self.lifecycle_criteria = [LifecycleCriterion()]
         return self.lifecycle_criteria[-1]
 
     def created(self, since=None, until=None, until_incl=False):
+        """Set created time range on the current lifecycle criterion. See _last_lc_criterion for mutation behavior."""
         self._last_lc_criterion().created = DateTimeRange(since, until, until_incl)
         return self
 
     def started(self, since=None, until=None, until_incl=False):
+        """Set started time range on the current lifecycle criterion. See _last_lc_criterion for mutation behavior."""
         self._last_lc_criterion().started = DateTimeRange(since, until, until_incl)
         return self
 
     def ended(self, since=None, until=None, until_incl=False):
+        """Set ended time range on the current lifecycle criterion. See _last_lc_criterion for mutation behavior."""
         self._last_lc_criterion().ended = DateTimeRange(since, until, until_incl)
         return self
 
