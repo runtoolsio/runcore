@@ -234,11 +234,17 @@ def _build_where_clause(run_match, alias=''):
 
         return conds, prms
 
+    lifecycle_conditions = []
+    lifecycle_params = []
     for lc in run_match.lifecycle_criteria:
         phase_conditions, phase_params = add_lifecycle_conditions(lc)
         if phase_conditions:
-            conditions.append('(' + ' AND '.join(phase_conditions) + ')')
-            params.extend(phase_params)
+            lifecycle_conditions.append('(' + ' AND '.join(phase_conditions) + ')')
+            lifecycle_params.extend(phase_params)
+
+    if lifecycle_conditions:
+        conditions.append('(' + ' OR '.join(lifecycle_conditions) + ')')
+        params.extend(lifecycle_params)
 
     return (" WHERE " + " AND ".join(conditions), params) if conditions else ("", [])
 
@@ -262,9 +268,10 @@ class SQLite(Persistence):
 
     @override
     def open(self):
-        if self._conn is not None:
-            raise InvalidStateError("Database connection already opened")
-        self._conn = self._connection_factory()
+        with self._conn_lock:
+            if self._conn is not None:
+                raise InvalidStateError("Database connection already opened")
+            self._conn = self._connection_factory()
         self.check_tables_exist()
 
     def is_open(self):
@@ -386,7 +393,10 @@ class SQLite(Persistence):
         statement += where_clause
 
         if last:
-            statement += " GROUP BY h.job_id HAVING ROWID = max(ROWID) "
+            if where_clause:
+                statement += " AND h.rowid IN (SELECT MAX(rowid) FROM history GROUP BY job_id)"
+            else:
+                statement += " WHERE h.rowid IN (SELECT MAX(rowid) FROM history GROUP BY job_id)"
 
         # Apply the sort direction to all columns in the ORDER BY clause
         sort_direction = " ASC" if asc else " DESC"
@@ -463,25 +473,27 @@ class SQLite(Persistence):
             SELECT
                 h.job_id,
                 count(h.job_id) AS "count",
-                min(created) AS "first_created",
-                max(created) AS "last_created",
+                min(h.created) AS "first_created",
+                max(h.created) AS "last_created",
                 min(h.exec_time) AS "fastest_time",
                 avg(h.exec_time) AS "average_time",
                 max(h.exec_time) AS "slowest_time",
                 last.exec_time AS "last_time",
                 last.termination_status AS "last_term_status",
                 COUNT(CASE WHEN h.termination_status BETWEEN {Outcome.FAULT.value.start} AND {Outcome.FAULT.value.stop} THEN 1 ELSE NULL END) AS failed,
-                h.warnings
+                last.warnings AS "last_warnings"
             FROM
                 history h
             INNER JOIN
-                (SELECT job_id, exec_time, termination_status FROM history h {where_clause} GROUP BY job_id HAVING ROWID = max(ROWID)) AS last
+                (SELECT job_id, exec_time, termination_status, warnings
+                 FROM history
+                 WHERE rowid IN (SELECT MAX(rowid) FROM history GROUP BY job_id)) AS last
                 ON h.job_id = last.job_id
             {where_clause}
             GROUP BY
                 h.job_id
         '''
-        c = self._conn.execute(sql, where_params + where_params)
+        c = self._conn.execute(sql, where_params)
 
         def to_job_stats(t):
             job_id = t[0]
@@ -549,6 +561,7 @@ class SQLite(Persistence):
 
     @override
     def close(self):
-        if self._conn:
-            self._conn.close()
-            self._conn = None
+        with self._conn_lock:
+            if self._conn:
+                self._conn.close()
+                self._conn = None
