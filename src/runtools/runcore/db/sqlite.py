@@ -438,7 +438,10 @@ class SQLite(Persistence):
         Returns:
             int: Total count of job instances matching the specified criteria.
         """
-        return sum(s.count for s in (self.read_history_stats(run_match)))
+        where_clause, where_params = _build_where_clause(run_match, alias='h')
+        sql = f"SELECT COUNT(*) FROM history h {where_clause}"
+        c = self._conn.execute(sql, where_params)
+        return c.fetchone()[0]
 
     @override
     @ensure_open
@@ -470,28 +473,31 @@ class SQLite(Persistence):
 
         where_clause, where_params = _build_where_clause(run_match, alias='h')
         sql = f'''
+            WITH filtered AS (
+                SELECT * FROM history h
+                {where_clause}
+            ),
+            last_per_job AS (
+                SELECT job_id, MAX(rowid) AS max_rowid
+                FROM filtered
+                GROUP BY job_id
+            )
             SELECT
-                h.job_id,
-                count(h.job_id) AS "count",
-                min(h.created) AS "first_created",
-                max(h.created) AS "last_created",
-                min(h.exec_time) AS "fastest_time",
-                avg(h.exec_time) AS "average_time",
-                max(h.exec_time) AS "slowest_time",
-                last.exec_time AS "last_time",
-                last.termination_status AS "last_term_status",
-                COUNT(CASE WHEN h.termination_status BETWEEN {Outcome.FAULT.value.start} AND {Outcome.FAULT.value.stop} THEN 1 ELSE NULL END) AS failed,
-                last.warnings AS "last_warnings"
-            FROM
-                history h
-            INNER JOIN
-                (SELECT job_id, exec_time, termination_status, warnings
-                 FROM history
-                 WHERE rowid IN (SELECT MAX(rowid) FROM history GROUP BY job_id)) AS last
-                ON h.job_id = last.job_id
-            {where_clause}
-            GROUP BY
-                h.job_id
+                f.job_id,
+                COUNT(*) AS "count",
+                min(f.created) AS "first_created",
+                max(f.created) AS "last_created",
+                min(f.exec_time) AS "fastest_time",
+                avg(f.exec_time) AS "average_time",
+                max(f.exec_time) AS "slowest_time",
+                lh.exec_time AS "last_time",
+                lh.termination_status AS "last_term_status",
+                COUNT(CASE WHEN f.termination_status BETWEEN {Outcome.FAULT.value.start} AND {Outcome.FAULT.value.stop} THEN 1 END) AS failed,
+                lh.warnings AS "last_warnings"
+            FROM filtered f
+            JOIN last_per_job lp ON f.job_id = lp.job_id
+            JOIN filtered lh ON lh.rowid = lp.max_rowid
+            GROUP BY f.job_id
         '''
         c = self._conn.execute(sql, where_params)
 
@@ -500,11 +506,11 @@ class SQLite(Persistence):
             count = t[1]
             first_at = parse_dt_sql(t[2])
             last_at = parse_dt_sql(t[3])
-            fastest = datetime.timedelta(seconds=t[4]) if t[4] else None
-            average = datetime.timedelta(seconds=t[5]) if t[5] else None
-            slowest = datetime.timedelta(seconds=t[6]) if t[6] else None
-            last_time = datetime.timedelta(seconds=t[7]) if t[7] else None
-            last_term_status = TerminationStatus.from_code(t[8]) if t[8] else TerminationStatus.UNKNOWN
+            fastest = datetime.timedelta(seconds=t[4]) if t[4] is not None else None
+            average = datetime.timedelta(seconds=t[5]) if t[5] is not None else None
+            slowest = datetime.timedelta(seconds=t[6]) if t[6] is not None else None
+            last_time = datetime.timedelta(seconds=t[7]) if t[7] is not None else None
+            last_term_status = TerminationStatus.from_code(t[8]) if t[8] is not None else TerminationStatus.UNKNOWN
             failed_count = t[9] or 0
             warn_count = t[10] or 0
 
