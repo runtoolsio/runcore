@@ -44,10 +44,10 @@ def test_sort(sut):
     sut.store_job_runs(fake_job_run('j1'), fake_job_run('j2', offset_min=1), fake_job_run('j3', offset_min=-1))
 
     jobs = sut.read_history_runs()
-    assert jobs.job_ids == ['j3', 'j1', 'j2']
+    assert [j.job_id for j in jobs] == ['j3', 'j1', 'j2']
 
     jobs = sut.read_history_runs(asc=False)
-    assert jobs.job_ids == ['j2', 'j1', 'j3']
+    assert [j.job_id for j in jobs] == ['j2', 'j1', 'j3']
 
 
 def test_limit(sut):
@@ -107,21 +107,21 @@ def test_interval(sut):
 
     # Test ended_from
     jobs = sut.read_history_runs(JobRunCriteria().created(since=dt(2023, 4, 23)))
-    assert jobs.job_ids == ['j1']
+    assert [j.job_id for j in jobs] == ['j1']
 
     # Test ended_to inclusive
     jobs = sut.read_history_runs(JobRunCriteria().ended(until=dt(2023, 4, 22, 23, 59, 59), until_incl=True))
-    assert sorted(jobs.job_ids) == ['j2', 'j3']
+    assert sorted([j.job_id for j in jobs]) == ['j2', 'j3']
 
     # Test ended_to exclusive
     jobs = sut.read_history_runs(JobRunCriteria().ended(until=dt(2023, 4, 22, 23, 59, 59)))
-    assert jobs.job_ids == ['j3']
+    assert [j.job_id for j in jobs] == ['j3']
 
     # Test combined ended_from (incl) and created_to
     jobs = sut.read_history_runs(JobRunCriteria()
                                  .created(until=dt(2023, 4, 23), until_incl=True)
                                  .ended(since=dt(2023, 4, 22, 23, 59, 59)))
-    assert sorted(jobs.job_ids) == ['j1', 'j2']
+    assert sorted([j.job_id for j in jobs]) == ['j1', 'j2']
 
 
 def test_termination_status(sut):
@@ -132,7 +132,7 @@ def test_termination_status(sut):
 
     criteria = JobRunCriteria().add(LifecycleCriterion(termination=TerminationCriterion(status=TerminationStatus.FAILED)))
     jobs = sut.read_history_runs(criteria)
-    assert jobs.job_ids == ['j2']
+    assert [j.job_id for j in jobs] == ['j2']
 
 
 def test_termination_outcome(sut):
@@ -143,7 +143,7 @@ def test_termination_outcome(sut):
 
     criteria = JobRunCriteria().add(LifecycleCriterion(termination=TerminationCriterion(outcome=Outcome.FAULT)))
     jobs = sut.read_history_runs(criteria)
-    assert jobs.job_ids == ['j2']
+    assert [j.job_id for j in jobs] == ['j2']
 
 
 def test_total_run_time(sut):
@@ -155,4 +155,4 @@ def test_total_run_time(sut):
     # Filter runs between 5 and 15 minutes
     criteria = JobRunCriteria().add(LifecycleCriterion(total_run_time=TimeRange(min=timedelta(minutes=5), max=timedelta(minutes=15))))
     jobs = sut.read_history_runs(criteria)
-    assert jobs.job_ids == ['j2']
+    assert [j.job_id for j in jobs] == ['j2']

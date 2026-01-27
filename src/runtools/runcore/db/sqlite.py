@@ -15,7 +15,7 @@ from runtools.runcore import paths
 from runtools.runcore.criteria import LifecycleCriterion, SortOption
 from runtools.runcore.db import Persistence
 from runtools.runcore.err import InvalidStateError
-from runtools.runcore.job import JobStats, JobRun, JobRuns, JobInstanceMetadata, InstanceID
+from runtools.runcore.job import JobStats, JobRun, JobInstanceMetadata, InstanceID
 from runtools.runcore.output import OutputLocation
 from runtools.runcore.run import TerminationStatus, Outcome, PhaseDetail, RunLifecycle, Fault, Stage
 from runtools.runcore.status import Status
@@ -311,9 +311,9 @@ class SQLite(Persistence):
 
     @override
     def read_history_runs(self, run_match=None, sort=SortOption.ENDED, *,
-                          asc=True, limit=-1, offset=-1, last=False) -> JobRuns:
+                          asc=True, limit=-1, offset=-1, last=False) -> list[JobRun]:
         """See `Persistence.read_history_runs`."""
-        return JobRuns(self.iter_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last))
+        return list(self.iter_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last))
 
     @override
     def iter_history_runs(self, run_match=None, sort=SortOption.ENDED, *,

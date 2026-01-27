@@ -70,11 +70,11 @@ class Job:
         """Checks if two Job objects are equal based on their unique ID and properties."""
         if not isinstance(other, Job):
             return False
-        return self._id == other._id and self._type == other._type and self._properties == other._properties
+        return self._id == other._id and self._properties == other._properties
 
     def __hash__(self) -> int:
         """Returns the hash based on the job's unique ID and properties."""
-        return hash((self._id, self._type, frozenset(self._properties.items())))
+        return hash((self._id, frozenset(self._properties.items())))
 
 
 class JobMatchingCriteria:
@@ -114,7 +114,7 @@ class JobMatchingCriteria:
 
         for k, v in self.properties.items():
             prop = job.properties.get(k)
-            if not prop:
+            if prop is None:
                 return False
             if not self.property_match_strategy(prop, v):
                 return False
@@ -585,31 +585,6 @@ class JobRun:
         for phase in self.phases:
             phase.accept_visitor(visitor)
         return visitor
-
-
-class JobRuns(list):
-    """
-    List of job instances with auxiliary methods.
-    """
-
-    def __init__(self, runs):
-        super().__init__(runs)
-
-    @property
-    def job_ids(self) -> List[str]:
-        return [r.job_id for r in self]
-
-    def in_phase(self, phase) -> 'JobRuns':
-        return JobRuns([job_run for job_run in self if job_run.lifecycle.current_phase_id is phase])
-
-    def in_protected_phase(self, protection_type, protection_id):
-        return JobRuns([job_run for job_run in self if job_run.in_protected_phase(protection_type, protection_id)])
-
-    def in_stage(self, stage):
-        return [job_run for job_run in self if job_run.lifecycle.stage is stage]
-
-    def to_dict(self, include_empty=True) -> Dict[str, Any]:
-        return {"runs": [run.serialize(include_empty=include_empty) for run in self]}
 
 
 @dataclass(frozen=True)
