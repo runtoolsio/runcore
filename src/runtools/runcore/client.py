@@ -24,7 +24,6 @@ and broadcast operations across multiple instance servers.
 """
 
 import json
-import logging
 from dataclasses import dataclass
 from json import JSONDecodeError
 from typing import List, Any, Optional, TypeVar, Generic, Callable, Iterable
@@ -35,8 +34,6 @@ from runtools.runcore.job import JobRun, InstanceID
 from runtools.runcore.output import OutputLine
 from runtools.runcore.util.json import JsonRpcResponse, JsonRpcParseError, ErrorType, ErrorCode
 from runtools.runcore.util.socket import StreamSocketClient, SocketRequestResult
-
-log = logging.getLogger(__name__)
 
 T = TypeVar('T')
 
