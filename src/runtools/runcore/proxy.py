@@ -61,11 +61,7 @@ class JobInstanceProxy(JobInstance):
         pass
 
     def stop(self, stop_reason=StopReason.STOPPED):
-        # Implement stop reason
-        self._client.stop_instance(self._server_address, self._instance_id)
-
-    def interrupted(self):
-        pass
+        self._client.stop_instance(self._server_address, self._instance_id, stop_reason)
 
     def add_observer_lifecycle(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
         pass

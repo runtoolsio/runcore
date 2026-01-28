@@ -31,6 +31,7 @@ from typing import List, Any, Optional, TypeVar, Generic, Callable, Iterable
 from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.err import RuntoolsException
 from runtools.runcore.job import JobRun, InstanceID
+from runtools.runcore.run import StopReason
 from runtools.runcore.output import OutputLine
 from runtools.runcore.util.json import JsonRpcResponse, JsonRpcParseError, ErrorType, ErrorCode
 from runtools.runcore.util.socket import StreamSocketClient, SocketRequestResult
@@ -326,12 +327,14 @@ class LocalInstanceClient(StreamSocketClient):
         return self.call_method(
             server_address, "get_active_runs", run_match.serialize(), retval_mapper=_job_runs_retval_mapper)
 
-    def stop_instance(self, server_address: str, instance_id: InstanceID) -> None:
+    def stop_instance(self, server_address: str, instance_id: InstanceID, stop_reason: StopReason = StopReason.STOPPED
+                      ) -> None:
         """Stops a specific job instance.
 
         Args:
             server_address: Address of the target server
             instance_id: ID of the instance to stop
+            stop_reason: Reason for stopping the instance
 
         Raises:
             ValueError: If instance_id is not provided
@@ -340,7 +343,7 @@ class LocalInstanceClient(StreamSocketClient):
         if not instance_id:
             raise ValueError('Instance ID is mandatory for the stop operation')
 
-        self.call_method(server_address, "stop_instance", instance_id.serialize())
+        self.call_method(server_address, "stop_instance", instance_id.serialize(), stop_reason.name)
 
     def get_output_tail(self, server_address: str, instance_id: InstanceID, max_lines: int = 100) -> List[OutputLine]:
         """Retrieves recent output lines from a specific job instance.
