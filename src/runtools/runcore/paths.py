@@ -12,7 +12,7 @@ Discussion:
 import getpass
 import os
 import re
-from importlib.resources import path
+from importlib.resources import as_file, files
 from pathlib import Path
 from typing import Generator, List, Callable, Union
 
@@ -38,7 +38,8 @@ def package_config_path(package, filename) -> Path:
     Get the path to the config file using importlib.resources.
     """
     try:
-        with path(package, filename) as config_path:
+        ref = files(package).joinpath(filename)
+        with as_file(ref) as config_path:
             return config_path
     except FileNotFoundError:
         raise ConfigFileNotFoundError(filename + ' config file not found')
@@ -203,18 +204,18 @@ def job_log_dir(env: str, job_id: str, create: bool = False) -> Path:
     Args:
         env: Name of the environment.
         job_id: Identifier of the job.
-        create: If True, create parent directories as needed.
+        create: If True, create the directory if it doesn't exist.
 
     Returns:
         Path to the job log dir.
     """
     base_dir = log_file_dir(create=create) if _is_root() else state_dir(create=create)
-    log_file = base_dir / env / "output" / job_id
+    log_dir = base_dir / env / "output" / job_id
 
     if create:
-        log_file.parent.mkdir(parents=True, exist_ok=True)
+        log_dir.mkdir(parents=True, exist_ok=True)
 
-    return log_file
+    return log_dir
 
 
 """
@@ -314,8 +315,8 @@ def files_in_subdir_provider(root_path: Path, file_names: Union[str, List[str]],
 
 def lock_dir(create: bool) -> Path:
     """
-    1. Root user: /run/lock/runcore
-    2. Non-root user: /tmp/taro_${USER}
+    1. Root user: /run/lock/runtools
+    2. Non-root user: /tmp/runtools_${USER}
 
     :param create: create path directories if not exist
     :return: directory path for file locks
@@ -323,9 +324,9 @@ def lock_dir(create: bool) -> Path:
     """
 
     if _is_root():
-        path = Path('/run/lock/runcore')
+        path = Path('/run/lock/runtools')
     else:
-        path = Path(f"/tmp/taro_{getpass.getuser()}")
+        path = Path(f"/tmp/runtools_{getpass.getuser()}")
 
     if create:
         path.mkdir(mode=0o700, exist_ok=True)
@@ -335,8 +336,8 @@ def lock_dir(create: bool) -> Path:
 
 def lock_path(lock_name: str, create: bool) -> Path:
     """
-    1. Root user: /run/lock/runcore/{lock-name}
-    2. Non-root user: /tmp/taro_${USER}/{lock-name}
+    1. Root user: /run/lock/runtools/{lock-name}
+    2. Non-root user: /tmp/runtools_${USER}/{lock-name}
 
     :param lock_name: socket file name
     :param create: create path directories if not exist
