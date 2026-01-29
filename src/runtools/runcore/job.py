@@ -760,106 +760,60 @@ class JobInstanceManager(ABC):
         pass
 
 
-class JobInstanceObservable(ABC):
+class JobInstanceObservable:
     """
-    Interface defining the contract for objects that can be observed for job instance events.
+    Allows registering observers for job instance events.
 
-    This interface provides methods to register and unregister observers for different
-    types of job instance events: stage transitions, phase transitions, and output events.
+    Use this instead of inheriting directly from JobInstanceNotifications to avoid
+    exposing internal notification details (bind/unbind, notification fields, etc.).
     """
 
-    @abstractmethod
+    def __init__(self, notifications: 'JobInstanceNotifications'):
+        self._notifications = notifications
+
     def add_observer_all_events(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
-        """
-        Register an observer for all event types: stage, transition, and output events.
+        self._notifications.add_observer_all_events(observer, priority)
 
-        Args:
-            observer: The observer to register for all event types
-            priority: Priority level for the observer (lower numbers = higher priority)
-        """
-        pass
-
-    @abstractmethod
     def remove_observer_all_events(self, observer):
-        """
-        Unregister an observer from all event types: stage, transition, and output events.
+        self._notifications.remove_observer_all_events(observer)
 
-        Args:
-            observer: The observer to unregister from all event types
-        """
-        pass
-
-    @abstractmethod
     def add_observer_lifecycle(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
-        """
-        Register an observer for stage events.
+        self._notifications.add_observer_lifecycle(observer, priority)
 
-        Args:
-            observer: The observer to register for stage events
-            priority: Priority level for the observer (lower numbers = higher priority)
-        """
-        pass
-
-    @abstractmethod
     def remove_observer_lifecycle(self, observer):
-        """
-        Unregister an observer from stage events.
+        self._notifications.remove_observer_lifecycle(observer)
 
-        Args:
-            observer: The observer to unregister from stage events
-        """
-        pass
-
-    @abstractmethod
     def add_observer_transition(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
-        """
-        Register an observer for transition events.
+        self._notifications.add_observer_transition(observer, priority)
 
-        Args:
-            observer: The observer to register for transition events
-            priority: Priority level for the observer (lower numbers = higher priority)
-
-        """
-        pass
-
-    @abstractmethod
     def remove_observer_transition(self, observer):
-        """
-        Unregister an observer from transition events.
+        self._notifications.remove_observer_transition(observer)
 
-        Args:
-            observer: The observer to unregister from transition events
-        """
-        pass
-
-    @abstractmethod
     def add_observer_output(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
-        """
-        Register an observer for output events.
+        self._notifications.add_observer_output(observer, priority)
 
-        Args:
-            observer: The observer to register for output events
-            priority: Priority level for the observer (lower numbers = higher priority)
-        """
-        pass
-
-    @abstractmethod
     def remove_observer_output(self, observer):
-        """
-        Unregister an observer from output events.
-
-        Args:
-            observer: The observer to unregister from output events
-        """
-        pass
+        self._notifications.remove_observer_output(observer)
 
 
 class JobInstanceNotifications:
 
     def __init__(self):
-        self._stage_notification = ObservableNotification[InstanceLifecycleObserver]()
-        self._transition_notification = ObservableNotification[InstanceTransitionObserver]()
-        self._output_notification = ObservableNotification[InstanceOutputObserver]()
+        self.lifecycle_notification = ObservableNotification[InstanceLifecycleObserver]()
+        self.transition_notification = ObservableNotification[InstanceTransitionObserver]()
+        self.output_notification = ObservableNotification[InstanceOutputObserver]()
+
+    def bind(self, target: 'JobInstanceNotifications', priority: int = DEFAULT_OBSERVER_PRIORITY) -> None:
+        """Bind this notification to forward all events to the target notification."""
+        self.lifecycle_notification.add_observer(target.lifecycle_notification.observer_proxy, priority)
+        self.transition_notification.add_observer(target.transition_notification.observer_proxy, priority)
+        self.output_notification.add_observer(target.output_notification.observer_proxy, priority)
+
+    def unbind(self, target: 'JobInstanceNotifications') -> None:
+        """Stop forwarding events to the target notification."""
+        self.lifecycle_notification.remove_observer(target.lifecycle_notification.observer_proxy)
+        self.transition_notification.remove_observer(target.transition_notification.observer_proxy)
+        self.output_notification.remove_observer(target.output_notification.observer_proxy)
 
     def add_observer_all_events(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
         self.add_observer_lifecycle(observer, priority)
@@ -872,22 +826,22 @@ class JobInstanceNotifications:
         self.remove_observer_output(observer)
 
     def add_observer_lifecycle(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
-        self._stage_notification.add_observer(observer, priority)
+        self.lifecycle_notification.add_observer(observer, priority)
 
     def remove_observer_lifecycle(self, observer):
-        self._stage_notification.remove_observer(observer)
+        self.lifecycle_notification.remove_observer(observer)
 
     def add_observer_transition(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
-        self._transition_notification.add_observer(observer, priority)
+        self.transition_notification.add_observer(observer, priority)
 
     def remove_observer_transition(self, observer):
-        self._transition_notification.remove_observer(observer)
+        self.transition_notification.remove_observer(observer)
 
     def add_observer_output(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
-        self._output_notification.add_observer(observer, priority)
+        self.output_notification.add_observer(observer, priority)
 
     def remove_observer_output(self, observer):
-        self._output_notification.remove_observer(observer)
+        self.output_notification.remove_observer(observer)
 
 
 class InstanceEventsObserver(InstanceLifecycleObserver, InstanceTransitionObserver, InstanceOutputObserver, ABC):

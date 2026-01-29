@@ -34,7 +34,6 @@ from runtools.runcore.job import JobInstanceObservable, JobInstance, InstanceLif
     JobRun
 from runtools.runcore.listening import EventReceiver, InstanceEventReceiver
 from runtools.runcore.proxy import JobInstanceProxy
-from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
 
 log = logging.getLogger(__name__)
 
@@ -409,13 +408,13 @@ class LocalConnector(EnvironmentConnector):
     """
 
     def __init__(self, env_id, connector_layout, persistence, client, event_receiver):
+        JobInstanceObservable.__init__(self, InstanceEventReceiver())
         self._env_id = env_id
         self._layout = connector_layout
         self._persistence = persistence
         self._client = client
         self._event_receiver = event_receiver
-        self._instance_event_receiver = InstanceEventReceiver()
-        self._event_receiver.register_handler(self._instance_event_receiver)
+        self._event_receiver.register_handler(self._notifications)
 
     @property
     def env_id(self):
@@ -475,30 +474,6 @@ class LocalConnector(EnvironmentConnector):
 
     def read_history_stats(self, run_match=None):
         return self._persistence.read_history_stats(run_match)
-
-    def add_observer_all_events(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
-        self._instance_event_receiver.add_observer_all_events(observer, priority)
-
-    def remove_observer_all_events(self, observer):
-        self._instance_event_receiver.remove_observer_all_events(observer)
-
-    def add_observer_lifecycle(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
-        self._instance_event_receiver.add_observer_lifecycle(observer, priority)
-
-    def remove_observer_lifecycle(self, observer):
-        self._instance_event_receiver.remove_observer_lifecycle(observer)
-
-    def add_observer_transition(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
-        self._instance_event_receiver.add_observer_transition(observer, priority)
-
-    def remove_observer_transition(self, observer):
-        self._instance_event_receiver.remove_observer_transition(observer)
-
-    def add_observer_output(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
-        self._instance_event_receiver.add_observer_output(observer, priority)
-
-    def remove_observer_output(self, observer):
-        self._instance_event_receiver.remove_observer_output(observer)
 
     def close(self):
         run_isolated_collect_exceptions(
