@@ -679,7 +679,7 @@ class InstanceTransitionEvent:
 class InstanceTransitionObserver(abc.ABC):
 
     @abstractmethod
-    def new_instance_transition(self, event: InstanceTransitionEvent):
+    def instance_transition_update(self, event: InstanceTransitionEvent):
         pass
 
 

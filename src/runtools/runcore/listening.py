@@ -106,7 +106,7 @@ class InstanceEventReceiver(JobInstanceNotifications):
         if event_type == InstanceLifecycleEvent.EVENT_TYPE:
             self._stage_notification.observer_proxy.instance_lifecycle_update(InstanceLifecycleEvent.deserialize(event))
         elif event_type == InstanceTransitionEvent.EVENT_TYPE:
-            self._transition_notification.observer_proxy.new_instance_transition(
+            self._transition_notification.observer_proxy.instance_transition_update(
                 InstanceTransitionEvent.deserialize(event))
         elif event_type == InstanceOutputEvent.EVENT_TYPE:
             self._output_notification.observer_proxy.instance_output_update(InstanceOutputEvent.deserialize(event))
