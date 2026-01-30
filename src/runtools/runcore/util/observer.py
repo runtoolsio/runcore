@@ -53,7 +53,11 @@ O = TypeVar("O")
 
 class ObservableNotification(Generic[O]):
 
-    def __init__(self, *, error_hook: Optional[Callable[[O, Tuple[Any], Exception], None]] = None, force_reraise=False):
+    def __init__(self, *,
+                 event_filter: Optional[Callable[[Any], bool]] = None,
+                 error_hook: Optional[Callable[[O, Tuple[Any], Exception], None]] = None,
+                 force_reraise=False):
+        self.event_filter = event_filter
         self.error_hook: Optional[Callable[[O, Tuple[Any], Exception], None]] = error_hook
         self.force_reraise = force_reraise
         self._prioritized_observers = []
@@ -91,8 +95,15 @@ class _Proxy(Generic[O]):
 
     def __getattribute__(self, name: str) -> object:
         def method(*args, **kwargs):
+            notification = object.__getattribute__(self, "_notification")
+
+            if notification.event_filter:
+                event = args[0] if args else None
+                if event and not notification.event_filter(event):
+                    return
+
             exceptions = []
-            for observer in object.__getattribute__(self, "_notification").observers:
+            for observer in notification.observers:
                 try:
                     if isinstance(observer, (FunctionType, MethodType)) or (
                             callable(observer) and not hasattr(observer, name)):
@@ -100,10 +111,9 @@ class _Proxy(Generic[O]):
                     else:
                         getattr(observer, name)(*args, **kwargs)
                 except Exception as e:
-                    error_hook = object.__getattribute__(self, "_notification").error_hook
-                    if error_hook:
-                        error_hook(observer, args, e)
-                    if not error_hook or self._force_reraise:
+                    if notification.error_hook:
+                        notification.error_hook(observer, args, e)
+                    if not notification.error_hook or self._force_reraise:
                         exceptions.append(e)
 
             if exceptions:

@@ -12,10 +12,11 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import timedelta
-from enum import Enum, auto
-from typing import Dict, Any, List, Optional, Tuple, Iterator, ClassVar, Set, Callable
+from enum import Enum
+from typing import Dict, Any, List, Optional, Tuple, Iterator, ClassVar, Set, Callable, Protocol
 
 from runtools.runcore import util
+from runtools.runcore.criteria import MetadataCriterion
 from runtools.runcore.output import OutputLine, Output, OutputLocation
 from runtools.runcore.run import TerminationStatus, Fault, PhaseDetail, Stage, RunLifecycle, StopReason
 from runtools.runcore.status import Status
@@ -587,6 +588,11 @@ class JobRun:
         return visitor
 
 
+class InstanceEvent(Protocol):
+    """Protocol for job instance events that have an instance metadata field."""
+    instance: JobInstanceMetadata
+
+
 @dataclass(frozen=True)
 class InstanceLifecycleEvent:
     EVENT_TYPE = "instance_stage_update"
@@ -798,10 +804,11 @@ class JobInstanceObservable:
 
 class JobInstanceNotifications:
 
-    def __init__(self):
-        self.lifecycle_notification = ObservableNotification[InstanceLifecycleObserver]()
-        self.transition_notification = ObservableNotification[InstanceTransitionObserver]()
-        self.output_notification = ObservableNotification[InstanceOutputObserver]()
+    def __init__(self, instance_filter: MetadataCriterion = None):
+        event_filter = (lambda e: instance_filter.matches(e.instance)) if instance_filter else None
+        self.lifecycle_notification = ObservableNotification[InstanceLifecycleObserver](event_filter=event_filter)
+        self.transition_notification = ObservableNotification[InstanceTransitionObserver](event_filter=event_filter)
+        self.output_notification = ObservableNotification[InstanceOutputObserver](event_filter=event_filter)
 
     def bind(self, target: 'JobInstanceNotifications', priority: int = DEFAULT_OBSERVER_PRIORITY) -> None:
         """Bind this notification to forward all events to the target notification."""
