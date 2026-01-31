@@ -26,7 +26,7 @@ class _ProxyOutput(Output):
 class JobInstanceProxy(JobInstance):
     """Proxy to a job instance running in another process."""
 
-    def __init__(self, client, server_address, instance_id, connector_notifications: InstanceObservableNotifications):
+    def __init__(self, client, server_address, instance_id, connector_notifications: InstanceNotifications):
         self._client = client
         self._server_address = server_address
         self._instance_id = instance_id
@@ -43,7 +43,7 @@ class JobInstanceProxy(JobInstance):
 
         instance_filter = MetadataCriterion.exact_match(instance_id)
         self._notifications = InstanceObservableNotifications(instance_filter=instance_filter)
-        connector_notifications.bind(self._notifications)
+        self._notifications.bind_to(connector_notifications)
 
     @property
     def metadata(self):

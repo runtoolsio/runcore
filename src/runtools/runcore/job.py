@@ -785,17 +785,17 @@ class InstanceObservableNotifications(InstanceNotifications):
         self.output_notification = ObservableNotification[InstanceOutputObserver](
             event_filter=event_filter, error_hook=output_error_hook, force_reraise=force_reraise)
 
-    def bind(self, target: 'InstanceObservableNotifications', priority: int = DEFAULT_OBSERVER_PRIORITY) -> None:
-        """Bind this notification to forward all events to the target notification."""
-        self.lifecycle_notification.add_observer(target.lifecycle_notification.observer_proxy, priority)
-        self.transition_notification.add_observer(target.transition_notification.observer_proxy, priority)
-        self.output_notification.add_observer(target.output_notification.observer_proxy, priority)
+    def bind_to(self, source: InstanceNotifications, priority: int = DEFAULT_OBSERVER_PRIORITY) -> None:
+        """Register this notification to receive events from source."""
+        source.add_observer_lifecycle(self.lifecycle_notification.observer_proxy, priority)
+        source.add_observer_transition(self.transition_notification.observer_proxy, priority)
+        source.add_observer_output(self.output_notification.observer_proxy, priority)
 
-    def unbind(self, target: 'InstanceObservableNotifications') -> None:
-        """Stop forwarding events to the target notification."""
-        self.lifecycle_notification.remove_observer(target.lifecycle_notification.observer_proxy)
-        self.transition_notification.remove_observer(target.transition_notification.observer_proxy)
-        self.output_notification.remove_observer(target.output_notification.observer_proxy)
+    def unbind_from(self, source: InstanceNotifications) -> None:
+        """Stop receiving events from source."""
+        source.remove_observer_lifecycle(self.lifecycle_notification.observer_proxy)
+        source.remove_observer_transition(self.transition_notification.observer_proxy)
+        source.remove_observer_output(self.output_notification.observer_proxy)
 
     def add_observer_lifecycle(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
         self.lifecycle_notification.add_observer(observer, priority)
