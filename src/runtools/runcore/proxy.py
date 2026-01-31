@@ -1,10 +1,11 @@
+from typing import override
+
 from runtools.runcore.client import TargetNotFoundError, InstanceCallError
-from runtools.runcore.criteria import JobRunCriteria
+from runtools.runcore.criteria import JobRunCriteria, MetadataCriterion
 from runtools.runcore.err import RuntoolsException
-from runtools.runcore.job import JobRun, JobInstance, InstanceID
+from runtools.runcore.job import JobRun, JobInstance, InstanceID, InstanceNotifications, InstanceObservableNotifications
 from runtools.runcore.output import Output, Mode
 from runtools.runcore.run import StopReason
-from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
 
 
 class _ProxyOutput(Output):
@@ -25,7 +26,7 @@ class _ProxyOutput(Output):
 class JobInstanceProxy(JobInstance):
     """Proxy to a job instance running in another process."""
 
-    def __init__(self, client, server_address, instance_id):
+    def __init__(self, client, server_address, instance_id, connector_notifications: InstanceObservableNotifications):
         self._client = client
         self._server_address = server_address
         self._instance_id = instance_id
@@ -39,6 +40,10 @@ class JobInstanceProxy(JobInstance):
             raise ProxyInstanceNotFoundError(server_address, instance_id)
         self._job_run: JobRun = job_runs[0]
         self._output = _ProxyOutput(client, server_address, instance_id)
+
+        instance_filter = MetadataCriterion.exact_match(instance_id)
+        self._notifications = InstanceObservableNotifications(instance_filter=instance_filter)
+        connector_notifications.bind(self._notifications)
 
     @property
     def metadata(self):
@@ -63,17 +68,10 @@ class JobInstanceProxy(JobInstance):
     def stop(self, stop_reason=StopReason.STOPPED):
         self._client.stop_instance(self._server_address, self._instance_id, stop_reason)
 
-    def add_observer_lifecycle(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
-        pass
-
-    def remove_observer_lifecycle(self, observer):
-        pass
-
-    def add_observer_transition(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
-        pass
-
-    def remove_observer_transition(self, observer):
-        pass
+    @property
+    @override
+    def notifications(self) -> InstanceNotifications:
+        return self._notifications
 
 
 class PhaseControlProxy:

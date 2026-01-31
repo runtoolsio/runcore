@@ -472,7 +472,8 @@ class LocalConnector(EnvironmentConnector):
 
             server_address = result.server_address
             for job_run in result.retval:
-                instances.append(JobInstanceProxy(self._client, server_address, job_run.instance_id))
+                instances.append(JobInstanceProxy(
+                    self._client, server_address, job_run.instance_id, self._notifications))
 
         return instances
 
