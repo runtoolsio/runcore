@@ -21,7 +21,7 @@ import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
 from threading import Event, Lock
-from typing import Callable, Optional, Iterable, List
+from typing import Callable, Optional, Iterable, List, override
 
 from runtools.runcore import paths, util, db
 from runtools.runcore.client import LocalInstanceClient
@@ -30,7 +30,7 @@ from runtools.runcore.db import NullPersistence, sqlite
 from runtools.runcore.env import LocalEnvironmentConfig, \
     EnvironmentConfigUnion, DEFAULT_LOCAL_ENVIRONMENT
 from runtools.runcore.err import run_isolated_collect_exceptions
-from runtools.runcore.job import JobInstanceObservable, JobInstance, InstanceLifecycleObserver, InstanceLifecycleEvent, \
+from runtools.runcore.job import InstanceNotifications, JobInstance, InstanceLifecycleObserver, InstanceLifecycleEvent, \
     JobRun
 from runtools.runcore.listening import EventReceiver, InstanceEventReceiver
 from runtools.runcore.proxy import JobInstanceProxy
@@ -189,7 +189,7 @@ def ensure_component_dir(env_id, component_prefix, root_dir=None):
     return env_dir, component_dir
 
 
-class EnvironmentConnector(JobInstanceObservable, ABC):
+class EnvironmentConnector(ABC):
     """
     An abstract base class defining the interface for connecting to and interacting with an environment.
 
@@ -265,6 +265,11 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
     def read_history_stats(self, run_match=None):
         pass
 
+    @property
+    @abstractmethod
+    def notifications(self) -> InstanceNotifications:
+        """Register observers here to receive events from all instances in this environment."""
+
     # noinspection PyProtectedMember
     def watcher(self, run_match, *, search_past, stop_count=1):
         connector = self
@@ -303,7 +308,7 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
                 return self._cancelled
 
             def _close(self):
-                connector.remove_observer_lifecycle(self)
+                connector.notifications.remove_observer_lifecycle(self)
                 self._event.set()
 
             def _add_matched(self, matched):
@@ -339,14 +344,14 @@ class EnvironmentConnector(JobInstanceObservable, ABC):
                     self._timed_out = not completed
                     return False if self._cancelled else completed
                 finally:
-                    connector.remove_observer_lifecycle(self)
+                    connector.notifications.remove_observer_lifecycle(self)
 
             def cancel(self):
                 self._cancelled = True
                 self._close()
 
         watcher = Watcher()
-        self.add_observer_lifecycle(watcher)
+        self.notifications.add_observer_lifecycle(watcher)
         if search_past:
             watcher._watch_history()
             if watcher.remaining_count:
@@ -408,13 +413,18 @@ class LocalConnector(EnvironmentConnector):
     """
 
     def __init__(self, env_id, connector_layout, persistence, client, event_receiver):
-        JobInstanceObservable.__init__(self, InstanceEventReceiver())
+        self._notifications = InstanceEventReceiver()
         self._env_id = env_id
         self._layout = connector_layout
         self._persistence = persistence
         self._client = client
         self._event_receiver = event_receiver
         self._event_receiver.register_handler(self._notifications)
+
+    @property
+    @override
+    def notifications(self) -> InstanceNotifications:
+        return self._notifications
 
     @property
     def env_id(self):

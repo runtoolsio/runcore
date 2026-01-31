@@ -5,7 +5,7 @@ from json import JSONDecodeError
 
 from runtools.runcore import util
 from runtools.runcore.job import JobInstanceMetadata, \
-    InstanceTransitionEvent, InstanceOutputEvent, JobInstanceNotifications, InstanceLifecycleEvent
+    InstanceTransitionEvent, InstanceOutputEvent, InstanceObservableNotifications, InstanceLifecycleEvent
 from runtools.runcore.util.socket import DatagramSocketServer
 
 log = logging.getLogger(__name__)
@@ -100,7 +100,7 @@ class EventReceiver(DatagramSocketServer):
                 log.exception("event=[event_handler_failed] event_type=[%s] instance=[%s]", event_type, instance_meta)
 
 
-class InstanceEventReceiver(JobInstanceNotifications):
+class InstanceEventReceiver(InstanceObservableNotifications):
 
     def __call__(self, event_type, instance_metadata, event):
         if event_type == InstanceLifecycleEvent.EVENT_TYPE:
