@@ -106,6 +106,13 @@ class OutputLineFactory:
         ordinal = next(self._counter)
         return OutputLine(message, ordinal, is_error, source or self.default_source, fields)
 
+    def __getstate__(self):
+        return {'default_source': self.default_source, 'counter_value': next(self._counter)}
+
+    def __setstate__(self, state):
+        self.default_source = state['default_source']
+        self._counter = count(state['counter_value'])
+
 
 class OutputObserver(ABC):
 

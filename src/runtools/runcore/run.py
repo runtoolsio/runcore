@@ -157,8 +157,8 @@ class RunLifecycle:
     Encapsulates lifecycle information of a runnable unit, tracking its progression through
     different stages from creation to termination.
     """
-    created_at: datetime
-    started_at: Optional[datetime] = None
+    created_at: datetime.datetime
+    started_at: Optional[datetime.datetime] = None
     termination: Optional[TerminationInfo] = None
 
     @property
@@ -171,7 +171,7 @@ class RunLifecycle:
         return Stage.CREATED
 
     @property
-    def last_transition_at(self) -> datetime:
+    def last_transition_at(self) -> datetime.datetime:
         """Returns the timestamp of the last lifecycle transition."""
         if self.termination:
             return self.termination.terminated_at
@@ -409,7 +409,7 @@ class PhaseDetail:
                 started_at=phase.started_at,
                 termination=phase.termination
             ),
-            children=tuple([cls.from_phase(child) for child in phase.children] if phase.children else [])
+            children=tuple(cls.from_phase(child) for child in phase.children) if phase.children else ()
         )
 
     @classmethod
@@ -552,7 +552,7 @@ class PhaseDetail:
 class PhaseTransitionEvent:
     phase_detail: PhaseDetail
     new_stage: Stage
-    timestamp: datetime
+    timestamp: datetime.datetime
 
 
 class PhaseTransitionObserver(ABC):
