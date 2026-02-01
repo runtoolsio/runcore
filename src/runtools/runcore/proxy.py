@@ -3,9 +3,12 @@ from typing import override
 from runtools.runcore.client import TargetNotFoundError, InstanceCallError
 from runtools.runcore.criteria import JobRunCriteria, MetadataCriterion
 from runtools.runcore.err import RuntoolsException
-from runtools.runcore.job import JobRun, JobInstance, InstanceID, InstanceNotifications, InstanceObservableNotifications
+from runtools.runcore.job import (
+    JobRun, JobInstance, InstanceID, InstanceNotifications, InstanceObservableNotifications,
+    InstanceLifecycleEvent,
+)
 from runtools.runcore.output import Output, Mode
-from runtools.runcore.run import StopReason
+from runtools.runcore.run import StopReason, Stage
 
 
 class _ProxyOutput(Output):
@@ -30,6 +33,7 @@ class JobInstanceProxy(JobInstance):
         self._client = client
         self._server_address = server_address
         self._instance_id = instance_id
+        self._connector_notifications = connector_notifications
         try:
             job_runs = client.get_active_runs(server_address, JobRunCriteria.instance_match(instance_id))
         except TargetNotFoundError:
@@ -44,6 +48,11 @@ class JobInstanceProxy(JobInstance):
         instance_filter = MetadataCriterion.exact_match(instance_id)
         self._notifications = InstanceObservableNotifications(instance_filter=instance_filter)
         self._notifications.bind_to(connector_notifications)
+        self._notifications.add_observer_lifecycle(self._on_lifecycle_update)
+
+    def _on_lifecycle_update(self, event: InstanceLifecycleEvent):
+        if event.new_stage == Stage.ENDED:
+            self._notifications.unbind_from(self._connector_notifications)
 
     @property
     def metadata(self):
