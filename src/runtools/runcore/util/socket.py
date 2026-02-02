@@ -3,6 +3,8 @@ import errno
 import logging
 import os
 import socket
+import tempfile
+import uuid
 from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
@@ -514,3 +516,28 @@ class StreamSocketClient:
 
     def close(self):
         pass  # No persistent connection to close
+
+
+def clean_stale_sockets(server_sockets_provider) -> List[Path]:
+    """
+    Ping all sockets from the provider and remove any stale (dead) sockets.
+
+    Args:
+        server_sockets_provider: Callable returning iterable of server socket paths.
+
+    Returns:
+        List of Path objects for sockets that were removed.
+    """
+    client_path = os.path.join(tempfile.gettempdir(), f"runtools_client_{uuid.uuid4().hex}.sock")
+    client = DatagramSocketClient(server_sockets_provider, client_address=client_path)
+    try:
+        ping_result = client.ping()
+    finally:
+        client.close()
+
+    cleaned = []
+    for stale_socket in ping_result.stale_sockets:
+        stale_socket.unlink(missing_ok=True)
+        cleaned.append(stale_socket)
+
+    return cleaned
