@@ -222,10 +222,18 @@ def _build_where_clause(run_match, alias=''):
                 conds.append(f"{alias}termination_status = ?")
                 prms.append(term.status.value)
 
-            if term.outcome != Outcome.ANY:
-                start, end = term.outcome.value.start, term.outcome.value.stop
-                conds.append(f"({alias}termination_status BETWEEN ? AND ?)")
-                prms.extend([start, end])
+            if term.outcome is not None:
+                statuses = TerminationStatus.get_statuses(term.outcome)
+                placeholders = ', '.join('?' * len(statuses))
+                conds.append(f"{alias}termination_status IN ({placeholders})")
+                prms.extend(s.value for s in statuses)
+
+            if term.success is not None:
+                outcomes = Outcome.get_outcomes(success=term.success)
+                statuses = TerminationStatus.get_statuses(*outcomes)
+                placeholders = ', '.join('?' * len(statuses))
+                conds.append(f"{alias}termination_status IN ({placeholders})")
+                prms.extend(s.value for s in statuses)
 
             if term.ended_range:
                 c, p = add_datetime_conditions('ended', term.ended_range)
@@ -472,6 +480,8 @@ class SQLite(Persistence):
         """See `Persistence.read_history_stats`."""
 
         where_clause, where_params = _build_where_clause(run_match, alias='h')
+        fault_statuses = TerminationStatus.get_statuses(Outcome.FAULT)
+        fault_placeholders = ', '.join(str(s.value) for s in fault_statuses)
         sql = f'''
             WITH filtered AS (
                 SELECT * FROM history h
@@ -492,7 +502,7 @@ class SQLite(Persistence):
                 max(f.exec_time) AS "slowest_time",
                 lh.exec_time AS "last_time",
                 lh.termination_status AS "last_term_status",
-                COUNT(CASE WHEN f.termination_status BETWEEN {Outcome.FAULT.value.start} AND {Outcome.FAULT.value.stop} THEN 1 END) AS failed,
+                COUNT(CASE WHEN f.termination_status IN ({fault_placeholders}) THEN 1 END) AS failed,
                 lh.warnings AS "last_warnings"
             FROM filtered f
             JOIN last_per_job lp ON f.job_id = lp.job_id

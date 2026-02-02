@@ -227,23 +227,32 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
 class TerminationCriterion(MatchCriteria[TerminationInfo]):
     """
     Criteria for matching termination information.
+
+    Attributes:
+        status: Match specific termination status
+        outcome: Match specific outcome category
+        success: Match by success/non-success (True = success, False = non-success, None = no filter)
+        ended_range: Match by termination timestamp range
     """
     status: Optional[TerminationStatus] = None
-    outcome: Outcome = Outcome.ANY
+    outcome: Optional[Outcome] = None
+    success: Optional[bool] = None
     ended_range: Optional[DateTimeRange] = None
 
     @classmethod
     def deserialize(cls, as_dict: Dict[str, Any]) -> 'TerminationCriterion':
         return cls(
             status=TerminationStatus[as_dict['status']] if as_dict.get('status') else None,
-            outcome=Outcome[as_dict.get('outcome', Outcome.ANY.name)],
+            outcome=Outcome[as_dict['outcome']] if as_dict.get('outcome') else None,
+            success=as_dict.get('success'),
             ended_range=DateTimeRange.deserialize(as_dict['ended_range']) if as_dict.get('ended_range') else None
         )
 
     def serialize(self) -> Dict[str, Any]:
         return {
             'status': self.status.name if self.status else None,
-            'outcome': self.outcome.name,
+            'outcome': self.outcome.name if self.outcome else None,
+            'success': self.success,
             'ended_range': self.ended_range.serialize() if self.ended_range else None,
         }
 
@@ -251,8 +260,12 @@ class TerminationCriterion(MatchCriteria[TerminationInfo]):
         if self.status is not None and term_info.status != self.status:
             return False
 
-        if self.outcome != Outcome.ANY and not term_info.status.is_outcome(self.outcome):
+        if self.outcome is not None and term_info.status.outcome != self.outcome:
             return False
+
+        if self.success is not None:
+            if term_info.status.outcome.is_success != self.success:
+                return False
 
         if self.ended_range and not self.ended_range(term_info.terminated_at):
             return False
@@ -264,15 +277,18 @@ class TerminationCriterion(MatchCriteria[TerminationInfo]):
 
     def __bool__(self) -> bool:
         return (self.status is not None or
-                self.outcome != Outcome.ANY or
-                self.ended_range)
+                self.outcome is not None or
+                self.success is not None or
+                self.ended_range is not None)
 
     def __str__(self) -> str:
         fields = []
         if self.status is not None:
             fields.append(f"status={self.status.name}")
-        if self.outcome != Outcome.ANY:
+        if self.outcome is not None:
             fields.append(f"outcome={self.outcome.name}")
+        if self.success is not None:
+            fields.append(f"success={self.success}")
         if self.ended_range:
             fields.append(f"ended{self.ended_range}")
         return f"<{', '.join(fields)}>" if fields else ""

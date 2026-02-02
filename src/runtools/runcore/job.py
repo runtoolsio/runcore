@@ -163,7 +163,7 @@ class JobStats:
     average_time: Optional[timedelta] = None
     slowest_time: Optional[timedelta] = None
     last_time: Optional[timedelta] = None
-    termination_status: TerminationStatus = TerminationStatus.NONE
+    termination_status: Optional[TerminationStatus] = None
     failed_count: int = 0
     warning_count: int = 0
 

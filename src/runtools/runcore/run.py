@@ -29,33 +29,67 @@ class Stage(Enum):
 
 
 class Outcome(Enum):
-    NONE = range(-1, 1)  # Null value.
-    ANY = range(-1, 9999)
-    SUCCESS = range(1, 11)  # Completed successfully.
-    NON_SUCCESS = range(11, 99)  # Not completed successfully.
-    ABORTED = range(11, 21)  # Aborted by user.
-    REJECTED = range(21, 31)  # Rejected by not satisfying a condition.
-    FAULT = range(31, 41)  # Failed.
+    """
+    Categorizes TerminationStatus values into broader outcome groups.
+
+    Each outcome has an is_success flag indicating whether it represents successful completion.
+    Usage: `status.outcome == Outcome.FAULT` checks if status belongs to the FAULT outcome.
+
+    Outcomes:
+        SUCCESS:  Completed successfully (is_success=True)
+        ABORTED:  User-initiated cancellation (is_success=False)
+        REJECTED: Prevented from running (is_success=False)
+        FAULT:    Failed due to error (is_success=False)
+    """
+
+    def __new__(cls, value, is_success):
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj.is_success = is_success
+        return obj
+
+    SUCCESS = 1, True
+    ABORTED = 2, False
+    REJECTED = 3, False
+    FAULT = 4, False
+
+    @classmethod
+    def get_outcomes(cls, *, success: bool) -> set['Outcome']:
+        """Returns all outcomes matching the given success flag."""
+        return {o for o in cls if o.is_success == success}
 
 
 class TerminationStatus(Enum):
-    UNKNOWN = -1
-    NONE = 0
+    """
+    Specific termination status codes, each declaring its outcome category.
 
-    COMPLETED = 1
+    Every status has an outcome. UNKNOWN uses FAULT as a fail-safe default for corrupted DB data.
+    Use Optional[TerminationInfo] instead of NONE to represent "no termination".
+    """
 
-    CANCELLED = 11
-    STOPPED = 12
-    INTERRUPTED = 13
-    SIGNAL = 14
+    def __new__(cls, code, outcome):
+        obj = object.__new__(cls)
+        obj._value_ = code
+        obj.outcome = outcome
+        return obj
 
-    TIMEOUT = 21
-    OVERLAP = 22
-    UNSATISFIED = 23
-    DENIED = 24
+    # UNKNOWN kept for from_code() error recovery - uses FAULT as safe default
+    UNKNOWN = -1, Outcome.FAULT
 
-    FAILED = 31
-    ERROR = 32
+    COMPLETED = 1, Outcome.SUCCESS
+
+    CANCELLED = 11, Outcome.ABORTED
+    STOPPED = 12, Outcome.ABORTED
+    INTERRUPTED = 13, Outcome.ABORTED
+    SIGNAL = 14, Outcome.ABORTED
+
+    TIMEOUT = 21, Outcome.REJECTED
+    OVERLAP = 22, Outcome.REJECTED
+    UNSATISFIED = 23, Outcome.REJECTED
+    DENIED = 24, Outcome.REJECTED
+
+    FAILED = 31, Outcome.FAULT
+    ERROR = 32, Outcome.FAULT
 
     @classmethod
     def from_code(cls, code):
@@ -65,11 +99,10 @@ class TerminationStatus(Enum):
 
         return TerminationStatus.UNKNOWN
 
-    def is_outcome(self, outcome):
-        return self.value in outcome.value
-
-    def __bool__(self):
-        return self != TerminationStatus.NONE
+    @classmethod
+    def get_statuses(cls, *outcomes: Outcome) -> set['TerminationStatus']:
+        """Returns all statuses belonging to any of the given outcomes."""
+        return {s for s in cls if s.outcome in outcomes}
 
 
 class StopReason(Enum):
