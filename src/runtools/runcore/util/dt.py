@@ -13,7 +13,7 @@ ISO_DATE_TIME_PATTERN = re.compile(
 
 
 def unique_timestamp_hex(random_suffix_length=4):
-    return secrets.token_hex(random_suffix_length) + format(int(datetime.utcnow().timestamp() * 1000000), 'x')[::-1]
+    return secrets.token_hex(random_suffix_length) + format(int(datetime.now(timezone.utc).timestamp() * 1000000), 'x')[::-1]
 
 
 def utc_now() -> datetime:
