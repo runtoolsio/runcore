@@ -447,6 +447,14 @@ class LocalConnector(EnvironmentConnector):
 
         Returns:
             List of JobRun objects from all responding servers
+
+        Note:
+            Communication errors are logged but not surfaced to callers, which may result
+            in incomplete data. Future options to consider:
+              1. Return a result dataclass with both runs and errors
+              2. Raise an exception containing partial results
+              3. Add an optional on_error callback parameter
+              4. Add a separate get_active_runs_with_errors() method
         """
         run_results = self._client.collect_active_runs(run_match)
         active_runs = []
@@ -461,6 +469,7 @@ class LocalConnector(EnvironmentConnector):
         return active_runs
 
     def get_instances(self, run_match=None):
+        # Same error handling consideration as get_active_runs()
         run_results = self._client.collect_active_runs(run_match)
         instances = []
 
