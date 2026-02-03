@@ -204,25 +204,29 @@ class StatsSortOption(str, Enum):
         Returns:
             List[JobStats]: Sorted list of job statistics
         """
+        return sorted(job_stats_list, key=self.key_func, reverse=reverse)
+
+    @property
+    def key_func(self):
         match self:
             case StatsSortOption.JOB_ID:
-                return sorted(job_stats_list, key=lambda s: s.job_id, reverse=reverse)
+                return lambda s: s.job_id
             case StatsSortOption.FIRST_CREATED:
-                return sorted(job_stats_list, key=lambda s: s.first_created or s.last_created, reverse=reverse)
+                return lambda s: s.first_created or s.last_created
             case StatsSortOption.LAST_CREATED:
-                return sorted(job_stats_list, key=lambda s: s.last_created, reverse=reverse)
+                return lambda s: s.last_created
             case StatsSortOption.AVERAGE_TIME:
-                return sorted(job_stats_list, key=lambda s: s.average_time or s.last_time, reverse=reverse)
+                return lambda s: s.average_time or s.last_time
             case StatsSortOption.SLOWEST_TIME:
-                return sorted(job_stats_list, key=lambda s: s.slowest_time or s.last_time, reverse=reverse)
+                return lambda s: s.slowest_time or s.last_time
             case StatsSortOption.FASTEST_TIME:
-                return sorted(job_stats_list, key=lambda s: s.fastest_time or s.last_time, reverse=reverse)
+                return lambda s: s.fastest_time or s.last_time
             case StatsSortOption.LAST_TIME:
-                return sorted(job_stats_list, key=lambda s: s.last_time, reverse=reverse)
+                return lambda s: s.last_time
             case StatsSortOption.COUNT:
-                return sorted(job_stats_list, key=lambda s: s.count, reverse=reverse)
+                return lambda s: s.count
             case StatsSortOption.FAILED_COUNT:
-                return sorted(job_stats_list, key=lambda s: s.failed_count, reverse=reverse)
+                return lambda s: s.failed_count
             case _:
                 raise AssertionError(f"Programmer error - unimplemented key for sort option: {self}")
 
