@@ -77,6 +77,7 @@ class TerminationStatus(Enum):
     UNKNOWN = -1, Outcome.FAULT
 
     COMPLETED = 1, Outcome.SUCCESS
+    SKIPPED = 2, Outcome.SUCCESS
 
     CANCELLED = 11, Outcome.ABORTED
     STOPPED = 12, Outcome.ABORTED
