@@ -689,10 +689,10 @@ class JobRunCriteria(MatchCriteria[JobRun]):
         if not self.phase_criteria:
             return True
 
-        return any(
-            any(c.matches(phase) for c in self.phase_criteria)
-            for phase in job_run.phases
-        )
+        for phase in job_run.search_phases():
+            if any(c.matches(phase) for c in self.phase_criteria):
+                return True
+        return False
 
     def __call__(self, job_run):
         return self.matches(job_run)

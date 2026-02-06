@@ -449,18 +449,20 @@ class JobRun:
     Immutable snapshot of job instance
     """
     metadata: JobInstanceMetadata
-    lifecycle: RunLifecycle
-    phases: Tuple[PhaseDetail, ...]
+    root_phase: PhaseDetail
     output_locations: Tuple[OutputLocation, ...] = ()
     faults: Tuple[Fault, ...] = ()
     status: Optional[Status] = None
+
+    @property
+    def lifecycle(self) -> RunLifecycle:
+        return self.root_phase.lifecycle
 
     @classmethod
     def deserialize(cls, as_dict: Dict[str, Any]) -> 'JobRun':
         return cls(
             metadata=JobInstanceMetadata.deserialize(as_dict['metadata']),
-            lifecycle=RunLifecycle.deserialize(as_dict['lifecycle']),
-            phases=tuple(PhaseDetail.deserialize(p) for p in as_dict['phases']),
+            root_phase=PhaseDetail.deserialize(as_dict['root_phase']),
             faults=tuple(Fault.deserialize(f) for f in as_dict.get('faults', [])),
             status=Status.deserialize(as_dict['status']) if as_dict.get('status') else None,
         )
@@ -468,8 +470,7 @@ class JobRun:
     def serialize(self) -> Dict[str, Any]:
         d = {
             "metadata": self.metadata.serialize(),
-            "lifecycle": self.lifecycle.serialize(),
-            "phases": [p.serialize() for p in self.phases],
+            "root_phase": self.root_phase.serialize(),
         }
         if self.faults:
             d["faults"] = [f.serialize() for f in self.faults]
@@ -503,35 +504,25 @@ class JobRun:
 
     def search_phases(self, predicate: Optional[Callable[['PhaseDetail'], bool]] = None) -> List['PhaseDetail']:
         """
-        Searches all phases within this job run (including root-level phases and
-        all their descendants) that match the given predicate.
+        Searches all phases within this job run (including root phase and
+        all descendants) that match the given predicate.
 
-        The search for each root phase and its hierarchy is performed in a
-        pre-order (depth-first) manner.
+        The search is performed in a pre-order (depth-first) manner.
 
         Args:
             predicate: Optional function to filter phases. If None, all phases
-                       (root and descendants across the entire job run) are returned.
+                       (root and descendants) are returned.
 
         Returns:
             List[PhaseDetail]: A list of all matching phase details found.
         """
-        matching_phases: List['PhaseDetail'] = []
-        for phase in self.phases:
-            matching_phases.extend(phase.search_phases(predicate=predicate, include_self=True))
-        return matching_phases
+        return self.root_phase.search_phases(predicate=predicate, include_self=True)
 
     def find_first_phase(self, predicate):
-        for p in self.phases:
-            if found := p.find_first_phase(predicate):
-                return found
-        return None
+        return self.root_phase.find_first_phase(predicate)
 
     def find_phase_by_id(self, phase_id):
-        for p in self.phases:
-            if found := p.find_phase_by_id(phase_id):
-                return found
-        return None
+        return self.root_phase.find_phase_by_id(phase_id)
 
     def accept_visitor(self, visitor):
         """
@@ -540,8 +531,7 @@ class JobRun:
         Args:
             visitor: The visitor to accept
         """
-        for phase in self.phases:
-            phase.accept_visitor(visitor)
+        self.root_phase.accept_visitor(visitor)
         return visitor
 
 
@@ -557,7 +547,7 @@ class InstanceLifecycleEvent:
     instance: JobInstanceMetadata
     job_run: JobRun
     new_stage: Stage
-    timestamp: datetime
+    timestamp: datetime.datetime
 
     @property
     def event_type(self):
