@@ -156,11 +156,11 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
             return not self.strategy(actual, criteria[1:])
         return self.strategy(actual, criteria)
 
-    def __call__(self, metadata: JobInstanceMetadata) -> bool:
+    def __call__(self, metadata: Optional[JobInstanceMetadata]) -> bool:
         """Makes the criterion callable, delegating to matches()."""
         return self.matches(metadata)
 
-    def matches(self, metadata: JobInstanceMetadata) -> bool:
+    def matches(self, metadata: Optional[JobInstanceMetadata]) -> bool:
         """
         Check if the provided metadata matches this object.
 
@@ -170,6 +170,9 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         Returns:
             Whether the provided metadata matches this criteria
         """
+        if metadata is None:
+            return False
+
         job_id_match = self._matches_id(metadata.job_id, self.job_id)
         run_id_match = self._matches_id(metadata.run_id, self.run_id)
 
@@ -256,7 +259,10 @@ class TerminationCriterion(MatchCriteria[TerminationInfo]):
             'ended_range': self.ended_range.serialize() if self.ended_range else None,
         }
 
-    def matches(self, term_info: TerminationInfo) -> bool:
+    def matches(self, term_info: Optional[TerminationInfo]) -> bool:
+        if term_info is None:
+            return False
+
         if self.status is not None and term_info.status != self.status:
             return False
 
@@ -272,7 +278,7 @@ class TerminationCriterion(MatchCriteria[TerminationInfo]):
 
         return True
 
-    def __call__(self, term_info: TerminationInfo) -> bool:
+    def __call__(self, term_info: Optional[TerminationInfo]) -> bool:
         return self.matches(term_info)
 
     def __bool__(self) -> bool:
@@ -349,11 +355,14 @@ class LifecycleCriterion(MatchCriteria[RunLifecycle]):
             termination=TerminationCriterion.deserialize(as_dict['termination']) if as_dict.get('termination') else None
         )
 
-    def __call__(self, lifecycle: RunLifecycle):
+    def __call__(self, lifecycle: Optional[RunLifecycle]):
         return self.matches(lifecycle)
 
-    def matches(self, lifecycle: RunLifecycle) -> bool:
+    def matches(self, lifecycle: Optional[RunLifecycle]) -> bool:
         """Check if the lifecycle matches all specified criteria."""
+        if lifecycle is None:
+            return False
+
         if self.stage and lifecycle.stage != self.stage:
             return False
 
@@ -550,11 +559,13 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
                 return True
         return False
 
-    def __call__(self, phase: PhaseDetail):
+    def __call__(self, phase: Optional[PhaseDetail]):
         return self.matches(phase)
 
-    def matches(self, phase: PhaseDetail) -> bool:
+    def matches(self, phase: Optional[PhaseDetail]) -> bool:
         """Check if phase or its descendants match based on match_type."""
+        if phase is None:
+            return False
         match self.match_type:
             case PhaseMatch.ROOT:
                 return self._matches_phase(phase, check_lifecycle=True)
@@ -694,11 +705,14 @@ class JobRunCriteria(MatchCriteria[JobRun]):
                 return True
         return False
 
-    def __call__(self, job_run):
+    def __call__(self, job_run: Optional[JobRun]):
         return self.matches(job_run)
 
-    def matches(self, job_run):
+    def matches(self, job_run: Optional[JobRun]):
         """Check if a job run matches all criteria."""
+        if job_run is None:
+            return False
+
         return (self.matches_metadata(job_run) and
                 self.matches_lifecycle(job_run) and
                 self.match_phases(job_run))
