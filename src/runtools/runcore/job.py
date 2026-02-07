@@ -542,7 +542,7 @@ class InstanceEvent(Protocol):
 
 @dataclass(frozen=True)
 class InstanceLifecycleEvent:
-    EVENT_TYPE = "instance_stage_update"
+    EVENT_TYPE = "instance_lifecycle_update"
 
     instance: JobInstanceMetadata
     job_run: JobRun
