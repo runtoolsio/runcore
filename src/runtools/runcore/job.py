@@ -586,7 +586,7 @@ class InstanceLifecycleObserver(abc.ABC):
 
 
 @dataclass(frozen=True)
-class InstanceTransitionEvent:
+class InstancePhaseEvent:
     EVENT_TYPE = "instance_phase_update"
 
     instance: JobInstanceMetadata
@@ -618,7 +618,7 @@ class InstanceTransitionEvent:
         }
 
     @classmethod
-    def deserialize(cls, as_dict: Dict[str, Any]) -> 'InstanceTransitionEvent':
+    def deserialize(cls, as_dict: Dict[str, Any]) -> 'InstancePhaseEvent':
         return cls(
             instance=JobInstanceMetadata.deserialize(as_dict['instance']),
             job_run=JobRun.deserialize(as_dict['job_run']),
@@ -629,10 +629,10 @@ class InstanceTransitionEvent:
         )
 
 
-class InstanceTransitionObserver(abc.ABC):
+class InstancePhaseObserver(abc.ABC):
 
     @abstractmethod
-    def instance_transition_update(self, event: InstanceTransitionEvent):
+    def instance_phase_update(self, event: InstancePhaseEvent):
         pass
 
 
@@ -725,11 +725,11 @@ class InstanceNotifications(ABC):
         pass
 
     @abstractmethod
-    def add_observer_transition(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
+    def add_observer_phase(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
         pass
 
     @abstractmethod
-    def remove_observer_transition(self, observer):
+    def remove_observer_phase(self, observer):
         pass
 
     @abstractmethod
@@ -742,12 +742,12 @@ class InstanceNotifications(ABC):
 
     def add_observer_all_events(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
         self.add_observer_lifecycle(observer, priority)
-        self.add_observer_transition(observer, priority)
+        self.add_observer_phase(observer, priority)
         self.add_observer_output(observer, priority)
 
     def remove_observer_all_events(self, observer):
         self.remove_observer_lifecycle(observer)
-        self.remove_observer_transition(observer)
+        self.remove_observer_phase(observer)
         self.remove_observer_output(observer)
 
 
@@ -769,26 +769,26 @@ class InstanceObservableNotifications(InstanceNotifications):
     """
 
     def __init__(self, instance_filter: 'MetadataCriterion' = None,
-                 lifecycle_error_hook=None, transition_error_hook=None, output_error_hook=None,
+                 lifecycle_error_hook=None, phase_error_hook=None, output_error_hook=None,
                  force_reraise=False):
         event_filter = (lambda e: instance_filter.matches(e.instance)) if instance_filter else None
         self.lifecycle_notification = ObservableNotification[InstanceLifecycleObserver](
             event_filter=event_filter, error_hook=lifecycle_error_hook, force_reraise=force_reraise)
-        self.transition_notification = ObservableNotification[InstanceTransitionObserver](
-            event_filter=event_filter, error_hook=transition_error_hook, force_reraise=force_reraise)
+        self.phase_notification = ObservableNotification[InstancePhaseObserver](
+            event_filter=event_filter, error_hook=phase_error_hook, force_reraise=force_reraise)
         self.output_notification = ObservableNotification[InstanceOutputObserver](
             event_filter=event_filter, error_hook=output_error_hook, force_reraise=force_reraise)
 
     def bind_to(self, source: InstanceNotifications, priority: int = DEFAULT_OBSERVER_PRIORITY) -> None:
         """Register this notification to receive events from source."""
         source.add_observer_lifecycle(self.lifecycle_notification.observer_proxy, priority)
-        source.add_observer_transition(self.transition_notification.observer_proxy, priority)
+        source.add_observer_phase(self.phase_notification.observer_proxy, priority)
         source.add_observer_output(self.output_notification.observer_proxy, priority)
 
     def unbind_from(self, source: InstanceNotifications) -> None:
         """Stop receiving events from source."""
         source.remove_observer_lifecycle(self.lifecycle_notification.observer_proxy)
-        source.remove_observer_transition(self.transition_notification.observer_proxy)
+        source.remove_observer_phase(self.phase_notification.observer_proxy)
         source.remove_observer_output(self.output_notification.observer_proxy)
 
     def add_observer_lifecycle(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
@@ -797,11 +797,11 @@ class InstanceObservableNotifications(InstanceNotifications):
     def remove_observer_lifecycle(self, observer):
         self.lifecycle_notification.remove_observer(observer)
 
-    def add_observer_transition(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
-        self.transition_notification.add_observer(observer, priority)
+    def add_observer_phase(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
+        self.phase_notification.add_observer(observer, priority)
 
-    def remove_observer_transition(self, observer):
-        self.transition_notification.remove_observer(observer)
+    def remove_observer_phase(self, observer):
+        self.phase_notification.remove_observer(observer)
 
     def add_observer_output(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
         self.output_notification.add_observer(observer, priority)
@@ -810,7 +810,7 @@ class InstanceObservableNotifications(InstanceNotifications):
         self.output_notification.remove_observer(observer)
 
 
-class InstanceEventsObserver(InstanceLifecycleObserver, InstanceTransitionObserver, InstanceOutputObserver, ABC):
+class InstanceEventsObserver(InstanceLifecycleObserver, InstancePhaseObserver, InstanceOutputObserver, ABC):
     pass
 
 
