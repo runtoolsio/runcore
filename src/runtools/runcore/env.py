@@ -15,7 +15,7 @@ ENV_CONFIG_FILE = 'env.toml'
 
 
 class EnvironmentTypes:
-    ISOLATED = 'isolated'
+    IN_PROCESS = 'in_process'
     LOCAL = 'local'
 
 
@@ -52,10 +52,10 @@ class LocalEnvironmentConfig(EnvironmentConfig):
     )
 
 
-class IsolatedEnvironmentConfig(EnvironmentConfig):
-    """Configuration for isolated environments used primarily in testing."""
-    type: Literal["isolated"] = EnvironmentTypes.ISOLATED
-    id: str = Field(default_factory=lambda: "isolated_" + util.unique_timestamp_hex(),
+class InProcessEnvironmentConfig(EnvironmentConfig):
+    """Configuration for in-process environments used primarily in testing."""
+    type: Literal["in_process"] = EnvironmentTypes.IN_PROCESS
+    id: str = Field(default_factory=lambda: "in_process_" + util.unique_timestamp_hex(),
                     description="Environment identifier")
     persistence: PersistenceConfig = Field(
         default_factory=PersistenceConfig.in_memory_sqlite,
@@ -64,7 +64,7 @@ class IsolatedEnvironmentConfig(EnvironmentConfig):
 
 
 EnvironmentConfigUnion = Annotated[
-    Union[LocalEnvironmentConfig, IsolatedEnvironmentConfig],
+    Union[LocalEnvironmentConfig, InProcessEnvironmentConfig],
     Discriminator("type")
 ]
 
@@ -99,7 +99,7 @@ def get_default_env_config() -> EnvironmentConfigUnion:
     Load and validate the default environment config.
 
     Returns:
-        EnvironmentConfigUnion: A validated Pydantic model (LocalEnvironmentConfig or IsolatedEnvironmentConfig)
+        EnvironmentConfigUnion: A validated Pydantic model (LocalEnvironmentConfig or InProcessEnvironmentConfig)
         corresponding to the default environment.
 
     Raises:
@@ -140,7 +140,7 @@ def env_config_from_dict(conf: ConfigDict) -> EnvironmentConfigUnion:
         conf (Dict[str, Any]): A raw configuration dictionary containing at least a 'type' key.
 
     Returns:
-        EnvironmentConfigUnion: Either a LocalEnvironmentConfig or IsolatedEnvironmentConfig.
+        EnvironmentConfigUnion: Either a LocalEnvironmentConfig or InProcessEnvironmentConfig.
 
     Raises:
         ValidationError: If the provided dict does not conform to the expected schema.
