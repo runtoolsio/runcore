@@ -299,8 +299,7 @@ class SQLite(Persistence):
                          started timestamp,
                          ended timestamp,
                          exec_time real,
-                         lifecycle text,
-                         phases text,
+                         root_phase text,
                          output_locations text,
                          termination_status int,
                          faults text,
@@ -421,10 +420,10 @@ class SQLite(Persistence):
 
         def to_job_run(t):
             metadata = JobInstanceMetadata(InstanceID(t[0], t[1]), json.loads(t[2]) if t[2] else dict())
-            root_phase = PhaseDetail.deserialize(json.loads(t[8]))
-            output_locations = tuple(OutputLocation.deserialize(l) for l in json.loads(t[9])) if t[9] else ()
-            faults = tuple(Fault.deserialize(f) for f in json.loads(t[11])) if t[11] else ()
-            status = Status.deserialize(json.loads(t[12])) if t[12] else None
+            root_phase = PhaseDetail.deserialize(json.loads(t[7]))
+            output_locations = tuple(OutputLocation.deserialize(l) for l in json.loads(t[8])) if t[8] else ()
+            faults = tuple(Fault.deserialize(f) for f in json.loads(t[10])) if t[10] else ()
+            status = Status.deserialize(json.loads(t[11])) if t[11] else None
             return JobRun(metadata, root_phase, output_locations, faults, status)
 
         try:
@@ -543,7 +542,6 @@ class SQLite(Persistence):
                     format_dt_sql(r.lifecycle.started_at),
                     format_dt_sql(r.lifecycle.termination.terminated_at) if r.lifecycle.termination else None,
                     round(r.lifecycle.total_run_time.total_seconds(), 3) if r.lifecycle.total_run_time else None,
-                    json.dumps(r.lifecycle.serialize()),
                     json.dumps(r.root_phase.serialize()),
                     json.dumps([l.serialize() for l in r.output_locations]) if r.output_locations else None,
                     r.lifecycle.termination.status.value if r.lifecycle.termination else None,
@@ -555,7 +553,7 @@ class SQLite(Persistence):
 
         jobs = [to_tuple(j) for j in job_runs]
         self._conn.executemany(
-            "INSERT INTO history VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO history VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             jobs
         )
         self._conn.commit()
