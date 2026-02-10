@@ -56,6 +56,55 @@ def read_toml_file(file_path) -> Dict[str, Any]:
         return tomllib.load(file)
 
 
+def format_toml(data: Dict[str, Any], _prefix: str = "") -> str:
+    """
+    Format a dictionary as a TOML string.
+
+    Handles nested dicts as TOML sections and scalar values as key-value pairs.
+    None values are omitted (TOML has no null type).
+
+    Args:
+        data: The dictionary to format.
+        _prefix: Internal use for building section paths.
+
+    Returns:
+        A TOML-formatted string.
+    """
+    lines = []
+    tables = []
+
+    for key, value in data.items():
+        if value is None:
+            continue
+        if isinstance(value, dict):
+            tables.append((key, value))
+        elif isinstance(value, bool):
+            lines.append(f"{key} = {str(value).lower()}")
+        elif isinstance(value, (int, float)):
+            lines.append(f"{key} = {value}")
+        elif isinstance(value, str):
+            lines.append(f'{key} = "{value}"')
+        elif isinstance(value, list):
+            formatted_items = []
+            for item in value:
+                if isinstance(item, str):
+                    formatted_items.append(f'"{item}"')
+                else:
+                    formatted_items.append(str(item))
+            lines.append(f"{key} = [{', '.join(formatted_items)}]")
+        else:
+            lines.append(f'{key} = "{value}"')
+
+    for key, table in tables:
+        section = f"{_prefix}.{key}" if _prefix else key
+        section_content = format_toml(table, section)
+        if section_content.strip():
+            lines.append(f"\n[{section}]")
+            lines.append(section_content.rstrip())
+
+    return "\n".join(lines)
+
+
 def print_file(path_):
     path_ = expand_user(path_)
     print('Showing file: ' + str(path_))
