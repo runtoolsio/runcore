@@ -397,7 +397,7 @@ def local(env_id=DEFAULT_LOCAL_ENVIRONMENT, persistence=None, connector_layout=N
         EnvironmentConnector: Configured connector to the local environment
     """
     layout = connector_layout or StandardLocalConnectorLayout.create(env_id)
-    persistence = persistence or sqlite.create(str(paths.sqlite_db_path(env_id, create=True)))
+    persistence = persistence or sqlite.create(env_id=env_id)
     client = LocalInstanceClient(layout.server_sockets_provider)
     event_receiver = EventReceiver(layout.listener_events_socket_path)
     return LocalConnector(env_id, layout, persistence, client, event_receiver)

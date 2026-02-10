@@ -82,7 +82,7 @@ def create_persistence(env_id, persistence_config):
         return None
 
     return load_database_module(persistence_config.type).create(
-        env_id, persistence_config.database, **persistence_config.params)
+        env_id=env_id, database=persistence_config.database, **persistence_config.params)
 
 
 class DatabaseNotFoundError(RuntoolsException):

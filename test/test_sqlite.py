@@ -15,7 +15,7 @@ parse = JobRunCriteria.parse
 
 @pytest.fixture
 def sut():
-    with sqlite.create('test_env', database=':memory:') as db:
+    with sqlite.create(env_id='test_env', database=':memory:') as db:
         yield db
 
 

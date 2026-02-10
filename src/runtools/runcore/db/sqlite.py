@@ -27,7 +27,7 @@ log = logging.getLogger(__name__)
 DEFAULT_BATCH_SIZE = 100
 
 
-def create(env_id, database=None, **kwargs):
+def create(*, env_id, database=None, **kwargs):
     """
     Creates SQLite persistence with configurable connection parameters.
 
