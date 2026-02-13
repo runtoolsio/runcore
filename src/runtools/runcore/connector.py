@@ -28,11 +28,12 @@ from runtools.runcore.client import LocalInstanceClient
 from runtools.runcore.criteria import JobRunCriteria, SortOption
 from runtools.runcore.db import NullPersistence, sqlite
 from runtools.runcore.env import LocalEnvironmentConfig, \
-    EnvironmentConfigUnion, DEFAULT_LOCAL_ENVIRONMENT
+    EnvironmentConfigUnion, EnvironmentNotFoundError, DEFAULT_LOCAL_ENVIRONMENT, get_env_config
 from runtools.runcore.err import run_isolated_collect_exceptions
 from runtools.runcore.job import InstanceNotifications, JobInstance, InstanceLifecycleObserver, InstanceLifecycleEvent, \
     JobRun
 from runtools.runcore.listening import EventReceiver, InstanceEventReceiver
+from runtools.runcore.paths import ConfigFileNotFoundError
 from runtools.runcore.proxy import JobInstanceProxy
 
 log = logging.getLogger(__name__)
@@ -401,6 +402,17 @@ def local(env_id=DEFAULT_LOCAL_ENVIRONMENT, persistence=None, connector_layout=N
     client = LocalInstanceClient(layout.server_sockets_provider)
     event_receiver = EventReceiver(layout.listener_events_socket_path)
     return LocalConnector(env_id, layout, persistence, client, event_receiver)
+
+
+def connect(env_id: Optional[str] = None) -> EnvironmentConnector:
+    """Connect to an environment by ID, falling back to derived local layout if no config exists."""
+    try:
+        return create(get_env_config(env_id))
+    except (EnvironmentNotFoundError, ConfigFileNotFoundError):
+        if env_id is None:
+            raise
+        log.debug(f"No config entry for environment '{env_id}', using derived local layout")
+        return local(env_id)
 
 
 class LocalConnector(EnvironmentConnector):
