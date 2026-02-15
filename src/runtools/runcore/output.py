@@ -1,9 +1,9 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum, auto
-from itertools import count
 from typing import List, Optional, Dict
 
+from itertools import count
 from runtools.runcore import util
 from runtools.runcore.err import InvalidStateError
 
@@ -85,6 +85,9 @@ class OutputLine:
             source=data.get("source"),
             fields=data.get("fields"),
         )
+
+    def with_source(self, source: str) -> 'OutputLine':
+        return replace(self, source=source)
 
     def serialize(self, truncate_length: Optional[int] = None, truncated_suffix: str = ".. (truncated)"):
         message = util.truncate(self.message, truncate_length, truncated_suffix) if truncate_length is not None else self.message
