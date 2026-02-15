@@ -297,17 +297,17 @@ class PhasePath(list):
         """
         Initialize with optional list of phases from root to current (excluding current).
         Args:
-            phases (Optional[List['PhaseDetail']]: phases starting from root
+            phases (Optional[List['PhaseRun']]: phases starting from root
         """
         super().__init__(phases or [])
 
     @property
-    def parent(self) -> Optional['PhaseDetail']:
+    def parent(self) -> Optional['PhaseRun']:
         """Returns the immediate parent phase, or None if at root."""
         return self[-1] if self else None
 
     @property
-    def root(self) -> Optional['PhaseDetail']:
+    def root(self) -> Optional['PhaseRun']:
         """Returns the root phase of the path, or None if path is empty."""
         return self[0] if self else None
 
@@ -316,7 +316,7 @@ class PhasePath(list):
         """Returns the depth in the tree (number of ancestors)."""
         return len(self)
 
-    def get_ancestor(self, levels_up: int) -> Optional['PhaseDetail']:
+    def get_ancestor(self, levels_up: int) -> Optional['PhaseRun']:
         """
         Get an ancestor at a specific level up from the current position.
 
@@ -330,7 +330,7 @@ class PhasePath(list):
             return None
         return self[-levels_up]
 
-    def iter_ancestors(self, *, include_root: bool = True, reverse: bool = False) -> Iterator['PhaseDetail']:
+    def iter_ancestors(self, *, include_root: bool = True, reverse: bool = False) -> Iterator['PhaseRun']:
         """
         Iterate through ancestors.
 
@@ -355,12 +355,12 @@ class PhasePath(list):
         """Check if a phase with the given ID exists in the ancestor path."""
         return any(p.phase_id == phase_id for p in self)
 
-    def any_match(self, predicate: Callable[['PhaseDetail'], bool]) -> bool:
+    def any_match(self, predicate: Callable[['PhaseRun'], bool]) -> bool:
         """
         Check if any ancestor phase matches the given predicate.
 
         Args:
-            predicate: A function that takes a PhaseDetail and returns bool
+            predicate: A function that takes a PhaseRun and returns bool
 
         Returns:
             True if any ancestor matches, False otherwise
@@ -372,7 +372,7 @@ class PhasePath(list):
         Create a new PhasePath with the given phase appended.
 
         Args:
-            phase (PhaseDetail): The phase to add to the path
+            phase (PhaseRun): The phase to add to the path
 
         Returns:
             A new PhasePath instance with the phase added
@@ -396,12 +396,12 @@ class PhaseVisitor(ABC):
     """
 
     @abstractmethod
-    def visit_phase(self, phase_detail, parent_path) -> Any:
+    def visit_phase(self, phase_run, parent_path) -> Any:
         """
         Visit a single phase node.
 
         Args:
-            phase_detail (PhaseDetail): The current phase being visited
+            phase_run (PhaseRun): The current phase being visited
             parent_path (PhasePath): Path containing parent phases from root to current (excluding current)
 
         Returns:
@@ -411,7 +411,7 @@ class PhaseVisitor(ABC):
 
 
 @dataclass(frozen=True)
-class PhaseDetail:
+class PhaseRun:
     """
     A complete immutable view of a Phase instance, containing all state and metadata.
     """
@@ -427,10 +427,10 @@ class PhaseDetail:
     lifecycle: RunLifecycle
 
     # Hierarchical information
-    children: Tuple['PhaseDetail', ...]
+    children: Tuple['PhaseRun', ...]
 
     @classmethod
-    def from_phase(cls, phase) -> 'PhaseDetail':
+    def from_phase(cls, phase) -> 'PhaseRun':
         return cls(
             phase_id=phase.id,
             phase_type=phase.type,
@@ -447,7 +447,7 @@ class PhaseDetail:
         )
 
     @classmethod
-    def deserialize(cls, as_dict: Dict[str, Any]) -> 'PhaseDetail':
+    def deserialize(cls, as_dict: Dict[str, Any]) -> 'PhaseRun':
         """
         Creates a PhaseView from a dictionary representation.
 
@@ -455,7 +455,7 @@ class PhaseDetail:
             as_dict: Dictionary containing serialized phase data
 
         Returns:
-            PhaseDetail: The deserialized phase view
+            PhaseRun: The deserialized phase view
         """
         return cls(
             phase_id=as_dict['phase_id'],
@@ -493,9 +493,9 @@ class PhaseDetail:
         return dto
 
     def search_phases(self,
-                      predicate: Optional[Callable[['PhaseDetail'], bool]] = None,
+                      predicate: Optional[Callable[['PhaseRun'], bool]] = None,
                       *,
-                      include_self: bool = True) -> List['PhaseDetail']:
+                      include_self: bool = True) -> List['PhaseRun']:
         """
         Searches phases in this view's hierarchy, with an option to include self.
         The search is performed in a pre-order (depth-first) manner.
@@ -507,11 +507,11 @@ class PhaseDetail:
                           Defaults to True.
 
         Returns:
-            List[PhaseDetail]: A list of matching phase details.
+            List[PhaseRun]: A list of matching phase details.
         """
-        results: List[PhaseDetail] = []
+        results: List[PhaseRun] = []
 
-        def _collect_recursively(node: 'PhaseDetail', target_list: List['PhaseDetail']):
+        def _collect_recursively(node: 'PhaseRun', target_list: List['PhaseRun']):
             if not predicate or predicate(node):
                 target_list.append(node)
             for child in node.children:
@@ -525,7 +525,7 @@ class PhaseDetail:
 
         return results
 
-    def search_descendants(self, predicate: Optional[Callable[['PhaseDetail'], bool]] = None) -> List['PhaseDetail']:
+    def search_descendants(self, predicate: Optional[Callable[['PhaseRun'], bool]] = None) -> List['PhaseRun']:
         """
         Returns all descendant phases in depth-first order (pre-order).
         This is a convenience method, equivalent to calling
@@ -533,7 +533,7 @@ class PhaseDetail:
         """
         return self.search_phases(predicate, include_self=False)
 
-    def find_first_phase(self, predicate: Callable[['PhaseDetail'], bool]) -> Optional['PhaseDetail']:
+    def find_first_phase(self, predicate: Callable[['PhaseRun'], bool]) -> Optional['PhaseRun']:
         """
         Finds a phase in this view's hierarchy that matches the given predicate.
 
@@ -541,7 +541,7 @@ class PhaseDetail:
             predicate: A function that takes a PhaseView and returns bool
 
         Returns:
-            Optional[PhaseDetail]: The matching phase view or None if not found
+            Optional[PhaseRun]: The matching phase view or None if not found
         """
         if predicate(self):
             return self
@@ -584,7 +584,7 @@ class PhaseDetail:
 
 @dataclass
 class PhaseTransitionEvent:
-    phase_detail: PhaseDetail
+    phase_detail: PhaseRun
     new_stage: Stage
     timestamp: datetime.datetime
 

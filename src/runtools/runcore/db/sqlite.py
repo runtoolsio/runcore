@@ -17,7 +17,7 @@ from runtools.runcore.db import Persistence
 from runtools.runcore.err import InvalidStateError
 from runtools.runcore.job import JobStats, JobRun, JobInstanceMetadata, InstanceID
 from runtools.runcore.output import OutputLocation
-from runtools.runcore.run import TerminationStatus, Outcome, PhaseDetail, Fault, Stage
+from runtools.runcore.run import TerminationStatus, Outcome, PhaseRun, Fault, Stage
 from runtools.runcore.status import Status
 from runtools.runcore.util import MatchingStrategy, format_dt_sql, parse_dt_sql
 
@@ -420,7 +420,7 @@ class SQLite(Persistence):
 
         def to_job_run(t):
             metadata = JobInstanceMetadata(InstanceID(t[0], t[1]), json.loads(t[2]) if t[2] else dict())
-            root_phase = PhaseDetail.deserialize(json.loads(t[7]))
+            root_phase = PhaseRun.deserialize(json.loads(t[7]))
             output_locations = tuple(OutputLocation.deserialize(l) for l in json.loads(t[8])) if t[8] else ()
             faults = tuple(Fault.deserialize(f) for f in json.loads(t[10])) if t[10] else ()
             status = Status.deserialize(json.loads(t[11])) if t[11] else None

@@ -17,7 +17,7 @@ from typing import Dict, Any, List, Optional, Tuple, Iterator, ClassVar, Set, Ca
 
 from runtools.runcore import util
 from runtools.runcore.output import OutputLine, Output, OutputLocation
-from runtools.runcore.run import TerminationStatus, Fault, PhaseDetail, Stage, RunLifecycle, StopReason
+from runtools.runcore.run import TerminationStatus, Fault, PhaseRun, Stage, RunLifecycle, StopReason
 from runtools.runcore.status import Status
 from runtools.runcore.util import MatchingStrategy, format_dt_iso, unique_timestamp_hex
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
@@ -405,7 +405,7 @@ class JobInstance(abc.ABC):
         return self.find_phase_control(lambda phase: phase.phase_id == phase_id)
 
     @abc.abstractmethod
-    def to_run(self):
+    def snap(self):
         """
         Creates a consistent, thread-safe snapshot of the job instance's current state.
 
@@ -449,7 +449,7 @@ class JobRun:
     Immutable snapshot of job instance
     """
     metadata: JobInstanceMetadata
-    root_phase: PhaseDetail
+    root_phase: PhaseRun
     output_locations: Tuple[OutputLocation, ...] = ()
     faults: Tuple[Fault, ...] = ()
     status: Optional[Status] = None
@@ -462,7 +462,7 @@ class JobRun:
     def deserialize(cls, as_dict: Dict[str, Any]) -> 'JobRun':
         return cls(
             metadata=JobInstanceMetadata.deserialize(as_dict['metadata']),
-            root_phase=PhaseDetail.deserialize(as_dict['root_phase']),
+            root_phase=PhaseRun.deserialize(as_dict['root_phase']),
             faults=tuple(Fault.deserialize(f) for f in as_dict.get('faults', [])),
             status=Status.deserialize(as_dict['status']) if as_dict.get('status') else None,
         )
@@ -502,7 +502,7 @@ class JobRun:
         """
         return self.metadata.run_id
 
-    def search_phases(self, predicate: Optional[Callable[['PhaseDetail'], bool]] = None) -> List['PhaseDetail']:
+    def search_phases(self, predicate: Optional[Callable[['PhaseRun'], bool]] = None) -> List['PhaseRun']:
         """
         Searches all phases within this job run (including root phase and
         all descendants) that match the given predicate.
@@ -514,7 +514,7 @@ class JobRun:
                        (root and descendants) are returned.
 
         Returns:
-            List[PhaseDetail]: A list of all matching phase details found.
+            List[PhaseRun]: A list of all matching phase details found.
         """
         return self.root_phase.search_phases(predicate=predicate, include_self=True)
 
@@ -860,9 +860,9 @@ class JobInstanceDelegate(JobInstance):
         """Delegates to the wrapped instance's find_phase_control_by_id method"""
         return self._wrapped.find_phase_control_by_id(phase_id)
 
-    def to_run(self) -> JobRun:
+    def snap(self) -> JobRun:
         """Delegates to the wrapped instance's snapshot method"""
-        return self._wrapped.to_run()
+        return self._wrapped.snap()
 
     @property
     def output(self):

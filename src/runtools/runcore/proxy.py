@@ -64,7 +64,7 @@ class JobInstanceProxy(JobInstance):
             return None
         return PhaseControlProxy(self._client, self._server_address, self._instance_id, phase.phase_id)
 
-    def to_run(self):
+    def snap(self):
         return self._job_run
 
     @property

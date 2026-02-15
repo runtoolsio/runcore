@@ -2,11 +2,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
 
-from runtools.runcore.run import PhaseDetail, TerminationInfo, TerminationStatus, Fault, RunLifecycle
+from runtools.runcore.run import PhaseRun, TerminationInfo, TerminationStatus, Fault, RunLifecycle
 from runtools.runcore.util import utc_now
 
 
-def _determine_container_state(children: Tuple[PhaseDetail,...]) -> tuple[bool, Optional[TerminationInfo]]:
+def _determine_container_state(children: Tuple[PhaseRun, ...]) -> tuple[bool, Optional[TerminationInfo]]:
     """Determine container state based on children"""
     if not children:
         return False, None
@@ -48,12 +48,12 @@ def _determine_container_state(children: Tuple[PhaseDetail,...]) -> tuple[bool, 
 
 
 @dataclass
-class FakePhaseDetailBuilder:
+class FakePhaseRunBuilder:
     """Builder for creating test phase hierarchies with sequential timestamps"""
     phase_id: str
     phase_type: str
-    parent: Optional['FakePhaseDetailBuilder']
-    children: List['FakePhaseDetailBuilder']
+    parent: Optional['FakePhaseRunBuilder']
+    children: List['FakePhaseRunBuilder']
     _base_ts: datetime
     _next_offset: int  # Minutes from base timestamp
     _started: bool
@@ -62,7 +62,7 @@ class FakePhaseDetailBuilder:
 
     @classmethod
     def root(cls, phase_id: str = "root",
-             *, phase_type: str = "test", base_ts: Optional[datetime] = None) -> 'FakePhaseDetailBuilder':
+             *, phase_type: str = "test", base_ts: Optional[datetime] = None) -> 'FakePhaseRunBuilder':
         """Create a root builder with initial timestamp"""
         base_ts = base_ts or utc_now().replace(microsecond=0)
         return cls(
@@ -86,7 +86,7 @@ class FakePhaseDetailBuilder:
             started: bool = False,
             fault: Optional[Fault] = None,
             term_ts: Optional[datetime] = None
-    ) -> 'FakePhaseDetailBuilder':
+    ) -> 'FakePhaseRunBuilder':
         """
         Add a child phase with flexible termination configuration
 
@@ -119,7 +119,7 @@ class FakePhaseDetailBuilder:
                 stack_trace=fault.stack_trace if fault else None,
             )
 
-        child = FakePhaseDetailBuilder(
+        child = FakePhaseRunBuilder(
             phase_id=phase_id,
             phase_type=phase_type,
             parent=self,
@@ -133,8 +133,8 @@ class FakePhaseDetailBuilder:
         self.children.append(child)
         return self
 
-    def build(self) -> PhaseDetail:
-        """Build the PhaseDetail hierarchy with sequential timestamps"""
+    def build(self) -> PhaseRun:
+        """Build the PhaseRun hierarchy with sequential timestamps"""
         # Build children first to determine container state
         built_children = tuple(child.build() for child in self.children)
 
@@ -151,7 +151,7 @@ class FakePhaseDetailBuilder:
         if self._is_container:
             self._started, self._termination = _determine_container_state(built_children)
 
-        return PhaseDetail(
+        return PhaseRun(
             phase_id=self.phase_id,
             phase_type=self.phase_type,
             is_idle=False,

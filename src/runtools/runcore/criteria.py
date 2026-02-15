@@ -9,7 +9,7 @@ from typing import Dict, Any, Optional, TypeVar, Generic, Iterable
 
 from runtools.runcore.job import JobInstanceMetadata, JobRun, InstanceID
 from runtools.runcore.run import Outcome, TerminationInfo, \
-    PhaseDetail, TerminationStatus, RunLifecycle, Stage
+    PhaseRun, TerminationStatus, RunLifecycle, Stage
 from runtools.runcore.util import MatchingStrategy, to_list, DateTimeRange, TimeRange
 
 T = TypeVar('T')
@@ -471,7 +471,7 @@ class LifecycleCriterion(MatchCriteria[RunLifecycle]):
 
 
 @dataclass
-class PhaseCriterion(MatchCriteria[PhaseDetail]):
+class PhaseCriterion(MatchCriteria[PhaseRun]):
     """
     Criteria for matching phase details, incorporating phase-specific and lifecycle criteria.
 
@@ -521,48 +521,48 @@ class PhaseCriterion(MatchCriteria[PhaseDetail]):
             'match_type': self.match_type.name
         }
 
-    def _matches_phase(self, phase_detail: PhaseDetail, check_lifecycle: bool = False) -> bool:
+    def _matches_phase(self, phase_run: PhaseRun, check_lifecycle: bool = False) -> bool:
         """Check if a single phase matches this criterion.
 
         Args:
-            phase_detail: The phase to check
+            phase_run: The phase to check
             check_lifecycle: Whether to check lifecycle criteria (only for root phase)
         """
-        if self.phase_type and phase_detail.phase_type != self.phase_type:
+        if self.phase_type and phase_run.phase_type != self.phase_type:
             return False
 
-        if self.phase_id and phase_detail.phase_id != self.phase_id:
+        if self.phase_id and phase_run.phase_id != self.phase_id:
             return False
 
-        if self.idle is not None and phase_detail.is_idle != self.idle:
+        if self.idle is not None and phase_run.is_idle != self.idle:
             return False
 
-        if self.phase_name and phase_detail.phase_name != self.phase_name:
+        if self.phase_name and phase_run.phase_name != self.phase_name:
             return False
 
         if self.attributes:
-            if not phase_detail.attributes:
+            if not phase_run.attributes:
                 return False
             for key, value in self.attributes.items():
-                if phase_detail.attributes.get(key) != value:
+                if phase_run.attributes.get(key) != value:
                     return False
 
-        if check_lifecycle and self.lifecycle and not self.lifecycle.matches(phase_detail.lifecycle):
+        if check_lifecycle and self.lifecycle and not self.lifecycle.matches(phase_run.lifecycle):
             return False
 
         return True
 
-    def _matches_any_descendant(self, phase: PhaseDetail) -> bool:
+    def _matches_any_descendant(self, phase: PhaseRun) -> bool:
         """Recursively check if any descendant phase matches (without lifecycle)."""
         for child in phase.children:
             if self._matches_phase(child) or self._matches_any_descendant(child):
                 return True
         return False
 
-    def __call__(self, phase: Optional[PhaseDetail]):
+    def __call__(self, phase: Optional[PhaseRun]):
         return self.matches(phase)
 
-    def matches(self, phase: Optional[PhaseDetail]) -> bool:
+    def matches(self, phase: Optional[PhaseRun]) -> bool:
         """Check if phase or its descendants match based on match_type."""
         if phase is None:
             return False

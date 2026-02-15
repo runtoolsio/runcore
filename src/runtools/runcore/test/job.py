@@ -2,7 +2,7 @@ from datetime import timedelta
 
 from runtools.runcore.job import JobRun, JobInstanceMetadata, InstanceID
 from runtools.runcore.run import TerminationStatus, Fault
-from runtools.runcore.test.run import FakePhaseDetailBuilder
+from runtools.runcore.test.run import FakePhaseRunBuilder
 from runtools.runcore.util import utc_now, unique_timestamp_hex
 
 APPROVAL = 'approval'
@@ -18,7 +18,7 @@ def job_run(job_id, phase, *, run_id=None, user_params=None):
 def fake_job_run(job_id, run_id='r1', *, created_at=None, offset_min=0, ended_at=None,
                  term_status=TerminationStatus.COMPLETED) -> JobRun:
     start_time = (created_at or utc_now().replace(microsecond=0)) + timedelta(minutes=offset_min)
-    phase_builder = FakePhaseDetailBuilder.root(base_ts=start_time)
+    phase_builder = FakePhaseRunBuilder.root(base_ts=start_time)
     phase_builder.add_phase(APPROVAL, TerminationStatus.COMPLETED, phase_type='APPROVAL')
 
     if not term_status:
