@@ -462,7 +462,7 @@ class JobRun:
     def deserialize(cls, as_dict: Dict[str, Any]) -> 'JobRun':
         return cls(
             metadata=JobInstanceMetadata.deserialize(as_dict['metadata']),
-            root_phase=PhaseRun.deserialize(as_dict['root_phase']),
+            root_phase=PhaseRun.deserialize(as_dict['phases']),
             faults=tuple(Fault.deserialize(f) for f in as_dict.get('faults', [])),
             status=Status.deserialize(as_dict['status']) if as_dict.get('status') else None,
         )
@@ -470,7 +470,7 @@ class JobRun:
     def serialize(self) -> Dict[str, Any]:
         d = {
             "metadata": self.metadata.serialize(),
-            "root_phase": self.root_phase.serialize(),
+            "phases": self.root_phase.serialize(),
         }
         if self.faults:
             d["faults"] = [f.serialize() for f in self.faults]
@@ -544,10 +544,13 @@ class InstanceEvent(Protocol):
 class InstanceLifecycleEvent:
     EVENT_TYPE = "instance_lifecycle_update"
 
-    instance: JobInstanceMetadata
     job_run: JobRun
     new_stage: Stage
     timestamp: datetime.datetime
+
+    @property
+    def instance(self) -> JobInstanceMetadata:
+        return self.job_run.metadata
 
     @property
     def event_type(self):
@@ -561,17 +564,15 @@ class InstanceLifecycleEvent:
                 "instance": instance_meta,
             },
             "event": {
-                "instance": instance_meta,
                 "job_run": self.job_run.serialize(),
                 "new_stage": self.new_stage.name,
                 "timestamp": format_dt_iso(self.timestamp),
-            }
+            },
         }
 
     @classmethod
     def deserialize(cls, as_dict: Dict[str, Any]) -> 'InstanceLifecycleEvent':
         return cls(
-            instance=JobInstanceMetadata.deserialize(as_dict['instance']),
             job_run=JobRun.deserialize(as_dict['job_run']),
             new_stage=Stage[as_dict['new_stage']],
             timestamp=util.parse_datetime(as_dict['timestamp']),
@@ -589,12 +590,15 @@ class InstanceLifecycleObserver(abc.ABC):
 class InstancePhaseEvent:
     EVENT_TYPE = "instance_phase_update"
 
-    instance: JobInstanceMetadata
     job_run: JobRun
     is_root_phase: bool
     phase_id: str
     new_stage: Stage
     timestamp: datetime.datetime
+
+    @property
+    def instance(self) -> JobInstanceMetadata:
+        return self.job_run.metadata
 
     @property
     def event_type(self):
@@ -608,19 +612,17 @@ class InstancePhaseEvent:
                 "instance": instance_meta,
             },
             "event": {
-                "instance": instance_meta,
                 "job_run": self.job_run.serialize(),
                 "is_root_phase": self.is_root_phase,
                 "phase_id": self.phase_id,
                 "new_stage": self.new_stage.name,
                 "timestamp": format_dt_iso(self.timestamp),
-            }
+            },
         }
 
     @classmethod
     def deserialize(cls, as_dict: Dict[str, Any]) -> 'InstancePhaseEvent':
         return cls(
-            instance=JobInstanceMetadata.deserialize(as_dict['instance']),
             job_run=JobRun.deserialize(as_dict['job_run']),
             is_root_phase=as_dict['is_root_phase'],
             phase_id=as_dict['phase_id'],

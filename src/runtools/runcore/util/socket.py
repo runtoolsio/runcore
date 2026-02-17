@@ -5,16 +5,82 @@ import os
 import socket
 import tempfile
 import uuid
+import zlib
 from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
 from threading import Thread, RLock
 from typing import Generator, List, NamedTuple, Optional
 
+from runtools.runcore import paths
+
 # Default=32768, Max= 262142, https://docstore.mik.ua/manuals/hp-ux/en/B2355-60130/UNIX.7P.html
 RECV_BUFFER_LENGTH = 65536  # Can be increased to 163840?
 
 log = logging.getLogger(__name__)
+
+_TOKEN_PREFIX = b'\x00TOKEN:'
+
+
+def _encode_datagram(text: str) -> bytes:
+    """Encode and compress a text payload for datagram transmission."""
+    return zlib.compress(text.encode())
+
+
+def _decode_datagram(data: bytes) -> str:
+    """Decode a datagram payload, decompressing if needed.
+
+    Detects zlib-compressed payloads by the zlib header byte (0x78).
+    Uncompressed payloads are decoded directly.
+    """
+    if data and data[0] == 0x78:
+        return zlib.decompress(data).decode()
+    return data.decode()
+
+
+def _write_payload_file(data: bytes) -> bytes:
+    """Write oversized datagram payload to a spool file and return a token reference.
+
+    When a compressed datagram exceeds the OS size limit (EMSGSIZE), the payload is written
+    to ``paths.payload_dir()/<token>.bin`` and a small ``\\x00TOKEN:<token>`` reference is
+    returned for transmission instead. The receiver resolves the token back to the payload
+    via ``_resolve_datagram``.
+
+    TODO: Spool files may be orphaned if the token datagram is never delivered or consumed.
+        Consider a periodic TTL sweep of stale files in ``paths.payload_dir()``.
+    """
+    paths.payload_dir().mkdir(parents=True, exist_ok=True, mode=0o700)
+    token = uuid.uuid4().hex
+    path = paths.payload_dir() / f"{token}.bin"
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.write(fd, data)
+    except OSError:
+        os.close(fd)
+        path.unlink(missing_ok=True)
+        raise
+    os.close(fd)
+    return _TOKEN_PREFIX + token.encode()
+
+
+def _resolve_datagram(data: bytes) -> str:
+    """Decode a datagram, resolving a token reference to a spool file if needed.
+
+    Token references (``\\x00TOKEN:<hex>`` prefix) are looked up in ``paths.payload_dir()``,
+    read, deleted, and then decoded as a normal (zlib-compressed) payload. Plain datagrams
+    are decoded directly.
+    """
+    if data.startswith(_TOKEN_PREFIX):
+        token = data[len(_TOKEN_PREFIX):].decode()
+        if not token.isalnum():
+            raise ValueError(f"Invalid payload token: {token!r}")
+        path = paths.payload_dir() / f"{token}.bin"
+        try:
+            payload = path.read_bytes()
+        finally:
+            path.unlink(missing_ok=True)
+        return _decode_datagram(payload)
+    return _decode_datagram(data)
 
 
 class SocketServerException(Exception):
@@ -82,7 +148,12 @@ class DatagramSocketServer(abc.ABC):
             if not datagram:
                 break  # Linux behaviour on close
 
-            req_body = datagram.decode()
+            try:
+                req_body = _resolve_datagram(datagram)
+            except (FileNotFoundError, ValueError, zlib.error, UnicodeDecodeError) as e:
+                log.warning("event=[datagram_decode_failed] error=[%s]", e)
+                continue
+
             if self._allow_ping and req_body == 'ping':
                 resp_body = 'pong'
             else:
@@ -91,7 +162,7 @@ class DatagramSocketServer(abc.ABC):
 
             if resp_body:
                 if client_address:
-                    encoded = resp_body.encode()
+                    encoded = _encode_datagram(resp_body)
                     try:
                         server.sendto(encoded, client_address)
                     except OSError as e:
@@ -203,9 +274,6 @@ class DatagramSocketClient:
 
         Receives:
             Request body string to send, or None/empty to move to next server.
-
-        Raises:
-            PayloadTooLarge: When request payload exceeds socket limits.
         """
         req_body = '_'  # Dummy initialization to remove warnings
         res = None
@@ -219,12 +287,19 @@ class DatagramSocketClient:
                 if not req_body:
                     break  # next(this) called -> proceed to the next server
 
-                encoded = req_body.encode()
+                encoded = _encode_datagram(req_body)
                 try:
-                    self._client.sendto(encoded, str(server_socket))
+                    try:
+                        self._client.sendto(encoded, str(server_socket))
+                    except OSError as e:
+                        if e.errno == errno.EMSGSIZE:
+                            ref = _write_payload_file(encoded)
+                            self._client.sendto(ref, str(server_socket))
+                        else:
+                            raise
                     if self._client_addr:
-                        datagram = self._client.recv(RECV_BUFFER_LENGTH)
-                        res = SocketRequestResult(server_address, datagram.decode())
+                        resp_datagram = self._client.recv(RECV_BUFFER_LENGTH)
+                        res = SocketRequestResult(server_address, _decode_datagram(resp_datagram))
                 except (socket.timeout, TimeoutError) as e:
                     log.warning('event=[socket_timeout] socket=[{}]'.format(server_socket))
                     res = SocketRequestResult(server_address, None, e)
@@ -236,8 +311,6 @@ class DatagramSocketClient:
                     if e.errno in (errno.ENOENT, errno.EPIPE):  # No such file/directory (2) or Broken pipe (32)
                         skip = True  # The server not found or closed meanwhile
                         break
-                    if e.errno == errno.EMSGSIZE:
-                        raise PayloadTooLarge(len(encoded))
                     res = SocketRequestResult(server_address, None, e)
 
     def communicate(self, req: str, addresses=()) -> List[SocketRequestResult]:
@@ -285,15 +358,6 @@ class DatagramSocketClient:
         if self._client_addr and os.path.exists(self._client_addr):
             os.unlink(self._client_addr)
             self._client_addr = None
-
-
-class PayloadTooLarge(Exception):
-    """
-    This exception is thrown when the operating system rejects sent datagram due to its size.
-    """
-
-    def __init__(self, payload_size):
-        super().__init__("Datagram payload is too large: " + str(payload_size))
 
 
 # --- Stream socket helpers and classes for RPC communication ---

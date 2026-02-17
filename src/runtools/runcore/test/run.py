@@ -155,7 +155,6 @@ class FakePhaseRunBuilder:
             phase_id=self.phase_id,
             phase_type=self.phase_type,
             is_idle=False,
-            phase_name=self.phase_id,
             attributes=None,
             variables=None,
             lifecycle=RunLifecycle(created_at=created_at, started_at=started_at, termination=self._termination),

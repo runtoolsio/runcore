@@ -483,7 +483,6 @@ class PhaseCriterion(MatchCriteria[PhaseRun]):
         phase_type: Phase type to match
         phase_id: Phase ID to match
         idle: Idle phase match
-        phase_name: Phase name to match
         attributes: Dictionary of attributes to match. None = no attribute matching
         lifecycle: Criteria for matching lifecycle information. For root phase only.
         match_type: How phases are matched. Defaults to ROOT.
@@ -491,7 +490,6 @@ class PhaseCriterion(MatchCriteria[PhaseRun]):
     phase_type: Optional[str] = None
     phase_id: Optional[str] = None
     idle: Optional[bool] = None
-    phase_name: Optional[str] = None
     attributes: Optional[Dict[str, Any]] = None
     lifecycle: Optional[LifecycleCriterion] = None
     match_type: PhaseMatch = PhaseMatch.ROOT
@@ -503,7 +501,6 @@ class PhaseCriterion(MatchCriteria[PhaseRun]):
             phase_type=as_dict.get('phase_type'),
             phase_id=as_dict.get('phase_id'),
             idle=as_dict.get('idle'),
-            phase_name=as_dict.get('phase_name'),
             attributes=as_dict.get('attributes'),
             lifecycle=LifecycleCriterion.deserialize(as_dict.get('lifecycle')) if as_dict.get('lifecycle') else None,
             match_type=PhaseMatch[as_dict.get('match_type', PhaseMatch.ROOT.name)]
@@ -515,7 +512,6 @@ class PhaseCriterion(MatchCriteria[PhaseRun]):
             'phase_type': self.phase_type,
             'phase_id': self.phase_id,
             'idle': self.idle,
-            'phase_name': self.phase_name,
             'attributes': self.attributes,
             'lifecycle': self.lifecycle.serialize() if self.lifecycle else None,
             'match_type': self.match_type.name
@@ -535,9 +531,6 @@ class PhaseCriterion(MatchCriteria[PhaseRun]):
             return False
 
         if self.idle is not None and phase_run.is_idle != self.idle:
-            return False
-
-        if self.phase_name and phase_run.phase_name != self.phase_name:
             return False
 
         if self.attributes:
@@ -579,7 +572,7 @@ class PhaseCriterion(MatchCriteria[PhaseRun]):
     def __bool__(self) -> bool:
         """Check if any criteria are set."""
         return bool(self.phase_type or self.phase_id or self.idle or
-                    self.phase_name or self.attributes or self.lifecycle)
+                    self.attributes or self.lifecycle)
 
     def __str__(self) -> str:
         """Create a string representation showing non-None criteria."""
@@ -590,8 +583,6 @@ class PhaseCriterion(MatchCriteria[PhaseRun]):
             fields.append(f"id='{self.phase_id}'")
         if self.idle is not None:
             fields.append(f"idle={self.idle}")
-        if self.phase_name:
-            fields.append(f"name='{self.phase_name}'")
         if self.attributes:
             fields.append(f"attrs={self.attributes}")
         if self.lifecycle:

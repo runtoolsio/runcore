@@ -16,7 +16,7 @@ import weakref
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Optional, List, Dict, Any, TypeVar, Callable, Tuple, Iterator
+from typing import Optional, List, Dict, Any, TypeVar, Callable, Tuple, Iterator, Sequence
 
 from runtools.runcore import util
 from runtools.runcore.util import format_dt_iso, utc_now
@@ -415,18 +415,12 @@ class PhaseRun:
     """
     A complete immutable view of a Phase instance, containing all state and metadata.
     """
-    # Core phase information
     phase_id: str
     phase_type: str
     is_idle: bool
-    phase_name: Optional[str]
     attributes: Optional[Dict[str, Any]]
     variables: Optional[Dict[str, Any]]
-
-    # Lifecycle information encapsulated in a dedicated class
     lifecycle: RunLifecycle
-
-    # Hierarchical information
     children: Tuple['PhaseRun', ...]
 
     @classmethod
@@ -435,7 +429,6 @@ class PhaseRun:
             phase_id=phase.id,
             phase_type=phase.type,
             is_idle=phase.is_idle,
-            phase_name=phase.name,
             attributes=phase.attributes,
             variables=phase.variables,
             lifecycle=RunLifecycle(
@@ -446,51 +439,56 @@ class PhaseRun:
             children=tuple(cls.from_phase(child) for child in phase.children) if phase.children else ()
         )
 
+    def serialize(self) -> List[Dict[str, Any]]:
+        """Serialize phase tree as flat list with parent references."""
+        phases = []
+
+        def _walk(phase, parent_id=None):
+            dto = {
+                'phase_id': phase.phase_id,
+                'phase_type': phase.phase_type,
+                'is_idle': phase.is_idle,
+                'lifecycle': phase.lifecycle.serialize(),
+            }
+            if phase.attributes:
+                dto['attributes'] = phase.attributes
+            if phase.variables:
+                dto['variables'] = phase.variables
+            if parent_id:
+                dto['parent'] = parent_id
+            phases.append(dto)
+            for child in phase.children:
+                _walk(child, phase.phase_id)
+
+        _walk(self)
+        return phases
+
     @classmethod
-    def deserialize(cls, as_dict: Dict[str, Any]) -> 'PhaseRun':
-        """
-        Creates a PhaseView from a dictionary representation.
+    def deserialize(cls, phases: Sequence[Dict[str, Any]]) -> 'PhaseRun':
+        """Reconstruct tree from flat list with parent references."""
+        children_map: Dict[str, List[Dict[str, Any]]] = {}
+        root_dict = None
+        for d in phases:
+            pid = d.get('parent')
+            if pid is None:
+                root_dict = d
+            else:
+                children_map.setdefault(pid, []).append(d)
 
-        Args:
-            as_dict: Dictionary containing serialized phase data
+        def _build(d) -> 'PhaseRun':
+            phase_id = d['phase_id']
+            child_dicts = children_map.get(phase_id, [])
+            return cls(
+                phase_id=phase_id,
+                phase_type=d['phase_type'],
+                is_idle=d.get('is_idle', False),
+                attributes=d.get('attributes'),
+                variables=d.get('variables'),
+                lifecycle=RunLifecycle.deserialize(d['lifecycle']),
+                children=tuple(_build(cd) for cd in child_dicts),
+            )
 
-        Returns:
-            PhaseRun: The deserialized phase view
-        """
-        return cls(
-            phase_id=as_dict['phase_id'],
-            phase_type=as_dict['phase_type'],
-            is_idle=as_dict.get('is_idle', False),
-            phase_name=as_dict.get('phase_name'),
-            attributes=as_dict.get('attributes'),
-            variables=as_dict.get('variables'),
-            lifecycle=RunLifecycle.deserialize(as_dict.get('lifecycle')),
-            children=tuple(cls.deserialize(child) for child in as_dict.get('children', [])),
-        )
-
-    def serialize(self) -> Dict[str, Any]:
-        """
-        Creates a dictionary representation of this PhaseView.
-
-        Returns:
-            Dict[str, Any]: The serialized phase view
-        """
-        dto = {
-            'phase_id': self.phase_id,
-            'phase_type': self.phase_type,
-            'is_idle': self.is_idle,
-            'lifecycle': self.lifecycle.serialize(),
-        }
-        if self.phase_name:
-            dto['phase_name'] = self.phase_name
-        if self.attributes:
-            dto['attributes'] = self.attributes
-        if self.variables:
-            dto['variables'] = self.variables
-        if self.children:
-            dto['children'] = [child.serialize() for child in self.children]
-
-        return dto
+        return _build(root_dict)
 
     def search_phases(self,
                       predicate: Optional[Callable[['PhaseRun'], bool]] = None,
@@ -620,6 +618,14 @@ class PhaseControl:
         for name, attr in inspect.getmembers(phase.__class__):
             if getattr(attr, '_expose_to_control', False):
                 self._allowed_methods[name] = attr
+
+    @property
+    def phase_id(self):
+        return self._phase.id
+
+    @property
+    def phase_type(self):
+        return self._phase.type
 
     def __getattr__(self, name):
         if name not in self._allowed_methods:

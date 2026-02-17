@@ -252,6 +252,10 @@ def runtime_env_dir():
     return runtime_dir() / 'env'
 
 
+def payload_dir() -> Path:
+    return runtime_dir() / 'payloads'
+
+
 def list_subdir(root_path: Path, *, pattern=None) -> Generator[Path, None, None]:
     """
     Get a generator of subdirectories in a root path, optionally matching a pattern.

@@ -26,12 +26,12 @@ from typing import Callable, Optional, Iterable, List, override
 from runtools.runcore import paths, util, db
 from runtools.runcore.client import LocalInstanceClient
 from runtools.runcore.criteria import JobRunCriteria, SortOption
-from runtools.runcore.db import NullPersistence, sqlite
+from runtools.runcore.db import NullPersistence, PersistenceDisabledError, sqlite
 from runtools.runcore.env import LocalEnvironmentConfig, \
     EnvironmentConfigUnion, EnvironmentNotFoundError, DEFAULT_LOCAL_ENVIRONMENT, get_env_config
 from runtools.runcore.err import run_isolated_collect_exceptions
 from runtools.runcore.job import InstanceNotifications, JobInstance, InstanceLifecycleObserver, InstanceLifecycleEvent, \
-    JobRun
+    JobRun, InstanceID
 from runtools.runcore.listening import EventReceiver, InstanceEventReceiver
 from runtools.runcore.paths import ConfigFileNotFoundError
 from runtools.runcore.proxy import JobInstanceProxy
@@ -221,6 +221,18 @@ class EnvironmentConnector(ABC):
     @abstractmethod
     def get_active_runs(self, run_match=None):
         pass
+
+    def get_run(self, instance_id: InstanceID) -> Optional[JobRun]:
+        """Fetch a single JobRun by instance ID — tries active runs, then history."""
+        criteria = JobRunCriteria.instance_match(instance_id)
+        runs = self.get_active_runs(criteria)
+        if runs:
+            return runs[0]
+        try:
+            history = self.read_history_runs(criteria, asc=False, limit=1, offset=0)
+        except PersistenceDisabledError:
+            return None
+        return history[0] if history else None
 
     @abstractmethod
     def iter_history_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
