@@ -16,7 +16,7 @@ import weakref
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Optional, List, Dict, Any, TypeVar, Callable, Tuple, Iterator, Sequence
+from typing import Optional, List, Dict, Any, TypeVar, Callable, Tuple, Iterator
 
 from runtools.runcore import util
 from runtools.runcore.util import format_dt_iso, utc_now
@@ -170,12 +170,15 @@ class TerminationInfo:
         )
 
     def serialize(self) -> Dict[str, Any]:
-        return {
+        dto = {
             "termination_status": self.status.name,
             "terminated_at": format_dt_iso(self.terminated_at),
-            "message": self.message,
-            "stack_trace": self.stack_trace,
         }
+        if self.message:
+            dto["message"] = self.message
+        if self.stack_trace:
+            dto["stack_trace"] = self.stack_trace
+        return dto
 
     def __str__(self) -> str:
         """Compact string representation of termination info."""
@@ -439,56 +442,34 @@ class PhaseRun:
             children=tuple(cls.from_phase(child) for child in phase.children) if phase.children else ()
         )
 
-    def serialize(self) -> List[Dict[str, Any]]:
-        """Serialize phase tree as flat list with parent references."""
-        phases = []
-
-        def _walk(phase, parent_id=None):
-            dto = {
-                'phase_id': phase.phase_id,
-                'phase_type': phase.phase_type,
-                'is_idle': phase.is_idle,
-                'lifecycle': phase.lifecycle.serialize(),
-            }
-            if phase.attributes:
-                dto['attributes'] = phase.attributes
-            if phase.variables:
-                dto['variables'] = phase.variables
-            if parent_id:
-                dto['parent'] = parent_id
-            phases.append(dto)
-            for child in phase.children:
-                _walk(child, phase.phase_id)
-
-        _walk(self)
-        return phases
+    def serialize(self) -> Dict[str, Any]:
+        """Serialize phase tree recursively."""
+        dto = {
+            'phase_id': self.phase_id,
+            'phase_type': self.phase_type,
+            'is_idle': self.is_idle,
+            'lifecycle': self.lifecycle.serialize(),
+        }
+        if self.attributes:
+            dto['attributes'] = self.attributes
+        if self.variables:
+            dto['variables'] = self.variables
+        if self.children:
+            dto['children'] = [child.serialize() for child in self.children]
+        return dto
 
     @classmethod
-    def deserialize(cls, phases: Sequence[Dict[str, Any]]) -> 'PhaseRun':
-        """Reconstruct tree from flat list with parent references."""
-        children_map: Dict[str, List[Dict[str, Any]]] = {}
-        root_dict = None
-        for d in phases:
-            pid = d.get('parent')
-            if pid is None:
-                root_dict = d
-            else:
-                children_map.setdefault(pid, []).append(d)
-
-        def _build(d) -> 'PhaseRun':
-            phase_id = d['phase_id']
-            child_dicts = children_map.get(phase_id, [])
-            return cls(
-                phase_id=phase_id,
-                phase_type=d['phase_type'],
-                is_idle=d.get('is_idle', False),
-                attributes=d.get('attributes'),
-                variables=d.get('variables'),
-                lifecycle=RunLifecycle.deserialize(d['lifecycle']),
-                children=tuple(_build(cd) for cd in child_dicts),
-            )
-
-        return _build(root_dict)
+    def deserialize(cls, as_dict: Dict[str, Any]) -> 'PhaseRun':
+        """Reconstruct phase tree recursively."""
+        return cls(
+            phase_id=as_dict['phase_id'],
+            phase_type=as_dict['phase_type'],
+            is_idle=as_dict.get('is_idle', False),
+            attributes=as_dict.get('attributes'),
+            variables=as_dict.get('variables'),
+            lifecycle=RunLifecycle.deserialize(as_dict['lifecycle']),
+            children=tuple(cls.deserialize(c) for c in as_dict.get('children', ())),
+        )
 
     def search_phases(self,
                       predicate: Optional[Callable[['PhaseRun'], bool]] = None,

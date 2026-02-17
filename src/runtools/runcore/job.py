@@ -331,17 +331,19 @@ class JobInstanceMetadata:
         return self.instance_id.run_id
 
     def serialize(self) -> Dict[str, Any]:
-        return {
+        dto = {
             "job_id": self.job_id,
             "run_id": self.run_id,
-            "user_params": self.user_params,
         }
+        if self.user_params:
+            dto["user_params"] = self.user_params
+        return dto
 
     @classmethod
     def deserialize(cls, as_dict):
         return cls(
             instance_id=InstanceID(as_dict['job_id'], as_dict['run_id']),
-            user_params=as_dict['user_params'],
+            user_params=as_dict.get('user_params', {}),
         )
 
     def __eq__(self, other):
@@ -462,15 +464,15 @@ class JobRun:
     def deserialize(cls, as_dict: Dict[str, Any]) -> 'JobRun':
         return cls(
             metadata=JobInstanceMetadata.deserialize(as_dict['metadata']),
-            root_phase=PhaseRun.deserialize(as_dict['phases']),
-            faults=tuple(Fault.deserialize(f) for f in as_dict.get('faults', [])),
+            root_phase=PhaseRun.deserialize(as_dict['root_phase']),
+            faults=tuple(Fault.deserialize(f) for f in as_dict.get('faults', ())),
             status=Status.deserialize(as_dict['status']) if as_dict.get('status') else None,
         )
 
     def serialize(self) -> Dict[str, Any]:
         d = {
             "metadata": self.metadata.serialize(),
-            "phases": self.root_phase.serialize(),
+            "root_phase": self.root_phase.serialize(),
         }
         if self.faults:
             d["faults"] = [f.serialize() for f in self.faults]
