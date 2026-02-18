@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
 
-from runtools.runcore.run import PhaseRun, TerminationInfo, TerminationStatus, Fault, RunLifecycle
+from runtools.runcore.run import PhaseRun, TerminationInfo, TerminationStatus, Fault, RunLifecycle, StopReason
 from runtools.runcore.util import utc_now
 
 
@@ -59,6 +59,7 @@ class FakePhaseRunBuilder:
     _started: bool
     _termination: Optional[TerminationInfo]
     _is_container: bool
+    _stop_reason: Optional[StopReason]
 
     @classmethod
     def root(cls, phase_id: str = "root",
@@ -74,7 +75,8 @@ class FakePhaseRunBuilder:
             _next_offset=0,
             _started=True,  # Root phase is started by default
             _termination=None,  # Termination determined by children
-            _is_container=True
+            _is_container=True,
+            _stop_reason=None,
         )
 
     def add_phase(
@@ -85,7 +87,8 @@ class FakePhaseRunBuilder:
             phase_type: str = "test",
             started: bool = False,
             fault: Optional[Fault] = None,
-            term_ts: Optional[datetime] = None
+            term_ts: Optional[datetime] = None,
+            stop_reason: Optional[StopReason] = None,
     ) -> 'FakePhaseRunBuilder':
         """
         Add a child phase with flexible termination configuration
@@ -128,7 +131,8 @@ class FakePhaseRunBuilder:
             _next_offset=offset + 3,
             _started=started,
             _termination=termination_info,
-            _is_container=False
+            _is_container=False,
+            _stop_reason=stop_reason,
         )
         self.children.append(child)
         return self
@@ -158,5 +162,6 @@ class FakePhaseRunBuilder:
             attributes=None,
             variables=None,
             lifecycle=RunLifecycle(created_at=created_at, started_at=started_at, termination=self._termination),
-            children=built_children
+            children=built_children,
+            stop_reason=self._stop_reason,
         )

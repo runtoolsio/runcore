@@ -425,6 +425,11 @@ class PhaseRun:
     variables: Optional[Dict[str, Any]]
     lifecycle: RunLifecycle
     children: Tuple['PhaseRun', ...]
+    stop_reason: Optional[StopReason] = None
+
+    @property
+    def stop_requested(self) -> bool:
+        return self.stop_reason is not None and self.lifecycle.termination is None
 
     @classmethod
     def from_phase(cls, phase) -> 'PhaseRun':
@@ -439,7 +444,8 @@ class PhaseRun:
                 started_at=phase.started_at,
                 termination=phase.termination
             ),
-            children=tuple(cls.from_phase(child) for child in phase.children) if phase.children else ()
+            children=tuple(cls.from_phase(child) for child in phase.children) if phase.children else (),
+            stop_reason=phase.stop_reason,
         )
 
     def serialize(self) -> Dict[str, Any]:
@@ -456,6 +462,8 @@ class PhaseRun:
             dto['variables'] = self.variables
         if self.children:
             dto['children'] = [child.serialize() for child in self.children]
+        if self.stop_reason:
+            dto['stop_reason'] = self.stop_reason.name
         return dto
 
     @classmethod
@@ -469,6 +477,7 @@ class PhaseRun:
             variables=as_dict.get('variables'),
             lifecycle=RunLifecycle.deserialize(as_dict['lifecycle']),
             children=tuple(cls.deserialize(c) for c in as_dict.get('children', ())),
+            stop_reason=StopReason[as_dict['stop_reason']] if as_dict.get('stop_reason') else None,
         )
 
     def search_phases(self,
