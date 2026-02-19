@@ -623,27 +623,16 @@ class PhaseControl:
         return getattr(self._phase, name)
 
 
-class RunCompletionError(Exception):
-    """
-    Represents an error that occurred during run execution, capturing the phase ID and reason.
+class JobCompletionError(Exception):
+    """Raised by JobInstance.run() when the root phase terminates non-successfully.
 
-    This exception is used to track errors through the phase hierarchy, maintaining a chain
-    of phase IDs that failed during execution.
+    Wraps the TerminationInfo from the root phase. When the cause is a user exception
+    (ERROR status), the original exception is chained via ``__cause__``.
 
     Attributes:
-        phase_id (str): ID of the phase where the error occurred.
+        termination: TerminationInfo with status, message, and optional stack trace.
     """
 
-    def __init__(self, phase_id, reason):
-        super().__init__(reason)
-        self.phase_id = phase_id
-
-    def original_message(self) -> Optional[str]:
-        """
-        Walk the chain of RunCompletionError causes and return
-        the message from the very first one.
-        """
-        exc = self
-        while isinstance(exc.__cause__, RunCompletionError):
-            exc = exc.__cause__
-        return str(exc)
+    def __init__(self, termination: 'TerminationInfo'):
+        super().__init__(str(termination))
+        self.termination = termination
