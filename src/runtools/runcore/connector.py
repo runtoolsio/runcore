@@ -421,8 +421,7 @@ def connect(env_id: Optional[str] = None) -> EnvironmentConnector:
     try:
         return create(get_env_config(env_id))
     except (EnvironmentNotFoundError, ConfigFileNotFoundError):
-        if env_id is None:
-            raise
+        env_id = env_id or DEFAULT_LOCAL_ENVIRONMENT
         log.debug(f"No config entry for environment '{env_id}', using derived local layout")
         return local(env_id)
 
