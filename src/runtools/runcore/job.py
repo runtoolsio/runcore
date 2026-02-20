@@ -683,6 +683,56 @@ class InstanceOutputObserver(abc.ABC):
         pass
 
 
+class ControlAction(Enum):
+    STOP_REQUESTED = "stop_requested"
+
+
+@dataclass(frozen=True)
+class InstanceControlEvent:
+    EVENT_TYPE = "instance_control_update"
+
+    job_run: JobRun
+    action: ControlAction
+    timestamp: datetime.datetime
+
+    @property
+    def instance(self) -> JobInstanceMetadata:
+        return self.job_run.metadata
+
+    @property
+    def event_type(self):
+        return self.EVENT_TYPE
+
+    def serialize(self) -> Dict[str, Any]:
+        instance_meta = self.instance.serialize()
+        return {
+            "event_metadata": {
+                "event_type": self.EVENT_TYPE,
+                "instance": instance_meta,
+            },
+            "event": {
+                "job_run": self.job_run.serialize(),
+                "action": self.action.value,
+                "timestamp": format_dt_iso(self.timestamp),
+            },
+        }
+
+    @classmethod
+    def deserialize(cls, as_dict: Dict[str, Any]) -> 'InstanceControlEvent':
+        return cls(
+            job_run=JobRun.deserialize(as_dict['job_run']),
+            action=ControlAction(as_dict['action']),
+            timestamp=util.parse_datetime(as_dict['timestamp']),
+        )
+
+
+class InstanceControlObserver(abc.ABC):
+
+    @abc.abstractmethod
+    def instance_control_update(self, event: InstanceControlEvent):
+        pass
+
+
 class JobInstanceManager(ABC):
     """
     Interface for managing job instances. The ambiguous name 'Manager' is used because the
@@ -744,15 +794,25 @@ class InstanceNotifications(ABC):
     def remove_observer_output(self, observer):
         pass
 
+    @abstractmethod
+    def add_observer_control(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
+        pass
+
+    @abstractmethod
+    def remove_observer_control(self, observer):
+        pass
+
     def add_observer_all_events(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
         self.add_observer_lifecycle(observer, priority)
         self.add_observer_phase(observer, priority)
         self.add_observer_output(observer, priority)
+        self.add_observer_control(observer, priority)
 
     def remove_observer_all_events(self, observer):
         self.remove_observer_lifecycle(observer)
         self.remove_observer_phase(observer)
         self.remove_observer_output(observer)
+        self.remove_observer_control(observer)
 
 
 class JobInstanceObservable(ABC):
@@ -772,28 +832,30 @@ class InstanceObservableNotifications(InstanceNotifications):
     ObservableNotification objects for firing events, chaining via bind/unbind, and filtering.
     """
 
-    def __init__(self, instance_filter: 'MetadataCriterion' = None,
-                 lifecycle_error_hook=None, phase_error_hook=None, output_error_hook=None,
-                 force_reraise=False):
+    def __init__(self, instance_filter: 'MetadataCriterion' = None, error_hook=None, force_reraise=False):
         event_filter = (lambda e: instance_filter.matches(e.instance)) if instance_filter else None
         self.lifecycle_notification = ObservableNotification[InstanceLifecycleObserver](
-            event_filter=event_filter, error_hook=lifecycle_error_hook, force_reraise=force_reraise)
+            event_filter=event_filter, error_hook=error_hook, force_reraise=force_reraise)
         self.phase_notification = ObservableNotification[InstancePhaseObserver](
-            event_filter=event_filter, error_hook=phase_error_hook, force_reraise=force_reraise)
+            event_filter=event_filter, error_hook=error_hook, force_reraise=force_reraise)
         self.output_notification = ObservableNotification[InstanceOutputObserver](
-            event_filter=event_filter, error_hook=output_error_hook, force_reraise=force_reraise)
+            event_filter=event_filter, error_hook=error_hook, force_reraise=force_reraise)
+        self.control_notification = ObservableNotification[InstanceControlObserver](
+            event_filter=event_filter, error_hook=error_hook, force_reraise=force_reraise)
 
     def bind_to(self, source: InstanceNotifications, priority: int = DEFAULT_OBSERVER_PRIORITY) -> None:
         """Register this notification to receive events from source."""
         source.add_observer_lifecycle(self.lifecycle_notification.observer_proxy, priority)
         source.add_observer_phase(self.phase_notification.observer_proxy, priority)
         source.add_observer_output(self.output_notification.observer_proxy, priority)
+        source.add_observer_control(self.control_notification.observer_proxy, priority)
 
     def unbind_from(self, source: InstanceNotifications) -> None:
         """Stop receiving events from source."""
         source.remove_observer_lifecycle(self.lifecycle_notification.observer_proxy)
         source.remove_observer_phase(self.phase_notification.observer_proxy)
         source.remove_observer_output(self.output_notification.observer_proxy)
+        source.remove_observer_control(self.control_notification.observer_proxy)
 
     def add_observer_lifecycle(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
         self.lifecycle_notification.add_observer(observer, priority)
@@ -813,8 +875,16 @@ class InstanceObservableNotifications(InstanceNotifications):
     def remove_observer_output(self, observer):
         self.output_notification.remove_observer(observer)
 
+    def add_observer_control(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
+        self.control_notification.add_observer(observer, priority)
 
-class InstanceEventsObserver(InstanceLifecycleObserver, InstancePhaseObserver, InstanceOutputObserver, ABC):
+    def remove_observer_control(self, observer):
+        self.control_notification.remove_observer(observer)
+
+
+class InstanceEventsObserver(
+    InstanceLifecycleObserver, InstancePhaseObserver, InstanceOutputObserver, InstanceControlObserver, ABC
+):
     pass
 
 
