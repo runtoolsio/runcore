@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from abc import ABC
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, List
@@ -171,9 +170,3 @@ class Status:
             parts.append(f"(!{warnings_str})")
 
         return "  ".join(parts) if parts else ""
-
-
-class StatusObserver(ABC):
-
-    def new_status_update(self):
-        pass

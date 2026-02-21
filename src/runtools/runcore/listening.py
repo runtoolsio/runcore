@@ -6,14 +6,10 @@ from json import JSONDecodeError
 from runtools.runcore import util
 from runtools.runcore.job import JobInstanceMetadata, \
     InstancePhaseEvent, InstanceOutputEvent, InstanceObservableNotifications, InstanceLifecycleEvent, \
-    InstanceControlEvent
+    InstanceControlEvent, InstanceStatusEvent
 from runtools.runcore.util.socket import DatagramSocketServer
 
 log = logging.getLogger(__name__)
-
-TRANSITION_LISTENER_FILE_EXTENSION = '.tlistener'
-OUTPUT_LISTENER_FILE_EXTENSION = '.olistener'
-
 
 def _listener_socket_name(ext):
     return util.unique_timestamp_hex() + ext
@@ -113,5 +109,7 @@ class InstanceEventReceiver(InstanceObservableNotifications):
             self.output_notification.observer_proxy.instance_output_update(InstanceOutputEvent.deserialize(event))
         elif event_type == InstanceControlEvent.EVENT_TYPE:
             self.control_notification.observer_proxy.instance_control_update(InstanceControlEvent.deserialize(event))
+        elif event_type == InstanceStatusEvent.EVENT_TYPE:
+            self.status_notification.observer_proxy.instance_status_update(InstanceStatusEvent.deserialize(event))
         else:
             log.warning(f"[unknown_event_type] event_type=[{event_type}] instance=[{instance_metadata}]")
