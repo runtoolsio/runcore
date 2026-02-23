@@ -482,7 +482,7 @@ class SQLite(Persistence):
         fault_placeholders = ', '.join(str(s.value) for s in fault_statuses)
         sql = f'''
             WITH filtered AS (
-                SELECT * FROM history h
+                SELECT rowid, * FROM history h
                 {where_clause}
             ),
             last_per_job AS (
