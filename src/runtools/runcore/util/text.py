@@ -73,6 +73,39 @@ class MatchingStrategy(Enum):
         return self.value[0](*args, **kwargs)
 
 
+def parse_size_to_bytes(val):
+    """Parse a human-readable size string to bytes.
+
+    Valid formats:
+    - "1048576" - plain number treated as bytes
+    - "512KB" - kilobytes
+    - "2MB" - megabytes
+    - "1GB" - gigabytes
+
+    Args:
+        val: Size string to parse (case-insensitive suffix)
+
+    Returns:
+        int: Value in bytes
+
+    Raises:
+        ValueError: If the format is invalid or unit is unknown
+    """
+    val = val.strip()
+    if val.isdigit():
+        return int(val)
+
+    match = re.match(r'^(\d+(?:\.\d+)?)\s*(kb|mb|gb)$', val, re.IGNORECASE)
+    if not match:
+        raise ValueError(f"Invalid size format: {val}. Use a number optionally followed by KB, MB, or GB.")
+
+    value = float(match.group(1))
+    unit = match.group(2).upper()
+
+    multipliers = {'KB': 1024, 'MB': 1024 ** 2, 'GB': 1024 ** 3}
+    return int(value * multipliers[unit])
+
+
 def convert_if_number(val):
     if isinstance(val, (int, float)) or not val:
         return val
