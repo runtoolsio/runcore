@@ -49,6 +49,17 @@ class FileOutputStorageConfig(OutputStorageConfig):
     dir: Optional[Path] = Field(default=None, description="Base output directory; XDG default if None")
 
 
+DEFAULT_TAIL_BUFFER_SIZE = 2 * 1024 * 1024  # 2 MB
+
+
+class OutputConfig(BaseModel):
+    tail_buffer_size: int = Field(default=DEFAULT_TAIL_BUFFER_SIZE, description="Max bytes for in-memory tail buffer")
+    storages: list[FileOutputStorageConfig] = Field(
+        default_factory=lambda: [FileOutputStorageConfig(enabled=True)],
+        description="Output storage configurations",
+    )
+
+
 class RetentionConfig(BaseModel):
     max_runs_per_job: int = Field(default=100, description="Max finished runs to keep per job")
     max_runs_per_env: int = Field(default=1000, description="Max finished runs to keep per environment")
@@ -61,9 +72,9 @@ class LocalEnvironmentConfig(EnvironmentConfig):
         default_factory=LayoutConfig,
         description="Layout configuration for local environment resources"
     )
-    output_storage: list[FileOutputStorageConfig] = Field(
-        default_factory=lambda: [FileOutputStorageConfig(enabled=True)],
-        description="Output storage configurations",
+    output: OutputConfig = Field(
+        default_factory=OutputConfig,
+        description="Output configuration",
     )
     retention: RetentionConfig = Field(
         default_factory=RetentionConfig,
