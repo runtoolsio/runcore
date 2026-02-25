@@ -138,7 +138,7 @@ def xdg_config_dirs() -> List[Path]:
         return [Path('/etc/xdg')]
 
 
-def log_file_dir(create: bool = False) -> Path:
+def log_dir(create: bool = False) -> Path:
     """
     Returns the directory for general runtools application logs.
 
@@ -192,30 +192,24 @@ def state_dir(create: bool = False) -> Path:
     return path_
 
 
-def job_log_dir(env: str, job_id: str, create: bool = False) -> Path:
-    """Returns the path to a job log dir under a specific environment.
+def output_dir(env: str, create: bool = False) -> Path:
+    """Returns the default output directory for an environment.
 
-    Uses:
-    - log_file_dir() for root (system-wide logs)
-    - state_dir() for non-root (persistent local state)
-
-    Path format: {base}/{env}/output/{job_id}
+    Path format: {state_dir}/{env}/output
 
     Args:
         env: Name of the environment.
-        job_id: Identifier of the job.
         create: If True, create the directory if it doesn't exist.
 
     Returns:
-        Path to the job log dir.
+        Path to the environment output directory.
     """
-    base_dir = log_file_dir(create=create) if _is_root() else state_dir(create=create)
-    log_dir = base_dir / env / "output" / job_id
+    dir_ = state_dir(create=create) / env / "output"
 
     if create:
-        log_dir.mkdir(parents=True, exist_ok=True)
+        dir_.mkdir(parents=True, exist_ok=True)
 
-    return log_dir
+    return dir_
 
 
 """

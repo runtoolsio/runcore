@@ -39,12 +39,35 @@ class LayoutConfig(BaseModel):
     )
 
 
+class OutputStorageConfig(BaseModel):
+    enabled: bool = Field(default=False, description="Enable output storage")
+    type: str = Field(default="file", description="Storage backend type")
+
+
+class FileOutputStorageConfig(OutputStorageConfig):
+    type: Literal["file"] = "file"
+    dir: Optional[Path] = Field(default=None, description="Base output directory; XDG default if None")
+
+
+class RetentionConfig(BaseModel):
+    max_runs_per_job: int = Field(default=100, description="Max finished runs to keep per job")
+    max_runs_per_env: int = Field(default=1000, description="Max finished runs to keep per environment")
+
+
 class LocalEnvironmentConfig(EnvironmentConfig):
     type: Literal["local"] = EnvironmentTypes.LOCAL
     id: str = Field(default=DEFAULT_LOCAL_ENVIRONMENT, description="Environment identifier")
     layout: LayoutConfig = Field(
         default_factory=LayoutConfig,
         description="Layout configuration for local environment resources"
+    )
+    output_storage: list[FileOutputStorageConfig] = Field(
+        default_factory=lambda: [FileOutputStorageConfig(enabled=True)],
+        description="Output storage configurations",
+    )
+    retention: RetentionConfig = Field(
+        default_factory=RetentionConfig,
+        description="Retention policy for finished runs",
     )
     persistence: Optional[PersistenceConfig] = Field(
         default_factory=PersistenceConfig.default_sqlite,
