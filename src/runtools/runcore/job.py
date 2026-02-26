@@ -465,6 +465,9 @@ class JobRun:
         return cls(
             metadata=JobInstanceMetadata.deserialize(as_dict['metadata']),
             root_phase=PhaseRun.deserialize(as_dict['root_phase']),
+            output_locations=tuple(
+                OutputLocation.deserialize(loc) for loc in as_dict.get('output_locations', ())
+            ),
             faults=tuple(Fault.deserialize(f) for f in as_dict.get('faults', ())),
             status=Status.deserialize(as_dict['status']) if as_dict.get('status') else None,
         )
@@ -474,6 +477,8 @@ class JobRun:
             "metadata": self.metadata.serialize(),
             "root_phase": self.root_phase.serialize(),
         }
+        if self.output_locations:
+            d["output_locations"] = [loc.serialize() for loc in self.output_locations]
         if self.faults:
             d["faults"] = [f.serialize() for f in self.faults]
         if self.status:
