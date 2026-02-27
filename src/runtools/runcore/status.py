@@ -66,15 +66,14 @@ class Operation:
     @property
     def finished(self):
         return self.result is not None or (
-                self.has_progress and
-                self.completed and
-                self.total and
-                (self.completed == self.total)
+                self.total is not None and
+                self.completed is not None and
+                self.completed >= self.total
         )
 
     @property
     def has_progress(self):
-        return self.completed or self.total or self.unit
+        return self.completed is not None or self.total is not None or self.unit is not None
 
     def _progress_str(self):
         val = f"{self.completed or '?'}"
