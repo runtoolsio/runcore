@@ -16,6 +16,7 @@ The module provides factory methods for quickly creating commonly used connector
         active_runs = connector.get_active_runs()
 """
 
+import fcntl
 import logging
 import shutil
 from abc import ABC, abstractmethod
@@ -64,6 +65,15 @@ class LocalConnectorLayout(ABC):
 
     @property
     @abstractmethod
+    def env_dir(self) -> Path:
+        """
+        Returns:
+            Path: Directory containing the environment components.
+        """
+        pass
+
+    @property
+    @abstractmethod
     def listener_events_socket_path(self) -> Path:
         """
         Returns:
@@ -101,44 +111,55 @@ class StandardLocalConnectorLayout(LocalConnectorLayout):
     and how they're named.
 
     Example structure:
-    /tmp/runtools/env/{env_id}/                      # Directory for the specific environment (env_path)
+    /tmp/runtools/env/{env_id}/                      # Environment directory (env_dir)
     │
-    └── connector_789xyz/                            # Connector directory (connector_path)
+    └── connector_789xyz/                            # Component directory (component_dir)
+        ├── .lock                                    # Exclusive flock held while alive
         ├── listener-events.sock                     # Connector's events listener socket
         └── ...                                      # Other connector-specific sockets
     """
 
-    def __init__(self, env_path: Path, connector_path: Path):
+    def __init__(self, env_dir: Path, component_name: str):
         """
-        Initializes the connector layout with environment and component directories.
+        Initializes the connector layout with environment directory and component name.
+
+        Acquires an exclusive flock on a `.lock` file inside the component directory.
+        The lock is held for the lifetime of this layout and released on cleanup.
 
         Args:
-            env_path (Path): Directory containing the environment components
-            connector_path (Path): Directory specific to this connector instance
-
+            env_dir: Directory containing the environment components.
+            component_name: Name of the component subdirectory (created if needed).
         """
-        self._env_path = env_path
-        self._component_path = connector_path
+        self._env_dir = env_dir
+        self._component_dir = paths.ensure_dirs(env_dir / component_name)
         self._server_socket_name = "server-rpc.sock"
         self._listener_events_socket_name = "listener-events.sock"
 
+        lock_path = self._component_dir / ".lock"
+        self._lock_fd = lock_path.open("a")
+        fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
     @classmethod
-    def create(cls, env_id: str, root_dir: Optional[Path] = None, connector_dir_prefix: str = "connector_"):
+    def create(cls, env_id: str, root_dir: Optional[Path] = None, component_prefix: str = "connector_"):
         """
-        Creates a layout for a connector and ensures that the directory for the connector is created.
+        Creates a layout for a connector with a unique component directory.
 
         Args:
-            env_id (str): Identifier for the environment of the connector
-            root_dir (Path, optional): Root directory containing environments or uses the default one.
-            connector_dir_prefix (str): Prefix for connector directories
+            env_id: Identifier for the environment of the connector.
+            root_dir: Root directory containing environments or uses the default one.
+            component_prefix: Prefix for component directories.
 
-        Returns (StandardLocalConnectorLayout): Layout instance for a connector
+        Returns (StandardLocalConnectorLayout): Layout instance for a connector.
         """
-        return cls(*ensure_component_dir(env_id, connector_dir_prefix, root_dir))
+        return cls(*ensure_component_dir(env_id, component_prefix, root_dir))
 
     @classmethod
-    def from_config(cls, env_config, connector_dir_prefix: str = "connector_"):
-        return cls.create(env_config.id, env_config.layout.root_dir, connector_dir_prefix)
+    def from_config(cls, env_config, component_prefix: str = "connector_"):
+        return cls.create(env_config.id, env_config.layout.root_dir, component_prefix)
+
+    @property
+    def env_dir(self) -> Path:
+        return self._env_dir
 
     @property
     def listener_events_socket_path(self) -> Path:
@@ -146,7 +167,7 @@ class StandardLocalConnectorLayout(LocalConnectorLayout):
         Returns:
             Path: Full path of domain socket used for receiving all events
         """
-        return self._component_path / self._listener_events_socket_name
+        return self._component_dir / self._listener_events_socket_name
 
     @property
     def server_sockets_provider(self) -> Callable:
@@ -155,21 +176,35 @@ class StandardLocalConnectorLayout(LocalConnectorLayout):
             Callable: A provider function that generates paths to the RPC server socket files
                       of each environment node within the environment directory.
         """
-        return paths.files_in_subdir_provider(self._env_path, self._server_socket_name)
+        return paths.files_in_subdir_provider(self._env_dir, self._server_socket_name)
 
     def cleanup(self):
         """
-        Removes the connector directory and all its contents from the filesystem.
+        Releases the flock and removes the component directory. Idempotent.
         """
-        shutil.rmtree(self._component_path)
+        if not self._lock_fd.closed:
+            self._lock_fd.close()
+        shutil.rmtree(self._component_dir, ignore_errors=True)
+
+
+def resolve_env_dir(env_id: str, root_dir: Optional[Path] = None) -> Path:
+    """Resolve the environment directory path for a given environment ID.
+
+    Args:
+        env_id: Environment identifier.
+        root_dir: Optional root directory override. Uses the default runtime dir if None.
+
+    Returns:
+        Path to the environment directory (may not exist yet).
+    """
+    if root_dir:
+        return root_dir / env_id
+    return paths.runtime_env_dir() / env_id
 
 
 def ensure_component_dir(env_id, component_prefix, root_dir=None):
     """
-    Creates a component directory within a specified environment directory.
-
-    Ensures the environment directory exists and creates a unique subdirectory
-    within it for a component instance (e.g., node or connector).
+    Ensures the environment directory exists and generates a unique component name.
 
     Args:
         env_id: Identifier for the target environment.
@@ -177,17 +212,56 @@ def ensure_component_dir(env_id, component_prefix, root_dir=None):
         root_dir: Optional root path for environment directories. Uses default if None.
 
     Returns:
-        A tuple containing the environment directory path and the unique component directory path.
+        A tuple of (env_dir, component_name). The component directory itself is created
+        by the layout constructor (which also acquires the flock).
     """
-    if root_dir:
-        env_dir = paths.ensure_dirs(root_dir / env_id)
-    else:
-        env_dir = paths.ensure_dirs(paths.runtime_env_dir() / env_id)
+    env_dir = paths.ensure_dirs(resolve_env_dir(env_id, root_dir))
+    component_name = component_prefix + util.unique_timestamp_hex()
+    return env_dir, component_name
 
-    comp_id = component_prefix + util.unique_timestamp_hex()
-    component_dir = paths.ensure_dirs(env_dir / comp_id)
 
-    return env_dir, component_dir
+def clean_stale_component_dirs(env_dir: Path) -> List[Path]:
+    """Remove component directories whose owner process is dead.
+
+    Each live component holds an exclusive flock on ``{component_dir}/.lock``.
+    If the flock can be acquired (non-blocking), the owner is dead and the directory is removed.
+
+    Args:
+        env_dir: The environment directory containing component subdirectories.
+
+    Returns:
+        List of removed directory paths.
+    """
+    if not env_dir.is_dir():
+        return []
+
+    removed = []
+    for entry in env_dir.iterdir():
+        if not entry.is_dir():
+            continue
+        lock_file = entry / ".lock"
+        if not lock_file.exists():
+            continue
+        try:
+            fd = lock_file.open("r")
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                fd.close()
+                continue
+            except OSError:
+                log.warning(f"Unexpected error probing lock on {entry}", exc_info=True)
+                fd.close()
+                continue
+            # Lock acquired — owner is dead
+            fd.close()
+            shutil.rmtree(entry, ignore_errors=True)
+            removed.append(entry)
+            log.info(f"Removed stale component directory: {entry}")
+        except OSError as e:
+            log.debug(f"Skipping {entry}: {e}")
+
+    return removed
 
 
 class EnvironmentConnector(ABC):
@@ -410,6 +484,7 @@ def local(env_id=DEFAULT_LOCAL_ENVIRONMENT, persistence=None, connector_layout=N
         EnvironmentConnector: Configured connector to the local environment
     """
     layout = connector_layout or StandardLocalConnectorLayout.create(env_id)
+    clean_stale_component_dirs(layout.env_dir)
     persistence = persistence or sqlite.create(env_id=env_id)
     client = LocalInstanceClient(layout.server_sockets_provider)
     event_receiver = EventReceiver(layout.listener_events_socket_path)
