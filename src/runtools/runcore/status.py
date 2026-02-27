@@ -32,7 +32,6 @@ class Operation:
     unit: Optional[str]
     created_at: datetime
     updated_at: datetime
-    is_active: bool = True
     result: Optional[str] = None
 
     @property
@@ -50,8 +49,7 @@ class Operation:
             unit=data['unit'],
             created_at=datetime.fromisoformat(data['created_at']),
             updated_at=datetime.fromisoformat(data['updated_at']),
-            is_active=data['is_active'],
-            result=data['result'],
+            result=data.get('result'),
         )
 
     def serialize(self) -> dict:
@@ -62,7 +60,6 @@ class Operation:
             'unit': self.unit,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),
-            'is_active': self.is_active,
             'result': self.result,
         }
 
@@ -159,7 +156,7 @@ class Status:
         if self.result:
             parts.append(self.result.message)
         else:
-            active_ops = [str(op) for op in self.operations if op.is_active]
+            active_ops = [str(op) for op in self.operations if not op.finished]
             if active_ops:
                 parts.append(" ".join(active_ops))
             elif self.last_event:
