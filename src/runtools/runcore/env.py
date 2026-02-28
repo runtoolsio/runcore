@@ -76,13 +76,13 @@ class LocalEnvironmentConfig(EnvironmentConfig):
         default_factory=OutputConfig,
         description="Output configuration",
     )
+    persistence: PersistenceConfig = Field(
+        default_factory=PersistenceConfig.default_sqlite,
+        description="Persistence configuration"
+    )
     retention: RetentionConfig = Field(
         default_factory=RetentionConfig,
         description="Retention policy for finished runs",
-    )
-    persistence: Optional[PersistenceConfig] = Field(
-        default_factory=PersistenceConfig.default_sqlite,
-        description="Persistence configuration; if None, persistence is disabled"
     )
 
 

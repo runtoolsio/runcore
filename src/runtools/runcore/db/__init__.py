@@ -76,10 +76,10 @@ def create_persistence(env_id, persistence_config):
         persistence_config: A :class:`PersistenceConfig` specifying the database type and settings.
 
     Returns:
-        A :class:`Persistence` instance, or None if persistence is disabled.
+        A :class:`Persistence` instance, or :class:`NullPersistence` if persistence is disabled.
     """
     if not persistence_config.enabled:
-        return None
+        return NullPersistence()
 
     return load_database_module(persistence_config.type).create(
         env_id=env_id, database=persistence_config.database, **persistence_config.params)

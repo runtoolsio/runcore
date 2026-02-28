@@ -27,7 +27,7 @@ from typing import Callable, Optional, Iterable, List, override
 from runtools.runcore import paths, util, db
 from runtools.runcore.client import LocalInstanceClient
 from runtools.runcore.criteria import JobRunCriteria, SortOption
-from runtools.runcore.db import NullPersistence, PersistenceDisabledError, sqlite
+from runtools.runcore.db import PersistenceDisabledError, sqlite
 from runtools.runcore.env import LocalEnvironmentConfig, \
     EnvironmentConfigUnion, EnvironmentNotFoundError, DEFAULT_LOCAL_ENVIRONMENT, get_env_config
 from runtools.runcore.err import run_isolated_collect_exceptions
@@ -454,51 +454,38 @@ class EnvironmentConnector(ABC):
         pass
 
 
-def create(env_config: EnvironmentConfigUnion):
+def create(env_config: EnvironmentConfigUnion) -> EnvironmentConnector:
+    """Create a connector from an environment configuration.
+
+    Args:
+        env_config (EnvironmentConfigUnion): Environment configuration that determines the connector type and settings.
+
+    Returns:
+        EnvironmentConnector: Configured connector for the environment.
+    """
     if isinstance(env_config, LocalEnvironmentConfig):
-        if env_config.persistence:
-            persistence = db.create_persistence(env_config.id, env_config.persistence)
-        else:
-            persistence = NullPersistence()
+        persistence = db.create_persistence(env_config.id, env_config.persistence)
         layout = StandardLocalConnectorLayout.from_config(env_config)
-        return local(env_config.id, persistence, layout)
+        return _local(env_config.id, persistence, layout)
 
     raise AssertionError(f"Unsupported environment type: {env_config.type}. This is a programming error.")
 
 
-def local(env_id=DEFAULT_LOCAL_ENVIRONMENT, persistence=None, connector_layout=None) -> EnvironmentConnector:
-    """
-    Factory function to create a connector for the given local environment using standard components.
-    This provides a convenient way to get a ready-to-use connector for local environment interaction.
-
-    A local connector provides access to job instances and their history within a local environment,
-    allowing monitoring and controlling of jobs belonging to the environment.
-
-    Args:
-        env_id (str): The identifier for the local environment.
-        persistence (Persistence, optional): A specific persistence implementation.
-            If None, a default SQLite backend is used for the environment.
-        connector_layout (LocalConnectorLayout): Optional custom connector layout.
-            Defaults to standard layout for local environments
-    Returns:
-        EnvironmentConnector: Configured connector to the local environment
-    """
-    layout = connector_layout or StandardLocalConnectorLayout.create(env_id)
-    clean_stale_component_dirs(layout.env_dir)
-    persistence = persistence or sqlite.create(env_id=env_id)
-    client = LocalInstanceClient(layout.server_sockets_provider)
-    event_receiver = EventReceiver(layout.listener_events_socket_path)
-    return LocalConnector(env_id, layout, persistence, client, event_receiver)
+def _local(env_id, persistence, connector_layout) -> EnvironmentConnector:
+    clean_stale_component_dirs(connector_layout.env_dir)
+    client = LocalInstanceClient(connector_layout.server_sockets_provider)
+    event_receiver = EventReceiver(connector_layout.listener_events_socket_path)
+    return LocalConnector(env_id, connector_layout, persistence, client, event_receiver)
 
 
 def connect(env_id: Optional[str] = None) -> EnvironmentConnector:
-    """Connect to an environment by ID, falling back to derived local layout if no config exists."""
+    """Connect to an environment by ID, falling back to default local config if no config exists."""
     try:
         return create(get_env_config(env_id))
     except (EnvironmentNotFoundError, ConfigFileNotFoundError):
         env_id = env_id or DEFAULT_LOCAL_ENVIRONMENT
-        log.debug(f"No config entry for environment '{env_id}', using derived local layout")
-        return local(env_id)
+        log.debug(f"No config entry for environment '{env_id}', using default local config")
+        return create(LocalEnvironmentConfig(id=env_id))
 
 
 class LocalConnector(EnvironmentConnector):
