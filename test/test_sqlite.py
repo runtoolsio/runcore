@@ -6,9 +6,10 @@ from datetime import timedelta
 
 from runtools.runcore.criteria import JobRunCriteria, LifecycleCriterion, TerminationCriterion
 from runtools.runcore.db import sqlite
+from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.run import TerminationStatus, Outcome
 from runtools.runcore.test.job import fake_job_run
-from runtools.runcore.util import parse_iso8601_duration, MatchingStrategy
+from runtools.runcore.util import MatchingStrategy
 from runtools.runcore.util.dt import TimeRange
 
 parse = JobRunCriteria.parse
@@ -89,15 +90,46 @@ def test_job_id_match(sut):
     assert len(sut.read_history_runs(parse('i1?1', MatchingStrategy.FN_MATCH))) == 2
 
 
-def test_cleanup(sut):
-    sut.store_job_runs(fake_job_run('j1', offset_min=-120), fake_job_run('j2'), fake_job_run('j3', offset_min=-240),
-                       fake_job_run('j4', offset_min=-10),
-                       fake_job_run('j5', offset_min=-60))
+def test_enforce_retention_per_job(sut):
+    sut.store_job_runs(
+        fake_job_run('j1', 'r1', offset_min=1),
+        fake_job_run('j1', 'r2', offset_min=2),
+        fake_job_run('j1', 'r3', offset_min=3),
+        fake_job_run('j2', 'r4', offset_min=4))
 
-    sut.clean_up(1, parse_iso8601_duration('PT50S'))
+    sut.enforce_retention('j1', RetentionPolicy(max_runs_per_job=2, max_runs_per_env=-1))
     jobs = sut.read_history_runs()
-    assert len(jobs) == 1
-    assert jobs[0].job_id == 'j2'
+    assert len(jobs) == 3
+    assert {j.run_id for j in jobs} == {'r2', 'r3', 'r4'}
+
+
+def test_enforce_retention_per_env(sut):
+    sut.store_job_runs(
+        fake_job_run('j1', 'r1', offset_min=1),
+        fake_job_run('j2', 'r2', offset_min=2),
+        fake_job_run('j3', 'r3', offset_min=3),
+        fake_job_run('j4', 'r4', offset_min=4),
+        fake_job_run('j5', 'r5', offset_min=5))
+
+    sut.enforce_retention('j5', RetentionPolicy(max_runs_per_job=-1, max_runs_per_env=2))
+    jobs = sut.read_history_runs()
+    assert len(jobs) == 2
+    assert {j.run_id for j in jobs} == {'r4', 'r5'}
+
+
+def test_enforce_retention_combined(sut):
+    sut.store_job_runs(
+        fake_job_run('j1', 'r1', offset_min=1),
+        fake_job_run('j1', 'r2', offset_min=2),
+        fake_job_run('j1', 'r3', offset_min=3),
+        fake_job_run('j2', 'r4', offset_min=4))
+
+    sut.enforce_retention('j1', RetentionPolicy(max_runs_per_job=1, max_runs_per_env=3))
+    jobs = sut.read_history_runs()
+    # Per-job prunes r1, r2 (keep r3 for j1); per-env keeps 3 most recent → r2, r3, r4
+    # But r2 already deleted by per-job, so final: r3, r4
+    assert len(jobs) == 2
+    assert {j.run_id for j in jobs} == {'r3', 'r4'}
 
 
 def test_interval(sut):

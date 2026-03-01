@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field, Discriminator, TypeAdapter
 from runtools.runcore import config, paths, util
 from runtools.runcore.db import PersistenceConfig
 from runtools.runcore.err import RuntoolsException
+from runtools.runcore.output import OutputConfig
+from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.paths import ConfigFileNotFoundError
 from runtools.runcore.util import files
 
@@ -39,30 +41,12 @@ class LayoutConfig(BaseModel):
     )
 
 
-class OutputStorageConfig(BaseModel):
-    enabled: bool = Field(default=False, description="Enable output storage")
-    type: str = Field(default="file", description="Storage backend type")
-
-
-class FileOutputStorageConfig(OutputStorageConfig):
-    type: Literal["file"] = "file"
-    dir: Optional[Path] = Field(default=None, description="Base output directory; XDG default if None")
-
-
-DEFAULT_TAIL_BUFFER_SIZE = 2 * 1024 * 1024  # 2 MB
-
-
-class OutputConfig(BaseModel):
-    tail_buffer_size: int = Field(default=DEFAULT_TAIL_BUFFER_SIZE, description="Max bytes for in-memory tail buffer")
-    storages: list[FileOutputStorageConfig] = Field(
-        default_factory=lambda: [FileOutputStorageConfig(enabled=True)],
-        description="Output storage configurations",
-    )
-
-
 class RetentionConfig(BaseModel):
     max_runs_per_job: int = Field(default=100, description="Max finished runs to keep per job")
     max_runs_per_env: int = Field(default=1000, description="Max finished runs to keep per environment")
+
+    def to_policy(self) -> RetentionPolicy:
+        return RetentionPolicy(max_runs_per_job=self.max_runs_per_job, max_runs_per_env=self.max_runs_per_env)
 
 
 class LocalEnvironmentConfig(EnvironmentConfig):
@@ -82,7 +66,7 @@ class LocalEnvironmentConfig(EnvironmentConfig):
     )
     retention: RetentionConfig = Field(
         default_factory=RetentionConfig,
-        description="Retention policy for finished runs",
+        description="Retention configuration for finished runs",
     )
 
 

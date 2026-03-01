@@ -24,7 +24,7 @@ from pathlib import Path
 from threading import Event, Lock
 from typing import Callable, Optional, Iterable, List, override
 
-from runtools.runcore import paths, util, db
+from runtools.runcore import paths, util, db, output
 from runtools.runcore.client import LocalInstanceClient
 from runtools.runcore.criteria import JobRunCriteria, SortOption
 from runtools.runcore.db import PersistenceDisabledError, sqlite
@@ -353,6 +353,11 @@ class EnvironmentConnector(ABC):
         pass
 
     @property
+    def output_backends(self):
+        """Output backends available for this environment, in config order."""
+        return []
+
+    @property
     @abstractmethod
     def notifications(self) -> InstanceNotifications:
         """Register observers here to receive events from all instances in this environment."""
@@ -465,17 +470,18 @@ def create(env_config: EnvironmentConfigUnion) -> EnvironmentConnector:
     """
     if isinstance(env_config, LocalEnvironmentConfig):
         persistence = db.create_persistence(env_config.id, env_config.persistence)
+        output_backends = output.create_backends(env_config.id, env_config.output.storages)
         layout = StandardLocalConnectorLayout.from_config(env_config)
-        return _local(env_config.id, persistence, layout)
+        return _local(env_config.id, persistence, layout, output_backends)
 
     raise AssertionError(f"Unsupported environment type: {env_config.type}. This is a programming error.")
 
 
-def _local(env_id, persistence, connector_layout) -> EnvironmentConnector:
+def _local(env_id, persistence, connector_layout, output_backends=()) -> EnvironmentConnector:
     clean_stale_component_dirs(connector_layout.env_dir)
     client = LocalInstanceClient(connector_layout.server_sockets_provider)
     event_receiver = EventReceiver(connector_layout.listener_events_socket_path)
-    return LocalConnector(env_id, connector_layout, persistence, client, event_receiver)
+    return LocalConnector(env_id, connector_layout, persistence, client, event_receiver, output_backends)
 
 
 def connect(env_id: Optional[str] = None) -> EnvironmentConnector:
@@ -497,13 +503,14 @@ class LocalConnector(EnvironmentConnector):
     and history. It handles both live job data via RPC calls and historical job data through persistence.
     """
 
-    def __init__(self, env_id, connector_layout, persistence, client, event_receiver):
+    def __init__(self, env_id, connector_layout, persistence, client, event_receiver, output_backends=()):
         self._notifications = InstanceEventReceiver()
         self._env_id = env_id
         self._layout = connector_layout
         self._persistence = persistence
         self._client = client
         self._event_receiver = event_receiver
+        self._output_backends = tuple(output_backends)
         self._event_receiver.register_handler(self._notifications)
 
     @property
@@ -518,6 +525,11 @@ class LocalConnector(EnvironmentConnector):
     @property
     def persistence_enabled(self) -> bool:
         return self._persistence.enabled
+
+    @property
+    @override
+    def output_backends(self):
+        return self._output_backends
 
     def open(self):
         self._persistence.open()
@@ -586,5 +598,6 @@ class LocalConnector(EnvironmentConnector):
             self._event_receiver.close,
             self._client.close,
             self._persistence.close,
+            *(b.close for b in self._output_backends),
             self._layout.cleanup,
         )

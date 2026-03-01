@@ -16,6 +16,7 @@ from runtools.runcore.criteria import LifecycleCriterion, SortOption
 from runtools.runcore.db import Persistence
 from runtools.runcore.err import InvalidStateError
 from runtools.runcore.job import JobStats, JobRun, JobInstanceMetadata, InstanceID
+from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.output import OutputLocation
 from runtools.runcore.run import TerminationStatus, Outcome, PhaseRun, Fault, Stage
 from runtools.runcore.status import Status
@@ -451,25 +452,18 @@ class SQLite(Persistence):
 
     @override
     @ensure_open
-    def clean_up(self, max_records, max_age):
-        if max_records >= 0:
-            self._max_rows(max_records)
-        if max_age:
-            self._delete_old_jobs(max_age)
-
-    def _max_rows(self, limit):
-        c = self._conn.execute("SELECT COUNT(*) FROM history")
-        count = c.fetchone()[0]
-        c.close()
-        if count > limit:
+    def enforce_retention(self, job_id: str, policy: RetentionPolicy):
+        """Prune old runs according to retention policy (per-job then per-env)."""
+        if policy.max_runs_per_job >= 0:
             self._conn.execute(
-                "DELETE FROM history WHERE rowid not in (SELECT rowid FROM history ORDER BY ended DESC LIMIT (?))",
-                (limit,))
-            self._conn.commit()
-
-    def _delete_old_jobs(self, max_age):
-        self._conn.execute("DELETE FROM history WHERE ended < (?)",
-                           (format_dt_sql(datetime.datetime.now(tz=timezone.utc) - max_age),))
+                "DELETE FROM history WHERE job_id = ? AND rowid NOT IN "
+                "(SELECT rowid FROM history WHERE job_id = ? ORDER BY ended DESC LIMIT ?)",
+                (job_id, job_id, policy.max_runs_per_job))
+        if policy.max_runs_per_env >= 0:
+            self._conn.execute(
+                "DELETE FROM history WHERE rowid NOT IN "
+                "(SELECT rowid FROM history ORDER BY ended DESC LIMIT ?)",
+                (policy.max_runs_per_env,))
         self._conn.commit()
 
     @override

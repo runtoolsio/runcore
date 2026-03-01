@@ -3,10 +3,13 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 from enum import Enum, auto
-from typing import List, Optional, Dict, Iterable
+from pathlib import Path
+from typing import List, Optional, Dict, Iterable, Literal
 
 from itertools import count
-from runtools.runcore import util
+from pydantic import BaseModel, Field
+
+from runtools.runcore import paths, util
 from runtools.runcore.err import InvalidStateError
 
 log = logging.getLogger(__name__)
@@ -142,31 +145,135 @@ class TailNotSupportedError(InvalidStateError):
     pass
 
 
-def read_output(locations: Iterable[OutputLocation]) -> List['OutputLine']:
-    """Read output lines from the given locations.
+class OutputReadError(InvalidStateError):
+    """Raised when stored output exists but cannot be read (corrupt data, I/O errors)."""
 
-    Tries each location in order and returns lines from the first one that succeeds.
+    def __init__(self, source: str, cause: Exception):
+        super().__init__(f"Failed to read output from {source}: {cause}")
+        self.source = source
+        self.__cause__ = cause
+
+
+class OutputBackend(ABC):
+    """Read-only access to stored output. Created from config, used by connectors."""
+
+    @property
+    @abstractmethod
+    def type(self) -> str:
+        """Backend type identifier (e.g., "file")."""
+
+    @abstractmethod
+    def read_output(self, instance_id) -> List['OutputLine']:
+        """Read stored output lines for an instance.
+
+        Args:
+            instance_id: InstanceID of the job run.
+
+        Returns:
+            List of output lines, sorted by ordinal. Empty list if not found.
+
+        Raises:
+            OutputReadError: If the output exists but cannot be read.
+        """
+
+    def close(self):
+        """Release any resources held by this backend. No-op by default."""
+
+
+class FileOutputBackend(OutputBackend):
+    """File-backed output backend. Reads JSONL files from ``{base_dir}/{job_id}/{run_id}.jsonl``."""
+
+    type = "file"
+
+    def __init__(self, base_dir: Path):
+        self._base_dir = base_dir
+
+    def read_output(self, instance_id) -> List['OutputLine']:
+        path = self._base_dir / instance_id.job_id / f"{instance_id.run_id}.jsonl"
+        try:
+            return read_jsonl_file(str(path))
+        except FileNotFoundError:
+            return []
+        except (json.JSONDecodeError, KeyError, OSError) as e:
+            raise OutputReadError(str(path), e) from e
+
+
+class MultiSourceOutputReader:
+    """Reads output by trying backends in priority order, returning the first non-empty result."""
+
+    def __init__(self, backends: Iterable[OutputBackend] = ()):
+        self._backends = tuple(backends)
+
+    def read_output(self, instance_id) -> List['OutputLine']:
+        """Read output lines for an instance.
+
+        Raises:
+            OutputReadError: If output exists but all backends fail to read it.
+        """
+        last_error = None
+        for backend in self._backends:
+            try:
+                lines = backend.read_output(instance_id)
+            except OutputReadError as e:
+                log.warning("Backend read failed, trying next: %s", e)
+                last_error = e
+                continue
+            if lines:
+                return lines
+            last_error = None  # Successful read (even if empty) clears prior errors
+        if last_error:
+            raise last_error
+        return []
+
+
+class OutputStorageConfig(BaseModel):
+    enabled: bool = Field(default=False, description="Enable output storage")
+    type: str = Field(default="file", description="Storage backend type")
+
+
+class FileOutputStorageConfig(OutputStorageConfig):
+    type: Literal["file"] = "file"
+    dir: Optional[Path] = Field(default=None, description="Base output directory; XDG default if None")
+
+
+DEFAULT_TAIL_BUFFER_SIZE = 2 * 1024 * 1024  # 2 MB
+
+
+# When a second storage type is added (e.g. S3), wrap with Annotated[Union[...], Discriminator('type')]
+OutputStorageConfigUnion = FileOutputStorageConfig
+
+
+class OutputConfig(BaseModel):
+    tail_buffer_size: int = Field(default=DEFAULT_TAIL_BUFFER_SIZE, description="Max bytes for in-memory tail buffer")
+    storages: list[OutputStorageConfigUnion] = Field(
+        default_factory=lambda: [FileOutputStorageConfig(enabled=True)],
+        description="Output storage configurations",
+    )
+
+
+def create_backends(env_id: str, storage_configs: Iterable[OutputStorageConfig]) -> list[OutputBackend]:
+    """Create all enabled output backends from storage configurations, in config order.
 
     Args:
-        locations: Output locations to read from.
+        env_id: Environment identifier (used for default path resolution).
+        storage_configs: Storage configurations.
 
     Returns:
-        List of output lines, sorted by ordinal.
+        List of enabled backends in config order. Empty list if none are enabled.
     """
-    for location in locations:
-        try:
-            if location.type == "file":
-                return _read_jsonl_file(location.source)
-            else:
-                log.warning("Unsupported output location type: %s", location.type)
-        except FileNotFoundError:
-            log.debug("Output file not found: %s", location.source)
-        except (json.JSONDecodeError, KeyError, OSError) as e:
-            log.warning("Failed to read output from %s: %s", location.source, e)
-    return []
+    backends: list[OutputBackend] = []
+    for cfg in storage_configs:
+        if not cfg.enabled:
+            continue
+        if isinstance(cfg, FileOutputStorageConfig):
+            base_dir = Path(cfg.dir).expanduser() if cfg.dir else paths.output_dir(env_id, create=False)
+            backends.append(FileOutputBackend(base_dir))
+        else:
+            assert False, f"Unknown output storage config type: {cfg.type}"
+    return backends
 
 
-def _read_jsonl_file(file_path: str) -> List['OutputLine']:
+def read_jsonl_file(file_path: str) -> List['OutputLine']:
     """Read output lines from a JSON Lines file."""
     lines = []
     with open(file_path, encoding="utf-8") as f:

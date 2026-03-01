@@ -32,6 +32,7 @@ from runtools import runcore
 from runtools.runcore.criteria import SortOption
 from runtools.runcore.err import RuntoolsException
 from runtools.runcore.job import InstanceLifecycleObserver, InstanceLifecycleEvent
+from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.run import Stage
 
 PERSISTING_OBSERVER_PRIORITY = 10  # High priority (low number) to ensure persistence before event dispatch
@@ -215,13 +216,12 @@ class Persistence(ABC):
         pass
 
     @abstractmethod
-    def clean_up(self, max_records, max_age):
-        """
-        Remove old records based on count or age limits.
+    def enforce_retention(self, job_id: str, policy: RetentionPolicy):
+        """Prune old runs according to retention policy.
 
         Args:
-            max_records (int): Maximum number of records to keep (-1 to skip this check).
-            max_age (datetime.timedelta): Maximum age of records. Records older than this are deleted. None to skip.
+            job_id: Job whose runs were just stored — per-job limit is applied to this job.
+            policy: Retention policy with per-job and per-env limits.
         """
         pass
 
@@ -265,7 +265,7 @@ class NullPersistence(Persistence):
         pass
 
     @override
-    def clean_up(self, max_records: int, max_age: float) -> None:
+    def enforce_retention(self, job_id: str, policy: RetentionPolicy) -> None:
         pass
 
     @override
