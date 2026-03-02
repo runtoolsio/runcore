@@ -5,7 +5,8 @@ import pytest
 from datetime import timedelta
 
 from runtools.runcore.criteria import JobRunCriteria, LifecycleCriterion, TerminationCriterion
-from runtools.runcore.db import sqlite
+from runtools.runcore.db import sqlite, IncompatibleSchemaError
+from runtools.runcore.db.sqlite import SCHEMA_VERSION
 from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.run import TerminationStatus, Outcome
 from runtools.runcore.test.job import fake_job_run
@@ -18,6 +19,30 @@ parse = JobRunCriteria.parse
 def sut():
     with sqlite.create(env_id='test_env', database=':memory:') as db:
         yield db
+
+
+def test_schema_version_set_on_creation():
+    import sqlite3
+    conn = sqlite3.connect(':memory:')
+    db = sqlite.SQLite(lambda: conn)
+    db.open()
+    version = conn.execute('PRAGMA user_version').fetchone()[0]
+    assert version == SCHEMA_VERSION
+    db.close()
+
+
+def test_schema_version_mismatch_raises():
+    import sqlite3
+    conn = sqlite3.connect(':memory:')
+    conn.execute('PRAGMA user_version = 999')
+    conn.execute('CREATE TABLE history (job_id text, run_id text, user_params text, '
+                 'created timestamp, started timestamp, ended timestamp, exec_time real, '
+                 'root_phase text, output_locations text, termination_status int, '
+                 'faults text, status text, warnings int, misc text)')
+    conn.commit()
+    db = sqlite.SQLite(lambda: conn)
+    with pytest.raises(IncompatibleSchemaError):
+        db.open()
 
 
 def test_store_and_fetch(sut):

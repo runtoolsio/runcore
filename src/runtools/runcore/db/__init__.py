@@ -93,6 +93,16 @@ class DatabaseNotFoundError(RuntoolsException):
                          f'or check that the provided persistence type value is correct.')
 
 
+class IncompatibleSchemaError(RuntoolsException):
+
+    def __init__(self, found_version, expected_version):
+        super().__init__(
+            f'Database schema version mismatch: found {found_version}, expected {expected_version}. '
+            f'The database was created by a different version of runtools.')
+        self.found_version = found_version
+        self.expected_version = expected_version
+
+
 class PersistenceConfig(BaseModel):
     type: str
     enabled: bool = True

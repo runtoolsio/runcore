@@ -13,7 +13,7 @@ from typing import List, Iterator, override
 
 from runtools.runcore import paths
 from runtools.runcore.criteria import LifecycleCriterion, SortOption
-from runtools.runcore.db import Persistence
+from runtools.runcore.db import Persistence, IncompatibleSchemaError
 from runtools.runcore.err import InvalidStateError
 from runtools.runcore.job import JobStats, JobRun, JobInstanceMetadata, InstanceID
 from runtools.runcore.retention import RetentionPolicy
@@ -24,7 +24,7 @@ from runtools.runcore.util import MatchingStrategy, format_dt_sql, parse_dt_sql
 
 log = logging.getLogger(__name__)
 
-# Default batch size for fetching records
+SCHEMA_VERSION = 1
 DEFAULT_BATCH_SIZE = 100
 
 
@@ -281,16 +281,15 @@ class SQLite(Persistence):
             if self._conn is not None:
                 raise InvalidStateError("Database connection already opened")
             self._conn = self._connection_factory()
-        self.check_tables_exist()
+        self._init_schema()
 
     def is_open(self):
         return self._conn is not None
 
     @ensure_open
-    def check_tables_exist(self):
-        # Version 5
+    def _init_schema(self):
         c = self._conn.cursor()
-        c.execute(''' SELECT count(name) FROM sqlite_master WHERE type='table' AND name='history' ''')
+        c.execute("SELECT count(name) FROM sqlite_master WHERE type='table' AND name='history'")
         if c.fetchone()[0] != 1:
             c.execute('''CREATE TABLE history
                          (job_id text,
@@ -308,13 +307,18 @@ class SQLite(Persistence):
                          warnings int,
                          misc text)
                          ''')
-            c.execute('''CREATE INDEX job_id_index ON history (job_id)''')
-            c.execute('''CREATE INDEX run_id_index ON history (run_id)''')
-            c.execute('''CREATE INDEX ended_index ON history (ended)''')
-            c.execute('''CREATE INDEX created_index ON history (created)''')
-            c.execute('''CREATE INDEX exec_time_index ON history (exec_time)''')
+            c.execute('CREATE INDEX job_id_index ON history (job_id)')
+            c.execute('CREATE INDEX run_id_index ON history (run_id)')
+            c.execute('CREATE INDEX ended_index ON history (ended)')
+            c.execute('CREATE INDEX created_index ON history (created)')
+            c.execute('CREATE INDEX exec_time_index ON history (exec_time)')
+            c.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')
             log.debug('event=[table_created] table=[history]')
             self._conn.commit()
+        else:
+            version = c.execute('PRAGMA user_version').fetchone()[0]
+            if version != SCHEMA_VERSION:
+                raise IncompatibleSchemaError(version, SCHEMA_VERSION)
         c.close()
 
     @override
