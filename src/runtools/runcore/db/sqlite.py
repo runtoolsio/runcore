@@ -421,14 +421,21 @@ class SQLite(Persistence):
                   statement, batch_size, batch_offset)
 
         cursor = self._conn.cursor()
+        cursor.row_factory = sqlite3.Row
         cursor.execute(statement, where_params + [batch_size, batch_offset])
 
-        def to_job_run(t):
-            metadata = JobInstanceMetadata(InstanceID(t[0], t[1]), json.loads(t[2]) if t[2] else dict())
-            root_phase = PhaseRun.deserialize(json.loads(t[7]))
-            output_locations = tuple(OutputLocation.deserialize(l) for l in json.loads(t[8])) if t[8] else ()
-            faults = tuple(Fault.deserialize(f) for f in json.loads(t[10])) if t[10] else ()
-            status = Status.deserialize(json.loads(t[11])) if t[11] else None
+        def to_job_run(r):
+            metadata = JobInstanceMetadata(
+                InstanceID(r['job_id'], r['run_id']),
+                json.loads(r['user_params']) if r['user_params'] else {},
+            )
+            root_phase = PhaseRun.deserialize(json.loads(r['root_phase']))
+            output_locations = (
+                tuple(OutputLocation.deserialize(l) for l in json.loads(r['output_locations']))
+                if r['output_locations'] else ()
+            )
+            faults = tuple(Fault.deserialize(f) for f in json.loads(r['faults'])) if r['faults'] else ()
+            status = Status.deserialize(json.loads(r['status'])) if r['status'] else None
             return JobRun(metadata, root_phase, output_locations, faults, status)
 
         try:
@@ -505,24 +512,26 @@ class SQLite(Persistence):
             JOIN filtered lh ON lh.rowid = lp.max_rowid
             GROUP BY f.job_id
         '''
-        c = self._conn.execute(sql, where_params)
+        c = self._conn.cursor()
+        c.row_factory = sqlite3.Row
+        c.execute(sql, where_params)
 
-        def to_job_stats(t):
-            job_id = t[0]
-            count = t[1]
-            first_at = parse_dt_sql(t[2])
-            last_at = parse_dt_sql(t[3])
-            fastest = datetime.timedelta(seconds=t[4]) if t[4] is not None else None
-            average = datetime.timedelta(seconds=t[5]) if t[5] is not None else None
-            slowest = datetime.timedelta(seconds=t[6]) if t[6] is not None else None
-            last_time = datetime.timedelta(seconds=t[7]) if t[7] is not None else None
-            last_term_status = TerminationStatus.from_code(t[8]) if t[8] is not None else TerminationStatus.UNKNOWN
-            failed_count = t[9] or 0
-            warn_count = t[10] or 0
-
+        def to_job_stats(r):
             return JobStats(
-                job_id, count, first_at, last_at, fastest, average, slowest, last_time, last_term_status, failed_count,
-                warn_count
+                job_id=r['job_id'],
+                count=r['count'],
+                first_created=parse_dt_sql(r['first_created']),
+                last_created=parse_dt_sql(r['last_created']),
+                fastest_time=datetime.timedelta(seconds=r['fastest_time']) if r['fastest_time'] is not None else None,
+                average_time=datetime.timedelta(seconds=r['average_time']) if r['average_time'] is not None else None,
+                slowest_time=datetime.timedelta(seconds=r['slowest_time']) if r['slowest_time'] is not None else None,
+                last_time=datetime.timedelta(seconds=r['last_time']) if r['last_time'] is not None else None,
+                termination_status=(
+                    TerminationStatus.from_code(r['last_term_status'])
+                    if r['last_term_status'] is not None else TerminationStatus.UNKNOWN
+                ),
+                failed_count=r['failed'] or 0,
+                warning_count=r['last_warnings'] or 0,
             )
 
         return [to_job_stats(row) for row in c.fetchall()]
