@@ -421,12 +421,21 @@ class JobInstance(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def activate(self):
+    def activate(self) -> 'JobInstance':
         """Wire phase observers and status tracking. Must be called before ``run()``.
 
         Separated from construction so that callers can control timing. Nodes call this after the
         duplicate check and hook registration to avoid leaving stale observers on a shared phase
-        if an earlier step fails. Future: may also fire a CREATED lifecycle event.
+        if an earlier step fails.
+
+        Returns self for chaining: ``inst.activate().notify_created()``.
+        """
+
+    @abc.abstractmethod
+    def notify_created(self) -> 'JobInstance':
+        """Fire the CREATED lifecycle event. Call after ``activate()`` and observer registration.
+
+        Returns self for chaining.
         """
 
     @abc.abstractmethod
@@ -1023,7 +1032,13 @@ class JobInstanceDelegate(JobInstance):
 
     def activate(self):
         """Delegates to the wrapped instance's activate method"""
-        return self._wrapped.activate()
+        self._wrapped.activate()
+        return self
+
+    def notify_created(self):
+        """Delegates to the wrapped instance's notify_created method"""
+        self._wrapped.notify_created()
+        return self
 
     def run(self):
         """Delegates to the wrapped instance's run method"""
