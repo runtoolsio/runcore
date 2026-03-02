@@ -424,8 +424,9 @@ class JobInstance(abc.ABC):
     def activate(self):
         """Wire phase observers and status tracking. Must be called before ``run()``.
 
-        Separated from construction to allow the caller to control timing — e.g. nodes call this
-        after the duplicate check so that a failed attempt doesn't leave stale observers on a shared phase.
+        Separated from construction so that callers can control timing. Nodes call this after the
+        duplicate check and hook registration to avoid leaving stale observers on a shared phase
+        if an earlier step fails. Future: may also fire a CREATED lifecycle event.
         """
 
     @abc.abstractmethod
