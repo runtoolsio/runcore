@@ -421,6 +421,14 @@ class JobInstance(abc.ABC):
         pass
 
     @abc.abstractmethod
+    def activate(self):
+        """Wire phase observers and status tracking. Must be called before ``run()``.
+
+        Separated from construction to allow the caller to control timing — e.g. nodes call this
+        after the duplicate check so that a failed attempt doesn't leave stale observers on a shared phase.
+        """
+
+    @abc.abstractmethod
     def run(self):
         """
         Run the job.
@@ -1011,6 +1019,10 @@ class JobInstanceDelegate(JobInstance):
     def output(self):
         """Delegates to the wrapped instance's output property"""
         return self._wrapped.output
+
+    def activate(self):
+        """Delegates to the wrapped instance's activate method"""
+        return self._wrapped.activate()
 
     def run(self):
         """Delegates to the wrapped instance's run method"""
