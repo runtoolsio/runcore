@@ -42,8 +42,8 @@ class LayoutConfig(BaseModel):
 
 
 class RetentionConfig(BaseModel):
-    max_runs_per_job: int = Field(default=100, description="Max finished runs to keep per job")
-    max_runs_per_env: int = Field(default=1000, description="Max finished runs to keep per environment")
+    max_runs_per_job: int = Field(default=500, description="Max finished runs to keep per job")
+    max_runs_per_env: int = Field(default=10000, description="Max finished runs to keep per environment")
 
     def to_policy(self) -> RetentionPolicy:
         return RetentionPolicy(max_runs_per_job=self.max_runs_per_job, max_runs_per_env=self.max_runs_per_env)
