@@ -5,8 +5,9 @@ import pytest
 from datetime import timedelta
 
 from runtools.runcore.criteria import JobRunCriteria, LifecycleCriterion, TerminationCriterion
-from runtools.runcore.db import sqlite, IncompatibleSchemaError
+from runtools.runcore.db import sqlite, IncompatibleSchemaError, DuplicateInstanceError
 from runtools.runcore.db.sqlite import SCHEMA_VERSION
+from runtools.runcore.job import InstanceID
 from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.run import TerminationStatus, Outcome
 from runtools.runcore.test.job import fake_job_run
@@ -14,6 +15,13 @@ from runtools.runcore.util import MatchingStrategy
 from runtools.runcore.util.dt import TimeRange
 
 parse = JobRunCriteria.parse
+
+
+def _init_and_store(db, *job_runs):
+    """Initialize and store job runs (two-phase persistence)."""
+    for run in job_runs:
+        db.init_job_run(InstanceID(run.metadata.job_id, run.metadata.run_id), run.metadata.user_params)
+    db.store_job_runs(*job_runs)
 
 @pytest.fixture
 def sut():
@@ -47,14 +55,14 @@ def test_schema_version_mismatch_raises():
 
 def test_store_and_fetch(sut):
     test_run = fake_job_run('j1', term_status=TerminationStatus.FAILED)
-    sut.store_job_runs(test_run)
+    _init_and_store(sut, test_run)
     jobs = sut.read_history_runs()
 
     assert test_run == jobs[0]
 
 
 def test_last(sut):
-    sut.store_job_runs(
+    _init_and_store(sut,
         fake_job_run('j1', 'r1-1', offset_min=1),
         fake_job_run('j2', 'r2-1', offset_min=2),
         fake_job_run('j1', 'r1-2', offset_min=3),
@@ -67,7 +75,7 @@ def test_last(sut):
 
 
 def test_sort(sut):
-    sut.store_job_runs(fake_job_run('j1'), fake_job_run('j2', offset_min=1), fake_job_run('j3', offset_min=-1))
+    _init_and_store(sut, fake_job_run('j1'), fake_job_run('j2', offset_min=1), fake_job_run('j3', offset_min=-1))
 
     jobs = sut.read_history_runs()
     assert [j.job_id for j in jobs] == ['j3', 'j1', 'j2']
@@ -77,7 +85,7 @@ def test_sort(sut):
 
 
 def test_limit(sut):
-    sut.store_job_runs(fake_job_run('1'), fake_job_run('2', offset_min=1), fake_job_run('3', offset_min=-1))
+    _init_and_store(sut, fake_job_run('1'), fake_job_run('2', offset_min=1), fake_job_run('3', offset_min=-1))
 
     jobs = sut.read_history_runs(limit=1)
     assert len(jobs) == 1
@@ -85,7 +93,7 @@ def test_limit(sut):
 
 
 def test_offset(sut):
-    sut.store_job_runs(fake_job_run('1'), fake_job_run('2', offset_min=1), fake_job_run('3', offset_min=-1))
+    _init_and_store(sut, fake_job_run('1'), fake_job_run('2', offset_min=1), fake_job_run('3', offset_min=-1))
 
     jobs = sut.read_history_runs(offset=2)
     assert len(jobs) == 1
@@ -93,7 +101,7 @@ def test_offset(sut):
 
 
 def test_job_id_match(sut):
-    sut.store_job_runs(fake_job_run('j1', 'i1'), fake_job_run('j12', 'i12'), fake_job_run('j11', 'i11'),
+    _init_and_store(sut, fake_job_run('j1', 'i1'), fake_job_run('j12', 'i12'), fake_job_run('j11', 'i11'),
                        fake_job_run('j111', 'i111'), fake_job_run('j121', 'i121'))
 
     assert len(sut.read_history_runs(parse('j1'))) == 1
@@ -116,7 +124,7 @@ def test_job_id_match(sut):
 
 
 def test_enforce_retention_per_job(sut):
-    sut.store_job_runs(
+    _init_and_store(sut,
         fake_job_run('j1', 'r1', offset_min=1),
         fake_job_run('j1', 'r2', offset_min=2),
         fake_job_run('j1', 'r3', offset_min=3),
@@ -129,7 +137,7 @@ def test_enforce_retention_per_job(sut):
 
 
 def test_enforce_retention_per_env(sut):
-    sut.store_job_runs(
+    _init_and_store(sut,
         fake_job_run('j1', 'r1', offset_min=1),
         fake_job_run('j2', 'r2', offset_min=2),
         fake_job_run('j3', 'r3', offset_min=3),
@@ -143,7 +151,7 @@ def test_enforce_retention_per_env(sut):
 
 
 def test_enforce_retention_combined(sut):
-    sut.store_job_runs(
+    _init_and_store(sut,
         fake_job_run('j1', 'r1', offset_min=1),
         fake_job_run('j1', 'r2', offset_min=2),
         fake_job_run('j1', 'r3', offset_min=3),
@@ -158,9 +166,9 @@ def test_enforce_retention_combined(sut):
 
 
 def test_interval(sut):
-    sut.store_job_runs(fake_job_run('j1', created_at=dt(2023, 4, 23), ended_at=dt(2023, 4, 23)))
-    sut.store_job_runs(fake_job_run('j2', created_at=dt(2023, 4, 22), ended_at=dt(2023, 4, 22, 23, 59, 59)))
-    sut.store_job_runs(fake_job_run('j3', created_at=dt(2023, 4, 22), ended_at=dt(2023, 4, 22, 23, 59, 58)))
+    _init_and_store(sut, fake_job_run('j1', created_at=dt(2023, 4, 23), ended_at=dt(2023, 4, 23)))
+    _init_and_store(sut, fake_job_run('j2', created_at=dt(2023, 4, 22), ended_at=dt(2023, 4, 22, 23, 59, 59)))
+    _init_and_store(sut, fake_job_run('j3', created_at=dt(2023, 4, 22), ended_at=dt(2023, 4, 22, 23, 59, 58)))
 
     # Test ended_from
     jobs = sut.read_history_runs(JobRunCriteria().created(since=dt(2023, 4, 23)))
@@ -182,7 +190,7 @@ def test_interval(sut):
 
 
 def test_termination_status(sut):
-    sut.store_job_runs(
+    _init_and_store(sut,
         fake_job_run('j1', term_status=TerminationStatus.COMPLETED),
         fake_job_run('j2', term_status=TerminationStatus.FAILED),
         fake_job_run('j3', term_status=TerminationStatus.COMPLETED))
@@ -193,7 +201,7 @@ def test_termination_status(sut):
 
 
 def test_termination_outcome(sut):
-    sut.store_job_runs(
+    _init_and_store(sut,
         fake_job_run('j1', term_status=TerminationStatus.COMPLETED),
         fake_job_run('j2', term_status=TerminationStatus.FAILED),
         fake_job_run('j3', term_status=TerminationStatus.STOPPED))
@@ -204,7 +212,7 @@ def test_termination_outcome(sut):
 
 
 def test_total_run_time(sut):
-    sut.store_job_runs(
+    _init_and_store(sut,
         fake_job_run('j1', created_at=dt(2023, 1, 1, 12, 0), ended_at=dt(2023, 1, 1, 12, 1)),   # 1 min
         fake_job_run('j2', created_at=dt(2023, 1, 1, 12, 0), ended_at=dt(2023, 1, 1, 12, 10)),  # 10 min
         fake_job_run('j3', created_at=dt(2023, 1, 1, 12, 0), ended_at=dt(2023, 1, 1, 12, 30)))  # 30 min
@@ -213,3 +221,46 @@ def test_total_run_time(sut):
     criteria = JobRunCriteria().add(LifecycleCriterion(total_run_time=TimeRange(min=timedelta(minutes=5), max=timedelta(minutes=15))))
     jobs = sut.read_history_runs(criteria)
     assert [j.job_id for j in jobs] == ['j2']
+
+
+# --- Two-phase persistence tests ---
+
+def test_init_and_store(sut):
+    run = fake_job_run('j1', 'r1')
+    sut.init_job_run(InstanceID('j1', 'r1'), {'name': 'value'})
+    sut.store_job_runs(run)
+
+    jobs = sut.read_history_runs()
+    assert len(jobs) == 1
+    assert run == jobs[0]
+
+
+def test_init_duplicate_raises(sut):
+    sut.init_job_run(InstanceID('j1', 'r1'))
+
+    with pytest.raises(DuplicateInstanceError):
+        sut.init_job_run(InstanceID('j1', 'r1'))
+
+
+def test_init_only_not_in_history(sut):
+    sut.init_job_run(InstanceID('j1', 'r1'))
+
+    assert sut.read_history_runs() == []
+    assert sut.read_history_stats() == []
+
+
+def test_store_without_init(sut):
+    run = fake_job_run('j1', 'r1')
+    sut.store_job_runs(run)
+
+    assert sut.read_history_runs() == []
+
+
+def test_last_with_init_only_row(sut):
+    """last=True returns the latest completed run even when a newer init-only row exists."""
+    _init_and_store(sut, fake_job_run('j1', 'r1', offset_min=1))
+    sut.init_job_run(InstanceID('j1', 'r2'))  # newer init-only row
+
+    jobs = sut.read_history_runs(last=True)
+    assert len(jobs) == 1
+    assert jobs[0].run_id == 'r1'

@@ -13,7 +13,7 @@ from typing import List, Iterator, override
 
 from runtools.runcore import paths
 from runtools.runcore.criteria import LifecycleCriterion, SortOption
-from runtools.runcore.db import Persistence, IncompatibleSchemaError
+from runtools.runcore.db import Persistence, IncompatibleSchemaError, DuplicateInstanceError
 from runtools.runcore.err import InvalidStateError
 from runtools.runcore.job import JobStats, JobRun, JobInstanceMetadata, InstanceID
 from runtools.runcore.retention import RetentionPolicy
@@ -21,6 +21,7 @@ from runtools.runcore.output import OutputLocation
 from runtools.runcore.run import TerminationStatus, Outcome, PhaseRun, Fault, Stage
 from runtools.runcore.status import Status
 from runtools.runcore.util import MatchingStrategy, format_dt_sql, parse_dt_sql
+from runtools.runcore.util.dt import utc_now
 
 log = logging.getLogger(__name__)
 
@@ -305,7 +306,8 @@ class SQLite(Persistence):
                          faults text,
                          status text,
                          warnings int,
-                         misc text)
+                         misc text,
+                         UNIQUE(job_id, run_id))
                          ''')
             c.execute('CREATE INDEX job_id_index ON history (job_id)')
             c.execute('CREATE INDEX run_id_index ON history (run_id)')
@@ -320,6 +322,21 @@ class SQLite(Persistence):
             if version != SCHEMA_VERSION:
                 raise IncompatibleSchemaError(version, SCHEMA_VERSION)
         c.close()
+
+    @override
+    @ensure_open
+    def init_job_run(self, instance_id, user_params=None):
+        """See `Persistence.init_job_run`."""
+        try:
+            self._conn.execute(
+                "INSERT INTO history (job_id, run_id, user_params, created) VALUES (?, ?, ?, ?)",
+                (instance_id.job_id, instance_id.run_id,
+                 json.dumps(dict(user_params)) if user_params else None,
+                 format_dt_sql(utc_now()))
+            )
+            self._conn.commit()
+        except sqlite3.IntegrityError:
+            raise DuplicateInstanceError(instance_id)
 
     @override
     def read_history_runs(self, run_match=None, sort=SortOption.ENDED, *,
@@ -402,13 +419,15 @@ class SQLite(Persistence):
 
         statement = "SELECT * FROM history h"
         where_clause, where_params = _build_where_clause(run_match, alias='h')
+        # Exclude incomplete (init-only) records
+        if where_clause:
+            where_clause += " AND h.ended IS NOT NULL"
+        else:
+            where_clause = " WHERE h.ended IS NOT NULL"
         statement += where_clause
 
         if last:
-            if where_clause:
-                statement += " AND h.rowid IN (SELECT MAX(rowid) FROM history GROUP BY job_id)"
-            else:
-                statement += " WHERE h.rowid IN (SELECT MAX(rowid) FROM history GROUP BY job_id)"
+            statement += " AND h.rowid IN (SELECT MAX(rowid) FROM history WHERE ended IS NOT NULL GROUP BY job_id)"
 
         # Apply the sort direction to all columns in the ORDER BY clause
         sort_direction = " ASC" if asc else " DESC"
@@ -483,6 +502,11 @@ class SQLite(Persistence):
         """See `Persistence.read_history_stats`."""
 
         where_clause, where_params = _build_where_clause(run_match, alias='h')
+        # Exclude incomplete (init-only) records
+        if where_clause:
+            where_clause += " AND h.ended IS NOT NULL"
+        else:
+            where_clause = " WHERE h.ended IS NOT NULL"
         fault_statuses = TerminationStatus.get_statuses(Outcome.FAULT)
         fault_placeholders = ', '.join(str(s.value) for s in fault_statuses)
         sql = f'''
@@ -542,9 +566,7 @@ class SQLite(Persistence):
         """See `Persistence.store_job_runs`."""
 
         def to_tuple(r: JobRun):
-            return (r.metadata.job_id,
-                    r.metadata.run_id,
-                    json.dumps(dict(r.metadata.user_params)) if r.metadata.user_params else None,
+            return (json.dumps(dict(r.metadata.user_params)) if r.metadata.user_params else None,
                     format_dt_sql(r.lifecycle.created_at),
                     format_dt_sql(r.lifecycle.started_at),
                     format_dt_sql(r.lifecycle.termination.terminated_at) if r.lifecycle.termination else None,
@@ -555,14 +577,21 @@ class SQLite(Persistence):
                     json.dumps([f.serialize() for f in r.faults]) if r.faults else None,
                     json.dumps(r.status.serialize()) if r.status else None,
                     len(r.status.warnings) if r.status else None,
-                    None  # misc
+                    None,  # misc
+                    r.metadata.job_id,
+                    r.metadata.run_id,
                     )
 
-        jobs = [to_tuple(j) for j in job_runs]
-        self._conn.executemany(
-            "INSERT INTO history VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            jobs
+        update_sql = (
+            "UPDATE history SET user_params=?, created=?, started=?, ended=?, exec_time=?, "
+            "root_phase=?, output_locations=?, termination_status=?, faults=?, status=?, warnings=?, misc=? "
+            "WHERE job_id=? AND run_id=?"
         )
+        for run in job_runs:
+            cursor = self._conn.execute(update_sql, to_tuple(run))
+            if cursor.rowcount == 0:
+                log.warning("event=[store_no_init_row] job_id=[%s] run_id=[%s] No init row found; run not stored",
+                            run.metadata.job_id, run.metadata.run_id)
         self._conn.commit()
 
     @override

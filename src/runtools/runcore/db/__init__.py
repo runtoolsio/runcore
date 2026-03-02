@@ -93,6 +93,13 @@ class DatabaseNotFoundError(RuntoolsException):
                          f'or check that the provided persistence type value is correct.')
 
 
+class DuplicateInstanceError(RuntoolsException):
+
+    def __init__(self, instance_id):
+        super().__init__(f'Instance {instance_id} already exists in persistence')
+        self.instance_id = instance_id
+
+
 class IncompatibleSchemaError(RuntoolsException):
 
     def __init__(self, found_version, expected_version):
@@ -146,6 +153,14 @@ class Persistence(ABC):
     def open(self):
         """Open the persistence connection. Must be called before any read/write operations."""
         pass
+
+    @abstractmethod
+    def init_job_run(self, instance_id, user_params=None):
+        """Insert a partial record at instance creation time.
+
+        Raises:
+            DuplicateInstanceError: If a record with this instance ID already exists.
+        """
 
     @abstractmethod
     def read_history_runs(self, run_match=None, sort=SortOption.CREATED, *, asc, limit, offset, last=False):
@@ -252,6 +267,10 @@ class NullPersistence(Persistence):
     @override
     def enabled(self) -> bool:
         return False
+
+    @override
+    def init_job_run(self, instance_id, user_params=None):
+        pass
 
     @override
     def read_history_runs(self, run_match=None, sort=SortOption.CREATED, *, asc, limit, offset, last=False):
