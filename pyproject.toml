@@ -3,7 +3,7 @@ requires = ["flit_core >=3.2,<4"]
 build-backend = "flit_core.buildapi"
 
 [project]
-name = "runtools-runcore"
+name = "runtoolsio-runcore"
 authors = [{name = "Stan Svec", email = "dev@stansvec.com"}]
 readme = "README.md"
 license = {file = "LICENSE"}
