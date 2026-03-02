@@ -130,7 +130,7 @@ class Fault:
     stack_trace: Optional[str] = None
 
     def serialize(self):
-        data = {"cat": self.category, "reason": self.reason}
+        data = {"category": self.category, "reason": self.reason}
         if self.stack_trace:
             data["stack_trace"] = self.stack_trace
         return data
@@ -138,7 +138,7 @@ class Fault:
     @classmethod
     def deserialize(cls, as_dict):
         return cls(
-            as_dict["cat"],
+            as_dict["category"],
             as_dict["reason"],
             as_dict.get("stack_trace")
         )
