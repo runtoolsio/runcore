@@ -1,6 +1,9 @@
 import traceback
 
 
+# TODO Rethink exception hierarchy — RuntoolsException covers framework/user errors,
+#  but JobCompletionError (in run.py) is a separate hierarchy for operational outcomes.
+#  Consider a common base or clearer separation at the CLI boundary.
 class RuntoolsException(Exception):
     pass
 
