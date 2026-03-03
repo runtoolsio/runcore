@@ -602,8 +602,11 @@ class SQLite(Persistence):
         where_clause, where_params = _build_where_clause(run_match)
         if not where_clause:
             raise ValueError("No rows to remove")
-        self._conn.execute("DELETE FROM history" + where_clause, where_params)
+        cursor = self._conn.execute(
+            "DELETE FROM history" + where_clause + " RETURNING job_id, run_id", where_params)
+        rows = cursor.fetchall()
         self._conn.commit()
+        return [InstanceID(job_id=r[0], run_id=r[1]) for r in rows]
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()

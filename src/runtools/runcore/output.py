@@ -155,7 +155,7 @@ class OutputReadError(InvalidStateError):
 
 
 class OutputBackend(ABC):
-    """Read-only access to stored output. Created from config, used by connectors."""
+    """Access to stored output. Created from config, used by connectors."""
 
     @property
     @abstractmethod
@@ -175,6 +175,9 @@ class OutputBackend(ABC):
         Raises:
             OutputReadError: If the output exists but cannot be read.
         """
+
+    def delete_output(self, *instance_ids) -> None:
+        """Delete stored output for the given instances. No-op by default."""
 
     def close(self):
         """Release any resources held by this backend. No-op by default."""
@@ -196,6 +199,11 @@ class FileOutputBackend(OutputBackend):
             return []
         except (json.JSONDecodeError, KeyError, OSError) as e:
             raise OutputReadError(str(path), e) from e
+
+    def delete_output(self, *instance_ids) -> None:
+        for iid in instance_ids:
+            path = self._base_dir / iid.job_id / f"{iid.run_id}.jsonl"
+            path.unlink(missing_ok=True)
 
 
 class MultiSourceOutputReader:

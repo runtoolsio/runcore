@@ -228,12 +228,15 @@ class Persistence(ABC):
         pass
 
     @abstractmethod
-    def remove_job_runs(self, run_match):
+    def remove_job_runs(self, run_match) -> list:
         """
         Remove job runs matching the specified criteria.
 
         Args:
             run_match (JobRunCriteria): Criteria identifying which job runs to delete.
+
+        Returns:
+            list[InstanceID]: Instance IDs of deleted runs.
 
         Raises:
             ValueError: If no criteria provided (to prevent accidental deletion of all records).
@@ -290,8 +293,8 @@ class NullPersistence(Persistence):
         pass
 
     @override
-    def remove_job_runs(self, run_match) -> None:
-        pass
+    def remove_job_runs(self, run_match) -> list:
+        return []
 
     @override
     def enforce_retention(self, job_id: str, policy: RetentionPolicy) -> None:

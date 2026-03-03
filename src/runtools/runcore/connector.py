@@ -352,6 +352,20 @@ class EnvironmentConnector(ABC):
     def read_history_stats(self, run_match=None):
         pass
 
+    @abstractmethod
+    def remove_history_runs(self, run_match: JobRunCriteria) -> list[InstanceID]:
+        """Remove finished runs matching the criteria from persistence and delete their output.
+
+        Args:
+            run_match: Criteria selecting which history runs to remove.
+
+        Returns:
+            List of instance IDs that were removed.
+
+        Raises:
+            ValueError: If any matching run is still active.
+        """
+
     @property
     def output_backends(self):
         """Output backends available for this environment, in config order."""
@@ -591,6 +605,15 @@ class LocalConnector(EnvironmentConnector):
 
     def read_history_stats(self, run_match=None):
         return self._persistence.read_history_stats(run_match)
+
+    def remove_history_runs(self, run_match):
+        active = self.get_active_runs(run_match)
+        if active:
+            raise ValueError(f"Cannot remove active runs: {', '.join(str(r.instance_id) for r in active)}")
+        removed_ids = self._persistence.remove_job_runs(run_match)
+        for backend in self._output_backends:
+            backend.delete_output(*removed_ids)
+        return removed_ids
 
     def close(self):
         run_isolated_collect_exceptions(
