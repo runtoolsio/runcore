@@ -204,6 +204,10 @@ class FileOutputBackend(OutputBackend):
         for iid in instance_ids:
             path = self._base_dir / iid.job_id / f"{iid.run_id}.jsonl"
             path.unlink(missing_ok=True)
+            try:
+                path.parent.rmdir()
+            except OSError:
+                pass  # Not empty or already gone
 
 
 class MultiSourceOutputReader:
