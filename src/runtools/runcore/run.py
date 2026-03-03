@@ -630,9 +630,11 @@ class JobCompletionError(Exception):
     (ERROR status), the original exception is chained via ``__cause__``.
 
     Attributes:
+        instance_id: InstanceID of the failed job.
         termination: TerminationInfo with status, message, and optional stack trace.
     """
 
-    def __init__(self, termination: 'TerminationInfo'):
+    def __init__(self, instance_id, termination: 'TerminationInfo'):
         super().__init__(str(termination))
+        self.instance_id = instance_id
         self.termination = termination
