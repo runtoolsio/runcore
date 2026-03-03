@@ -46,7 +46,6 @@ from abc import abstractmethod
 from types import ModuleType
 from typing import Dict, Type
 
-import runtools.plugins
 from runtools.runcore.job import JobInstanceManager
 
 log = logging.getLogger(__name__)
@@ -149,7 +148,7 @@ class PluginDisabledError(Exception):
         super().__init__(message)
 
 
-def load_modules(modules, *, package=runtools.plugins) -> Dict[str, ModuleType]:
+def load_modules(modules, *, package=None) -> Dict[str, ModuleType]:
     """
     Utility function to ensure all plugins are registered before use.
     Users of the plugins API should call this before utilizing any plugin.
@@ -161,6 +160,10 @@ def load_modules(modules, *, package=runtools.plugins) -> Dict[str, ModuleType]:
 
     if not modules:
         raise ValueError("Modules for discovery not specified")
+
+    if package is None:
+        import runtools.plugins
+        package = runtools.plugins
 
     discovered_modules = [name for _, name, __ in pkgutil.iter_modules(package.__path__, package.__name__ + ".")]
     log.debug("event=[plugin_modules_discovered] names=[%s]", ",".join(discovered_modules))
