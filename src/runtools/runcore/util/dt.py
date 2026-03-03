@@ -402,6 +402,25 @@ def format_time_local_tz(dt, null='', include_ms=True):
         return dt.astimezone().strftime('%H:%M:%S')
 
 
+def format_dt_compact(dt, null=''):
+    """Compact datetime format for TUI columns.
+
+    Today: ``14:25:10``, yesterday: ``-1d 22:15:00``, up to 6 days: ``-Nd HH:MM:SS``,
+    older: ``Mar 01 09:00``.
+    """
+    if not dt:
+        return null
+    local = dt.astimezone()
+    today = date.today()
+    days_ago = (today - local.date()).days
+    time_str = local.strftime('%H:%M:%S')
+    if days_ago == 0:
+        return time_str
+    if 1 <= days_ago <= 6:
+        return f"-{days_ago}d {time_str}"
+    return local.strftime('%b %d %H:%M')
+
+
 def format_dt_sql(dt):
     return dt.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
 

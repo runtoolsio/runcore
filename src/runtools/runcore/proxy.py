@@ -65,6 +65,13 @@ class JobInstanceProxy(JobInstance):
         return PhaseControlProxy(self._client, self._server_address, self._instance_id, phase.phase_id)
 
     def snap(self):
+        try:
+            job_runs = self._client.get_active_runs(
+                self._server_address, JobRunCriteria.instance_match(self._instance_id))
+            if job_runs:
+                self._job_run = job_runs[0]
+        except (TargetNotFoundError, InstanceCallError):
+            pass  # Instance ended or unreachable — return last known state
         return self._job_run
 
     @property
