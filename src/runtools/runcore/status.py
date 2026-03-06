@@ -4,6 +4,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, List
 
+_MAX_OPS_IN_SUMMARY = 3
+
+
+def _format_number(value: float) -> str:
+    return str(int(value)) if value == int(value) else str(value)
+
 
 @dataclass(frozen=True)
 class Event:
@@ -92,6 +98,18 @@ class Operation:
 
         return val
 
+    @property
+    def finished_summary(self) -> str:
+        """Short summary for a finished op: ``name ✓ result`` or ``name ✓ 50 files``."""
+        if self.result:
+            return f"{self.name} ✓ {self.result}"
+        if self.completed is not None:
+            s = f"{self.name} ✓ {_format_number(self.completed)}"
+            if self.unit:
+                s += f" {self.unit}"
+            return s
+        return f"{self.name} ✓"
+
     def __str__(self):
         parts = []
         if self.name:
@@ -146,6 +164,20 @@ class Status:
                 return operation
         return None
 
+    @property
+    def finished_ops_summary(self) -> str:
+        """Summary of finished operations: ``Copy ✓ 50 files · Scan ✓ complete (+2 more)``."""
+        finished = [op for op in self.operations if op.finished]
+        if not finished:
+            return ""
+        shown = finished[:_MAX_OPS_IN_SUMMARY]
+        parts = [op.finished_summary for op in shown]
+        extra = len(finished) - len(shown)
+        summary = " · ".join(parts)
+        if extra > 0:
+            summary += f" (+{extra} more)"
+        return summary
+
     def __bool__(self) -> bool:
         return self.last_event is not None or bool(self.operations) or bool(self.warnings) or self.result is not None
 
@@ -166,6 +198,8 @@ class Status:
                 parts.append(" ".join(active_ops))
             elif self.last_event:
                 parts.append(self.last_event.message)
+            elif ops_summary := self.finished_ops_summary:
+                parts.append(ops_summary)
 
         if self.warnings:
             warnings_str = ", ".join(w.message for w in self.warnings)
