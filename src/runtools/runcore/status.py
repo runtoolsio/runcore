@@ -9,18 +9,21 @@ from typing import Optional, List
 class Event:
     message: str
     timestamp: datetime
+    source: Optional[str] = None
 
     @classmethod
     def deserialize(cls, data: dict) -> 'Event':
         return cls(
             message=data['message'],
-            timestamp=datetime.fromisoformat(data['timestamp'])
+            timestamp=datetime.fromisoformat(data['timestamp']),
+            source=data.get('source'),
         )
 
     def serialize(self) -> dict:
         return {
             'message': self.message,
             'timestamp': self.timestamp.isoformat(),
+            'source': self.source,
         }
 
 
@@ -33,6 +36,7 @@ class Operation:
     created_at: datetime
     updated_at: datetime
     result: Optional[str] = None
+    source: Optional[str] = None
 
     @property
     def pct_done(self) -> Optional[float]:
@@ -50,6 +54,7 @@ class Operation:
             created_at=datetime.fromisoformat(data['created_at']),
             updated_at=datetime.fromisoformat(data['updated_at']),
             result=data.get('result'),
+            source=data.get('source'),
         )
 
     def serialize(self) -> dict:
@@ -61,6 +66,7 @@ class Operation:
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),
             'result': self.result,
+            'source': self.source,
         }
 
     @property
