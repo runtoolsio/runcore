@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 from enum import Enum, auto
@@ -160,11 +161,12 @@ class OutputBackend(ABC):
         """Backend type identifier (e.g., "file")."""
 
     @abstractmethod
-    def read_output(self, instance_id) -> List['OutputLine']:
+    def read_output(self, instance_id, sources: set[str] | None = None) -> List['OutputLine']:
         """Read stored output lines for an instance.
 
         Args:
             instance_id: InstanceID of the job run.
+            sources: If provided, only return lines from these sources. None returns all.
 
         Returns:
             List of output lines, sorted by ordinal. Empty list if not found.
@@ -188,9 +190,11 @@ class FileOutputBackend(OutputBackend):
     def __init__(self, base_dir: Path):
         self._base_dir = base_dir
 
-    def read_output(self, instance_id) -> List['OutputLine']:
+    def read_output(self, instance_id, sources: set[str] | None = None) -> List['OutputLine']:
         path = self._base_dir / instance_id.job_id / f"{instance_id.run_id}.jsonl"
         try:
+            if sources is not None:
+                return _read_jsonl_indexed(path, sources)
             return read_jsonl_file(str(path))
         except FileNotFoundError:
             return []
@@ -201,6 +205,7 @@ class FileOutputBackend(OutputBackend):
         for iid in instance_ids:
             path = self._base_dir / iid.job_id / f"{iid.run_id}.jsonl"
             path.unlink(missing_ok=True)
+            SourceIndex.path_for(path).unlink(missing_ok=True)
             try:
                 path.parent.rmdir()
             except OSError:
@@ -213,7 +218,7 @@ class MultiSourceOutputReader:
     def __init__(self, backends: Iterable[OutputBackend] = ()):
         self._backends = tuple(backends)
 
-    def read_output(self, instance_id) -> List['OutputLine']:
+    def read_output(self, instance_id, sources: set[str] | None = None) -> List['OutputLine']:
         """Read output lines for an instance.
 
         Raises:
@@ -222,7 +227,7 @@ class MultiSourceOutputReader:
         last_error = None
         for backend in self._backends:
             try:
-                lines = backend.read_output(instance_id)
+                lines = backend.read_output(instance_id, sources)
             except OutputReadError as e:
                 log.warning("Backend read failed, trying next: %s", e)
                 last_error = e
@@ -291,4 +296,125 @@ def read_jsonl_file(file_path: str) -> List['OutputLine']:
             if raw_line:
                 lines.append(OutputLine.deserialize(json.loads(raw_line)))
     lines.sort(key=lambda ol: ol.ordinal)
+    return lines
+
+
+class SourceIndex:
+    """Immutable source index mapping source IDs to byte-offset spans in a JSONL file."""
+
+    VERSION = 1
+
+    def __init__(self, sources: dict[str, list[list[int]]], jsonl_size: int):
+        self.sources = sources
+        self.jsonl_size = jsonl_size
+
+    @staticmethod
+    def path_for(jsonl_path: Path) -> Path:
+        return Path(str(jsonl_path) + ".idx")
+
+    @classmethod
+    def load(cls, jsonl_path: Path) -> 'SourceIndex | None':
+        """Load and validate a source index. Returns None if missing, corrupt, or stale."""
+        try:
+            with open(cls.path_for(jsonl_path), encoding="utf-8") as f:
+                data = json.load(f)
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            return None
+        if data.get("version") != cls.VERSION:
+            return None
+        try:
+            if jsonl_path.stat().st_size != data.get("jsonl_size"):
+                return None
+        except OSError:
+            return None
+        return cls(data.get("sources", {}), data["jsonl_size"])
+
+    def save(self, jsonl_path: Path):
+        """Atomically write the index file."""
+        index_path = self.path_for(jsonl_path)
+        tmp_path = Path(str(index_path) + ".tmp")
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump({"version": self.VERSION, "jsonl_size": self.jsonl_size, "sources": self.sources},
+                      f, separators=(",", ":"))
+        os.replace(tmp_path, index_path)
+
+    def spans_for(self, sources: set[str]) -> list[list[int]]:
+        """Collect spans for requested sources, sorted by byte offset for correct line order."""
+        spans = []
+        for source in sources:
+            if source in self.sources:
+                spans.extend(self.sources[source])
+        spans.sort(key=lambda s: s[0])
+        return spans
+
+
+class SourceIndexBuilder:
+    """Accumulates byte-offset spans per source during writing."""
+
+    def __init__(self):
+        self._byte_offset = 0
+        self._source_spans: dict[str, list[list[int]]] = {}
+        self._current_source: str | None = None
+        self._current_span_start = 0
+        self._current_span_length = 0
+
+    def track(self, source: str | None, byte_len: int):
+        if source != self._current_source:
+            self._flush_span()
+            self._current_source = source
+            self._current_span_start = self._byte_offset
+            self._current_span_length = 0
+
+        if source is not None:
+            self._current_span_length += byte_len
+
+        self._byte_offset += byte_len
+
+    def build(self) -> SourceIndex | None:
+        """Flush and produce the immutable index. Returns None if no sources were tracked."""
+        self._flush_span()
+        if not self._source_spans:
+            return None
+        return SourceIndex(self._source_spans, self._byte_offset)
+
+    def _flush_span(self):
+        if self._current_source is not None and self._current_span_length > 0:
+            spans = self._source_spans.setdefault(self._current_source, [])
+            spans.append([self._current_span_start, self._current_span_length])
+
+
+def _read_jsonl_indexed(jsonl_path: Path, sources: set[str]) -> List['OutputLine']:
+    """Read output lines for specific sources, using index if available."""
+    index = SourceIndex.load(jsonl_path)
+    if index is None:
+        return _read_jsonl_filtered(jsonl_path, sources)
+
+    spans = index.spans_for(sources)
+    if not spans:
+        return []
+
+    try:
+        lines = []
+        with open(jsonl_path, "rb") as f:
+            for offset, length in spans:
+                f.seek(offset)
+                chunk = f.read(length).decode("utf-8")
+                for raw_line in chunk.splitlines():
+                    if raw_line:
+                        lines.append(OutputLine.deserialize(json.loads(raw_line)))
+        return lines
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+        log.warning("Indexed read failed for %s, falling back to full scan", jsonl_path, exc_info=True)
+        return _read_jsonl_filtered(jsonl_path, sources)
+
+
+def _read_jsonl_filtered(path: Path, sources: set[str]) -> List['OutputLine']:
+    """Fallback: read entire file and filter by source."""
+    lines = []
+    with open(path, encoding="utf-8") as f:
+        for raw_line in f:
+            if raw_line := raw_line.strip():
+                ol = OutputLine.deserialize(json.loads(raw_line))
+                if ol.source in sources:
+                    lines.append(ol)
     return lines
