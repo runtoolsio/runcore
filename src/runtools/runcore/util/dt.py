@@ -1,5 +1,6 @@
 import re
 import secrets
+import string
 from dataclasses import dataclass
 from datetime import datetime, timezone, date, time, timedelta
 from enum import Enum
@@ -11,9 +12,29 @@ from dateutil.relativedelta import relativedelta
 ISO_DATE_TIME_PATTERN = re.compile(
     r'\b(\d{4}-\d{2}-\d{2}(?:T|\s)\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})?)\b')
 
+_BASE62 = string.digits + string.ascii_letters
+_EPOCH = datetime(2025, 1, 1, tzinfo=timezone.utc).timestamp()
 
-def unique_timestamp_hex(random_suffix_length=4):
-    return secrets.token_hex(random_suffix_length) + format(int(datetime.now(timezone.utc).timestamp() * 1000000), 'x')[::-1]
+
+def unique_timestamp_hex():
+    """Generate a short, time-sortable, collision-resistant ID (~11 chars base62).
+
+    Packs milliseconds since 2025-01-01 (high bits) with 24 bits of randomness (low bits).
+    """
+    ms = int((datetime.now(timezone.utc).timestamp() - _EPOCH) * 1000)
+    packed = (ms << 24) | secrets.randbits(24)
+    return _base62_encode(packed)
+
+
+def _base62_encode(num: int) -> str:
+    if num == 0:
+        return _BASE62[0]
+    parts = []
+    base = len(_BASE62)
+    while num:
+        num, rem = divmod(num, base)
+        parts.append(_BASE62[rem])
+    return "".join(reversed(parts))
 
 
 def utc_now() -> datetime:
