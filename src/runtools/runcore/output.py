@@ -93,9 +93,6 @@ class OutputLine:
             fields=data.get("f"),
         )
 
-    def with_source(self, source: str) -> 'OutputLine':
-        return replace(self, source=source)
-
     def serialize(self, truncate_length: Optional[int] = None, truncated_suffix: str = ".. (truncated)"):
         message = util.truncate(self.message, truncate_length, truncated_suffix) if truncate_length is not None else self.message
         data = {"no": self.ordinal}
