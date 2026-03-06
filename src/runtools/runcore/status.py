@@ -100,15 +100,19 @@ class Operation:
 
     @property
     def finished_summary(self) -> str:
-        """Short summary for a finished op: ``name ✓ result`` or ``name ✓ 50 files``."""
-        if self.result:
-            return f"{self.name} ✓ {self.result}"
+        """Short summary for a finished op: ``name ✓ 5000 keys (done)``."""
+        parts = []
         if self.completed is not None:
-            s = f"{self.name} ✓ {_format_number(self.completed)}"
+            s = _format_number(self.completed)
             if self.unit:
                 s += f" {self.unit}"
-            return s
-        return f"{self.name} ✓"
+            parts.append(s)
+        if self.result:
+            if parts:
+                parts.append(f"({self.result})")
+            else:
+                parts.append(self.result)
+        return f"{self.name} ✓ {' '.join(parts)}" if parts else f"{self.name} ✓"
 
     def __str__(self):
         parts = []
