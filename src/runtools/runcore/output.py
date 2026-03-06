@@ -87,7 +87,7 @@ class OutputLine:
     def deserialize(cls, data: dict) -> 'OutputLine':
         return cls(
             message=data["msg"],
-            ordinal=data["no"],
+            ordinal=data["n"],
             is_error=data.get("err", False),
             source=data.get("src"),
             fields=data.get("f"),
@@ -95,7 +95,7 @@ class OutputLine:
 
     def serialize(self, truncate_length: Optional[int] = None, truncated_suffix: str = ".. (truncated)"):
         message = util.truncate(self.message, truncate_length, truncated_suffix) if truncate_length is not None else self.message
-        data = {"no": self.ordinal}
+        data = {"n": self.ordinal}
         if self.source is not None:
             data["src"] = self.source
         if self.is_error:
