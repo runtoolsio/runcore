@@ -6,6 +6,8 @@ from dataclasses import dataclass, replace
 from enum import Enum, auto
 from pathlib import Path
 from typing import List, Optional, Dict, Iterable, Literal
+from urllib.parse import urlparse, unquote
+from urllib.request import pathname2url
 
 from itertools import count
 from pydantic import BaseModel, Field
@@ -23,30 +25,40 @@ class Mode(Enum):
 
 @dataclass(frozen=True)
 class OutputLocation:
-    """
-    Immutable descriptor for a location from which output can be read.
+    """URI-based descriptor for output storage location (e.g. ``file:///path/to/output.jsonl``).
 
-    Attributes:
-        type: str - the kind of location (e.g., "file", "sqlite").
-        source: str - identifier or address of the resource (e.g., file path, table name, URI).
+    Single ``uri`` field encodes both the backend type (scheme) and the resource address.
     """
-    type: str
-    source: str
+    uri: str
 
-    def serialize(self) -> Dict[str, str]:
-        """Serialize the location to a dictionary."""
-        return {
-            "type": self.type,
-            "source": self.source
-        }
+    @staticmethod
+    def for_file(path: Path) -> 'OutputLocation':
+        """Create an OutputLocation from a file path."""
+        return OutputLocation(uri="file://" + pathname2url(str(path)))
+
+    @property
+    def scheme(self) -> str:
+        return urlparse(self.uri).scheme
+
+    @property
+    def is_file(self) -> bool:
+        return self.scheme == "file"
+
+    def as_path(self) -> Path:
+        """Return the file path. Raises ValueError if not a file:// URI."""
+        if not self.is_file:
+            raise ValueError(f"Not a file URI: {self.uri}")
+        return Path(unquote(urlparse(self.uri).path))
+
+    def serialize(self) -> str:
+        return self.uri
 
     @classmethod
-    def deserialize(cls, data: Dict[str, str]) -> 'OutputLocation':
-        """Deserialize a location from a dictionary."""
-        return cls(
-            type=data["type"],
-            source=data["source"]
-        )
+    def deserialize(cls, data: str) -> 'OutputLocation':
+        return cls(uri=data)
+
+    def __str__(self) -> str:
+        return self.uri
 
 
 class Output(ABC):
