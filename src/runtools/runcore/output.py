@@ -161,12 +161,14 @@ class OutputBackend(ABC):
         """Backend type identifier (e.g., "file")."""
 
     @abstractmethod
-    def read_output(self, instance_id, sources: set[str] | None = None) -> List['OutputLine']:
+    def read_output(self, instance_id, sources: set[str] | None = None,
+                    max_lines: int = 0) -> List['OutputLine']:
         """Read stored output lines for an instance.
 
         Args:
             instance_id: InstanceID of the job run.
             sources: If provided, only return lines from these sources. None returns all.
+            max_lines: If > 0, return only the last N lines. 0 means all.
 
         Returns:
             List of output lines, sorted by ordinal. Empty list if not found.
@@ -190,9 +192,14 @@ class FileOutputBackend(OutputBackend):
     def __init__(self, base_dir: Path):
         self._base_dir = base_dir
 
-    def read_output(self, instance_id, sources: set[str] | None = None) -> List['OutputLine']:
+    def read_output(self, instance_id, sources: set[str] | None = None,
+                    max_lines: int = 0) -> List['OutputLine']:
         path = self._base_dir / instance_id.job_id / f"{instance_id.run_id}.jsonl"
         try:
+            if max_lines > 0:
+                if sources is not None:
+                    return _read_jsonl_indexed_tail(path, sources, max_lines)
+                return _read_jsonl_tail(path, max_lines)
             if sources is not None:
                 return _read_jsonl_indexed(path, sources)
             return read_jsonl_file(str(path))
@@ -218,7 +225,8 @@ class MultiSourceOutputReader:
     def __init__(self, backends: Iterable[OutputBackend] = ()):
         self._backends = tuple(backends)
 
-    def read_output(self, instance_id, sources: set[str] | None = None) -> List['OutputLine']:
+    def read_output(self, instance_id, sources: set[str] | None = None,
+                    max_lines: int = 0) -> List['OutputLine']:
         """Read output lines for an instance.
 
         Raises:
@@ -227,7 +235,7 @@ class MultiSourceOutputReader:
         last_error = None
         for backend in self._backends:
             try:
-                lines = backend.read_output(instance_id, sources)
+                lines = backend.read_output(instance_id, sources, max_lines)
             except OutputReadError as e:
                 log.warning("Backend read failed, trying next: %s", e)
                 last_error = e
@@ -327,7 +335,10 @@ class SourceIndex:
                 return None
         except OSError:
             return None
-        return cls(data.get("sources", {}), data["jsonl_size"])
+        jsonl_size = data.get("jsonl_size")
+        if not isinstance(jsonl_size, int):
+            return None
+        return cls(data.get("sources", {}), jsonl_size)
 
     def save(self, jsonl_path: Path):
         """Atomically write the index file."""
@@ -381,6 +392,96 @@ class SourceIndexBuilder:
         if self._current_source is not None and self._current_span_length > 0:
             spans = self._source_spans.setdefault(self._current_source, [])
             spans.append([self._current_span_start, self._current_span_length])
+
+
+def _read_jsonl_tail(path: Path, max_lines: int) -> List['OutputLine']:
+    """Read the last max_lines from a JSONL file without loading the entire file."""
+    if max_lines <= 0:
+        return []
+    file_size = path.stat().st_size
+    if file_size == 0:
+        return []
+    lines = _read_tail_bytes(path, 0, file_size, max_lines)
+    lines.reverse()
+    return lines
+
+
+def _read_jsonl_indexed_tail(jsonl_path: Path, sources: set[str],
+                             max_lines: int) -> List['OutputLine']:
+    """Read the last max_lines for specific sources, using index if available."""
+    if max_lines <= 0:
+        return []
+
+    index = SourceIndex.load(jsonl_path)
+    if index is None:
+        all_filtered = _read_jsonl_filtered(jsonl_path, sources)
+        return all_filtered[-max_lines:]
+
+    spans = index.spans_for(sources)
+    if not spans:
+        return []
+
+    try:
+        # Iterate spans from the end; each _read_tail_bytes returns reverse-chronological
+        lines = []
+        for offset, length in reversed(spans):
+            chunk_lines = _read_tail_bytes(jsonl_path, offset, length, max_lines - len(lines))
+            lines.extend(chunk_lines)
+            if len(lines) >= max_lines:
+                break
+        # Collected in reverse order overall — reverse to chronological
+        lines = lines[:max_lines]
+        lines.reverse()
+        return lines
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+        log.warning("Indexed tail read failed for %s, falling back to full scan", jsonl_path, exc_info=True)
+        all_filtered = _read_jsonl_filtered(jsonl_path, sources)
+        return all_filtered[-max_lines:]
+
+
+_TAIL_CHUNK_SIZE = 64 * 1024
+
+
+def _read_tail_bytes(path: Path, start: int, length: int, max_lines: int) -> List['OutputLine']:
+    """Read the last max_lines from byte range [start, start+length) of a JSONL file.
+
+    Reads backwards in chunks. Returns lines in reverse-chronological order.
+    """
+    lines = []
+    end = start + length
+
+    with open(path, "rb") as f:
+        read_end = end
+        leftover = b""
+
+        while read_end > start and len(lines) < max_lines:
+            chunk_start = max(start, read_end - _TAIL_CHUNK_SIZE)
+            f.seek(chunk_start)
+            chunk = f.read(read_end - chunk_start) + leftover
+
+            raw_lines = chunk.split(b"\n")
+
+            if chunk_start > start:
+                leftover = raw_lines[0]
+                raw_lines = raw_lines[1:]
+            else:
+                leftover = b""
+
+            for raw_line in reversed(raw_lines):
+                if len(lines) >= max_lines:
+                    break
+                raw_line = raw_line.strip()
+                if raw_line:
+                    lines.append(OutputLine.deserialize(json.loads(raw_line)))
+
+            read_end = chunk_start
+
+        if leftover and len(lines) < max_lines:
+            leftover = leftover.strip()
+            if leftover:
+                lines.append(OutputLine.deserialize(json.loads(leftover)))
+
+    return lines
 
 
 def _read_jsonl_indexed(jsonl_path: Path, sources: set[str]) -> List['OutputLine']:

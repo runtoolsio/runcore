@@ -6,6 +6,7 @@ import pytest
 from runtools.runcore.output import (
     SourceIndex, SourceIndexBuilder, OutputLine, read_jsonl_file,
     _read_jsonl_indexed, _read_jsonl_filtered,
+    _read_jsonl_tail, _read_jsonl_indexed_tail,
 )
 
 
@@ -192,3 +193,90 @@ class TestReadJsonlFile:
 
         result = read_jsonl_file(str(path))
         assert [line.ordinal for line in result] == [1, 2]
+
+
+# --- Tail reads ---
+
+def _write_numbered_jsonl(path, count, source=None):
+    """Write count lines with ordinals 1..count, optionally with source."""
+    with open(path, "wb") as f:
+        builder = SourceIndexBuilder()
+        for i in range(1, count + 1):
+            line = OutputLine(f"line {i}", i, source=source)
+            raw = (json.dumps(line.serialize(), ensure_ascii=False) + "\n").encode("utf-8")
+            builder.track(line.source, len(raw))
+            f.write(raw)
+    if index := builder.build():
+        index.save(path)
+
+
+class TestTailRead:
+
+    def test_returns_last_n_lines(self, tmp_path):
+        path = tmp_path / "big.jsonl"
+        _write_numbered_jsonl(path, 100)
+        result = _read_jsonl_tail(path, 5)
+        assert [line.ordinal for line in result] == [96, 97, 98, 99, 100]
+
+    def test_returns_all_when_fewer_than_max(self, tmp_path):
+        path = tmp_path / "small.jsonl"
+        _write_numbered_jsonl(path, 3)
+        result = _read_jsonl_tail(path, 10)
+        assert [line.ordinal for line in result] == [1, 2, 3]
+
+    def test_returns_chronological_order(self, tmp_path):
+        path = tmp_path / "order.jsonl"
+        _write_numbered_jsonl(path, 50)
+        result = _read_jsonl_tail(path, 10)
+        assert result == sorted(result, key=lambda ol: ol.ordinal)
+
+    def test_empty_file(self, tmp_path):
+        path = tmp_path / "empty.jsonl"
+        path.write_bytes(b"")
+        assert _read_jsonl_tail(path, 5) == []
+
+    def test_zero_max_lines(self, tmp_path):
+        path = tmp_path / "any.jsonl"
+        _write_numbered_jsonl(path, 10)
+        assert _read_jsonl_tail(path, 0) == []
+
+
+class TestIndexedTailRead:
+
+    @pytest.fixture
+    def multi_source_file(self, tmp_path):
+        path = tmp_path / "multi.jsonl"
+        lines = []
+        for i in range(1, 21):
+            source = "A" if i <= 10 else "B"
+            lines.append(OutputLine(f"line {i}", i, source=source))
+        _write_jsonl(path, lines)
+        return path
+
+    def test_returns_tail_of_source(self, multi_source_file):
+        result = _read_jsonl_indexed_tail(multi_source_file, {"A"}, 3)
+        assert [line.ordinal for line in result] == [8, 9, 10]
+        assert all(line.source == "A" for line in result)
+
+    def test_returns_all_source_lines_when_fewer_than_max(self, multi_source_file):
+        result = _read_jsonl_indexed_tail(multi_source_file, {"A"}, 50)
+        assert len(result) == 10
+
+    def test_tail_across_multiple_sources(self, multi_source_file):
+        result = _read_jsonl_indexed_tail(multi_source_file, {"A", "B"}, 5)
+        assert [line.ordinal for line in result] == [16, 17, 18, 19, 20]
+
+    def test_falls_back_without_index(self, tmp_path):
+        path = tmp_path / "no_idx.jsonl"
+        lines = [OutputLine(f"line {i}", i, source="X") for i in range(1, 11)]
+        with open(path, "w") as f:
+            for line in lines:
+                f.write(json.dumps(line.serialize()) + "\n")
+        result = _read_jsonl_indexed_tail(path, {"X"}, 3)
+        assert [line.ordinal for line in result] == [8, 9, 10]
+
+    def test_zero_max_lines(self, multi_source_file):
+        assert _read_jsonl_indexed_tail(multi_source_file, {"A"}, 0) == []
+
+    def test_missing_source_returns_empty(self, multi_source_file):
+        assert _read_jsonl_indexed_tail(multi_source_file, {"NOPE"}, 5) == []
