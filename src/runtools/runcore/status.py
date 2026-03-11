@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, List
 
-_MAX_OPS_IN_SUMMARY = 3
+MAX_OPS_IN_SUMMARY = 3
 
 
 def _format_number(value: float) -> str:
@@ -42,6 +42,7 @@ class Operation:
     created_at: datetime
     updated_at: datetime
     result: Optional[str] = None
+    failed: bool = False
     source: Optional[str] = None
 
     @property
@@ -60,11 +61,12 @@ class Operation:
             created_at=datetime.fromisoformat(data['created_at']),
             updated_at=datetime.fromisoformat(data['updated_at']),
             result=data.get('result'),
+            failed=data.get('failed', False),
             source=data.get('source'),
         )
 
     def serialize(self) -> dict:
-        return {
+        d = {
             'name': self.name,
             'completed': self.completed,
             'total': self.total,
@@ -74,6 +76,9 @@ class Operation:
             'result': self.result,
             'source': self.source,
         }
+        if self.failed:
+            d['failed'] = True
+        return d
 
     @property
     def finished(self):
@@ -100,7 +105,8 @@ class Operation:
 
     @property
     def finished_summary(self) -> str:
-        """Short summary for a finished op: ``name ✓ 5000 keys (done)``."""
+        """Short summary for a finished op: ``name ✓ 5000 keys (done)`` or ``name ✗ reason``."""
+        mark = "✗" if self.failed else "✓"
         parts = []
         if self.completed is not None:
             s = _format_number(self.completed)
@@ -112,7 +118,7 @@ class Operation:
                 parts.append(f"({self.result})")
             else:
                 parts.append(self.result)
-        return f"{self.name} ✓ {' '.join(parts)}" if parts else f"{self.name} ✓"
+        return f"{self.name} {mark} {' '.join(parts)}" if parts else f"{self.name} {mark}"
 
     def __str__(self):
         parts = []
@@ -174,7 +180,7 @@ class Status:
         finished = [op for op in self.operations if op.finished]
         if not finished:
             return ""
-        shown = finished[:_MAX_OPS_IN_SUMMARY]
+        shown = finished[:MAX_OPS_IN_SUMMARY]
         parts = [op.finished_summary for op in shown]
         extra = len(finished) - len(shown)
         summary = " · ".join(parts)

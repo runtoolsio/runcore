@@ -104,3 +104,47 @@ def test_operation_str_with_result():
 
     op = Operation("", None, None, None, now, now, result="Done")
     assert str(op) == "[Done]"
+
+
+def test_operation_failed():
+    now = utc_now()
+
+    op = Operation("Upload", None, None, None, now, now, result="timeout", failed=True)
+    assert op.finished
+    assert op.failed
+    assert op.finished_summary == "Upload ✗ timeout"
+
+    # Success case for comparison
+    op_ok = Operation("Upload", 100, 100, "files", now, now, result="done")
+    assert op_ok.finished_summary == "Upload ✓ 100 files (done)"
+
+
+def test_operation_failed_with_completed():
+    now = utc_now()
+
+    op = Operation("Copy", 50, 100, "files", now, now, result="disk full", failed=True)
+    assert op.finished
+    assert op.finished_summary == "Copy ✗ 50 files (disk full)"
+
+
+def test_operation_failed_serialization():
+    now = utc_now()
+
+    op = Operation("Upload", None, None, None, now, now, result="error", failed=True)
+    data = op.serialize()
+    assert data['failed'] is True
+
+    restored = Operation.deserialize(data)
+    assert restored.failed is True
+    assert restored.result == "error"
+
+
+def test_operation_failed_false_not_serialized():
+    now = utc_now()
+
+    op = Operation("Upload", None, None, None, now, now, result="done")
+    data = op.serialize()
+    assert 'failed' not in data
+
+    restored = Operation.deserialize(data)
+    assert restored.failed is False
