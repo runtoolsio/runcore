@@ -16,7 +16,7 @@ def test_progress_str():
     assert str(progress) == '[25/100 files (25%)]'
 
     progress = Operation('', None, 100, 'files', utc_now(), utc_now())
-    assert str(progress) == '[?/100 files]'
+    assert str(progress) == '[?/100 files (0%)]'
 
     progress = Operation('', 20, None, 'files', utc_now(), utc_now())
     assert str(progress) == '[20 files]'
@@ -104,6 +104,25 @@ def test_operation_str_with_result():
 
     op = Operation("", None, None, None, now, now, result="Done")
     assert str(op) == "[Done]"
+
+
+def test_pct_done_with_total_only():
+    now = utc_now()
+
+    # total set, completed None → 0%
+    op = Operation("Upload", None, 15495, "products", now, now)
+    assert op.pct_done == 0.0
+    assert op.has_progress
+    assert str(op) == "[Upload ?/15495 products (0%)]"
+
+    # completed=0 explicitly → also 0%
+    op = Operation("Upload", 0, 15495, "products", now, now)
+    assert op.pct_done == 0.0
+    assert str(op) == "[Upload 0/15495 products (0%)]"
+
+    # total=0 → no pct
+    op = Operation("Upload", None, 0, None, now, now)
+    assert op.pct_done is None
 
 
 def test_operation_failed():

@@ -47,8 +47,9 @@ class Operation:
 
     @property
     def pct_done(self) -> Optional[float]:
-        if isinstance(self.completed, (int, float)) and isinstance(self.total, (int, float)):
-            return self.completed / self.total
+        if isinstance(self.total, (int, float)) and self.total > 0:
+            completed = self.completed if isinstance(self.completed, (int, float)) else 0
+            return completed / self.total
         return None
 
     @classmethod
@@ -93,12 +94,13 @@ class Operation:
         return self.completed is not None or self.total is not None or self.unit is not None
 
     def _progress_str(self):
-        val = f"{self.completed or '?'}"
+        val = f"{_format_number(self.completed) if self.completed is not None else '?'}"
         if self.total:
             val += f"/{self.total}"
         if self.unit:
             val += f" {self.unit}"
-        if pct_done := self.pct_done:
+        pct_done = self.pct_done
+        if pct_done is not None:
             val += f" ({round(pct_done * 100, 0):.0f}%)"
 
         return val
