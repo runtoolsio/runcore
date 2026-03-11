@@ -7,7 +7,7 @@ from typing import Optional, List
 MAX_OPS_IN_SUMMARY = 3
 
 
-def _format_number(value: float) -> str:
+def format_number(value: float) -> str:
     return str(int(value)) if value == int(value) else str(value)
 
 
@@ -94,7 +94,7 @@ class Operation:
         return self.completed is not None or self.total is not None or self.unit is not None
 
     def _progress_str(self):
-        val = f"{_format_number(self.completed) if self.completed is not None else '?'}"
+        val = f"{format_number(self.completed) if self.completed is not None else '?'}"
         if self.total:
             val += f"/{self.total}"
         if self.unit:
@@ -111,7 +111,7 @@ class Operation:
         mark = "✗" if self.failed else "✓"
         parts = []
         if self.completed is not None:
-            s = _format_number(self.completed)
+            s = format_number(self.completed)
             if self.unit:
                 s += f" {self.unit}"
             parts.append(s)
