@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, List
 
+from runtools.runcore.util.dt import format_timedelta_compact
+
 MAX_OPS_IN_SUMMARY = 3
 
 
@@ -106,8 +108,15 @@ class Operation:
         return val
 
     @property
+    def elapsed(self) -> Optional[str]:
+        """Compact elapsed time string, or None if timestamps are missing."""
+        if self.created_at and self.updated_at:
+            return format_timedelta_compact(self.updated_at - self.created_at)
+        return None
+
+    @property
     def finished_summary(self) -> str:
-        """Short summary for a finished op: ``name ✓ 5000 keys (done)`` or ``name ✗ reason``."""
+        """Short summary for a finished op: ``name ✓ 5000 keys (done) 2m34s`` or ``name ✗ reason 2m34s``."""
         mark = "✗" if self.failed else "✓"
         parts = []
         if self.completed is not None:
@@ -120,6 +129,9 @@ class Operation:
                 parts.append(f"({self.result})")
             else:
                 parts.append(self.result)
+        elapsed = self.elapsed
+        if elapsed:
+            parts.append(elapsed)
         return f"{self.name} {mark} {' '.join(parts)}" if parts else f"{self.name} {mark}"
 
     def __str__(self):

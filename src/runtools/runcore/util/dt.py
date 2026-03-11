@@ -399,6 +399,26 @@ def format_timedelta(td, *, show_ms=True, null=''):
     return s
 
 
+def format_timedelta_compact(td, null=''):
+    """Compact elapsed format: ``1.5s``, ``2m34s``, ``1h12m``, ``2d3h``."""
+    if not td:
+        return null
+    total = int(td.total_seconds())
+    if total < 0:
+        return null
+    if total < 60:
+        frac = td.total_seconds()
+        return f"{frac:.1f}s" if frac < 10 else f"{total}s"
+    mm, ss = divmod(total, 60)
+    if mm < 60:
+        return f"{mm}m{ss:02d}s" if ss else f"{mm}m"
+    hh, mm = divmod(mm, 60)
+    if hh < 24:
+        return f"{hh}h{mm:02d}m" if mm else f"{hh}h"
+    dd, hh = divmod(hh, 24)
+    return f"{dd}d{hh}h" if hh else f"{dd}d"
+
+
 def format_dt_iso(td):
     if td is None:
         return None

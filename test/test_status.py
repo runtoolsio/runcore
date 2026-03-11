@@ -1,4 +1,4 @@
-from datetime import datetime, UTC
+from datetime import datetime, timedelta, UTC
 
 from runtools.runcore.status import Operation, Status, Event
 from runtools.runcore.util import utc_now
@@ -167,3 +167,18 @@ def test_operation_failed_false_not_serialized():
 
     restored = Operation.deserialize(data)
     assert restored.failed is False
+
+
+def test_finished_summary_with_elapsed():
+    now = utc_now()
+    later = now + timedelta(seconds=154)
+
+    op = Operation("Sort", 110724, 110724, "lines", now, later, result="15495 products")
+    assert op.finished_summary == "Sort ✓ 110724 lines (15495 products) 2m34s"
+
+    op_failed = Operation("Upload", None, None, None, now, later, result="s3 access denied", failed=True)
+    assert op_failed.finished_summary == "Upload ✗ s3 access denied 2m34s"
+
+    # Zero elapsed — no time appended
+    op_instant = Operation("Check", None, None, None, now, now, result="ok")
+    assert op_instant.finished_summary == "Check ✓ ok"
