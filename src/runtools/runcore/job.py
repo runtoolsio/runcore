@@ -9,11 +9,10 @@ to perform the same task.
 import abc
 import datetime
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import timedelta
 from enum import Enum
-from typing import Dict, Any, List, Optional, Tuple, Iterator, ClassVar, Set, Callable, Protocol, override
+from typing import Dict, Any, List, Optional, Tuple, ClassVar, Set, Callable, Protocol, override
 
 from runtools.runcore import util
 from runtools.runcore.output import OutputLine, Output, OutputLocation
@@ -231,15 +230,27 @@ class StatsSortOption(str, Enum):
                 raise AssertionError(f"Programmer error - unimplemented key for sort option: {self}")
 
 
-def iid(job_id, run_id=None):
-    return InstanceID(job_id, run_id) if run_id else InstanceID(job_id)
+def iid(job_id, run_id=None, ordinal=1):
+    return InstanceID(job_id, run_id, ordinal) if run_id else InstanceID(job_id, ordinal=ordinal)
 
 
 @dataclass(frozen=True)
-class InstanceID(Sequence):
-    FORBIDDEN_CHARS: ClassVar[Set[str]] = frozenset("!@#")
+class InstanceID:
+    """Unique identity of a concrete job execution.
+
+    ``(job_id, run_id)`` is the logical grouping key — the *logical run*.
+    ``(job_id, run_id, ordinal)`` is fully unique — the *concrete execution*.
+
+    Attributes:
+        job_id (str): The job identifier.
+        run_id (str): The run identifier (defaults to a unique timestamp-hex).
+        ordinal (int): Execution ordinal within the logical run (first = 1).
+    """
+
+    FORBIDDEN_CHARS: ClassVar[Set[str]] = frozenset("!@#:")
     job_id: str
     run_id: str = field(default_factory=unique_timestamp_hex)
+    ordinal: int = 1
 
     def __post_init__(self):
         if not self.job_id:
@@ -249,20 +260,26 @@ class InstanceID(Sequence):
         if InstanceID.FORBIDDEN_CHARS.intersection(self.job_id) or InstanceID.FORBIDDEN_CHARS.intersection(self.run_id):
             raise ValueError(
                 f"Instance ID identifiers cannot contain characters: {", ".join(InstanceID.FORBIDDEN_CHARS)}")
+        if self.ordinal < 1:
+            raise ValueError(f"Instance `ordinal` must be >= 1, got {self.ordinal}")
+
+    @property
+    def logical_key(self) -> tuple[str, str]:
+        """The logical run key — not fully unique without ordinal."""
+        return self.job_id, self.run_id
 
     @classmethod
     def parse(cls, id_string: str) -> "InstanceID":
-        """
-        Parse an instance ID from a string in the format 'job_id@run_id'.
+        """Parse an instance ID from ``'job_id@run_id'`` or ``'job_id@run_id:ordinal'``.
 
         Args:
-            id_string: A string in the format 'job_id@run_id'
+            id_string (str): Canonical string form.
 
         Returns:
-            An InstanceID object
+            InstanceID: The parsed instance.
 
         Raises:
-            ValueError: If the string is not in the expected format
+            ValueError: If the string is not in the expected format.
         """
         if not id_string:
             raise ValueError("Instance ID string cannot be empty")
@@ -270,71 +287,73 @@ class InstanceID(Sequence):
         if '@' not in id_string:
             raise ValueError("Instance ID must be in format 'job_id@run_id'")
 
-        job_id, run_id = id_string.split('@', 1)
+        job_id, rest = id_string.split('@', 1)
 
         if not job_id:
             raise ValueError("job_id part cannot be empty")
-        if not run_id:
+        if not rest:
             raise ValueError("run_id part cannot be empty")
 
-        return cls(job_id=job_id, run_id=run_id)
+        if ':' in rest:
+            run_id, ordinal_str = rest.rsplit(':', 1)
+            if not run_id:
+                raise ValueError("run_id part cannot be empty")
+            try:
+                ordinal = int(ordinal_str)
+            except ValueError:
+                raise ValueError(f"ordinal must be an integer, got '{ordinal_str}'")
+        else:
+            run_id = rest
+            ordinal = 1
 
-    def __len__(self) -> int:
-        return 2
+        return cls(job_id=job_id, run_id=run_id, ordinal=ordinal)
 
-    def __getitem__(self, index: int) -> Any:
-        if index == 0:
-            return self.job_id
-        if index == 1:
-            return self.run_id
-        raise IndexError(f"Index {index} out of range for InstanceID")
-
-    def __iter__(self) -> Iterator[Any]:
-        yield self.job_id
-        yield self.run_id
-
-    def serialize(self) -> Dict[str, str]:
-        return {"job_id": self.job_id, "run_id": self.run_id}
+    def serialize(self) -> Dict[str, Any]:
+        d: Dict[str, Any] = {"job_id": self.job_id, "run_id": self.run_id}
+        if self.ordinal != 1:
+            d["ordinal"] = self.ordinal
+        return d
 
     @classmethod
-    def deserialize(cls, data: Dict[str, str]) -> "InstanceID":
-        return cls(job_id=data["job_id"], run_id=data["run_id"])
+    def deserialize(cls, data: Dict[str, Any]) -> "InstanceID":
+        return cls(job_id=data["job_id"], run_id=data["run_id"], ordinal=data.get("ordinal", 1))
 
     def __str__(self) -> str:
-        return f"{self.job_id}@{self.run_id}"
+        if self.ordinal == 1:
+            return f"{self.job_id}@{self.run_id}"
+        return f"{self.job_id}@{self.run_id}:{self.ordinal}"
 
 
 @dataclass(frozen=True)
 class JobInstanceMetadata:
-    """
-    A dataclass that contains descriptive information about a specific job instance. This object is designed
-    to represent essential information about a job run in a compact and serializable format.
+    """Descriptive information about a specific job instance.
 
     Attributes:
-        instance_id (InstanceID):
-            Unique identifier for the job instance, composed of job_id and run_id.
-        user_params (Dict[str, Any]):
-            A dictionary containing user-defined parameters associated with the instance.
-            These are arbitrary parameters set by the user, and they do not affect the functionality.
+        instance_id (InstanceID): Unique identifier for the job instance.
+        user_params (Dict[str, Any]): User-defined parameters (do not affect functionality).
     """
     instance_id: InstanceID
     user_params: Dict[str, Any] = field(default_factory=dict, compare=False, hash=False)
 
     @property
     def job_id(self) -> str:
-        """The unique identifier of the job associated with the instance."""
         return self.instance_id.job_id
 
     @property
     def run_id(self) -> str:
-        """The unique identifier of the job instance run."""
         return self.instance_id.run_id
 
+    @property
+    def ordinal(self) -> int:
+        return self.instance_id.ordinal
+
     def serialize(self) -> Dict[str, Any]:
-        dto = {
+        dto: Dict[str, Any] = {
             "job_id": self.job_id,
             "run_id": self.run_id,
         }
+        if self.ordinal != 1:
+            dto["ordinal"] = self.ordinal
         if self.user_params:
             dto["user_params"] = self.user_params
         return dto
@@ -342,7 +361,7 @@ class JobInstanceMetadata:
     @classmethod
     def deserialize(cls, as_dict):
         return cls(
-            instance_id=InstanceID(as_dict['job_id'], as_dict['run_id']),
+            instance_id=InstanceID(as_dict['job_id'], as_dict['run_id'], as_dict.get('ordinal', 1)),
             user_params=as_dict.get('user_params', {}),
         )
 

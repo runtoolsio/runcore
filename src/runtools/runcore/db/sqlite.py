@@ -6,7 +6,6 @@ import datetime
 import json
 import logging
 import sqlite3
-from datetime import timezone
 from functools import wraps
 from threading import Lock
 from typing import List, Iterator, override
@@ -16,8 +15,8 @@ from runtools.runcore.criteria import LifecycleCriterion, SortOption
 from runtools.runcore.db import Persistence, IncompatibleSchemaError, DuplicateInstanceError
 from runtools.runcore.err import InvalidStateError
 from runtools.runcore.job import JobStats, JobRun, JobInstanceMetadata, InstanceID
-from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.output import OutputLocation
+from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.run import TerminationStatus, Outcome, PhaseRun, Fault, Stage
 from runtools.runcore.status import Status
 from runtools.runcore.util import MatchingStrategy, format_dt_sql, parse_dt_sql
@@ -25,7 +24,7 @@ from runtools.runcore.util.dt import utc_now
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEFAULT_BATCH_SIZE = 100
 
 
@@ -99,10 +98,18 @@ def _build_where_clause(run_match, alias=''):
 
     metadata_conditions = []
     metadata_params = []
+    exclude_conditions = []
+    exclude_params = []
     for c in run_match.metadata_criteria:
+        if c.exclude is not None:
+            excl = c.exclude
+            exclude_conditions.append(
+                f"NOT ({alias}job_id = ? AND {alias}run_id = ? AND {alias}ordinal = ?)")
+            exclude_params.extend([excl.job_id, excl.run_id, excl.ordinal])
         if c.strategy == MatchingStrategy.ALWAYS_TRUE:
-            metadata_conditions.clear()
-            metadata_params.clear()
+            if c.ordinal is not None:
+                conditions.append(f'{alias}ordinal = ?')
+                params.append(c.ordinal)
             break
         if c.strategy == MatchingStrategy.ALWAYS_FALSE:
             return " WHERE 1=0", []  # Early return as nothing can match
@@ -139,12 +146,21 @@ def _build_where_clause(run_match, alias=''):
 
         if id_conditions:
             join_op = ' OR ' if c.match_any_field else ' AND '
-            metadata_conditions.append('(' + join_op.join(id_conditions) + ')')
+            combined = '(' + join_op.join(id_conditions) + ')'
+            if c.ordinal is not None:
+                combined = f"({combined} AND {alias}ordinal = ?)"
+                id_params.append(c.ordinal)
+            metadata_conditions.append(combined)
             metadata_params.extend(id_params)
+        elif c.ordinal is not None:
+            metadata_conditions.append(f'{alias}ordinal = ?')
+            metadata_params.append(c.ordinal)
 
     if metadata_conditions:
         conditions.append('(' + ' OR '.join(metadata_conditions) + ')')
         params.extend(metadata_params)
+    conditions.extend(exclude_conditions)
+    params.extend(exclude_params)
 
     def add_datetime_conditions(column: str, dt_range) -> tuple[list[str], list]:
         conds = []
@@ -295,6 +311,7 @@ class SQLite(Persistence):
             c.execute('''CREATE TABLE history
                          (job_id text,
                          run_id text,
+                         ordinal integer NOT NULL DEFAULT 1,
                          user_params text,
                          created timestamp,
                          started timestamp,
@@ -307,7 +324,7 @@ class SQLite(Persistence):
                          status text,
                          warnings int,
                          misc text,
-                         UNIQUE(job_id, run_id))
+                         UNIQUE(job_id, run_id, ordinal))
                          ''')
             c.execute('CREATE INDEX job_id_index ON history (job_id)')
             c.execute('CREATE INDEX run_id_index ON history (run_id)')
@@ -329,8 +346,8 @@ class SQLite(Persistence):
         """See `Persistence.init_job_run`."""
         try:
             self._conn.execute(
-                "INSERT INTO history (job_id, run_id, user_params, created) VALUES (?, ?, ?, ?)",
-                (instance_id.job_id, instance_id.run_id,
+                "INSERT INTO history (job_id, run_id, ordinal, user_params, created) VALUES (?, ?, ?, ?, ?)",
+                (instance_id.job_id, instance_id.run_id, instance_id.ordinal,
                  json.dumps(dict(user_params)) if user_params else None,
                  format_dt_sql(utc_now()))
             )
@@ -445,7 +462,7 @@ class SQLite(Persistence):
 
         def to_job_run(r):
             metadata = JobInstanceMetadata(
-                InstanceID(r['job_id'], r['run_id']),
+                InstanceID(r['job_id'], r['run_id'], r['ordinal']),
                 json.loads(r['user_params']) if r['user_params'] else {},
             )
             root_phase = PhaseRun.deserialize(json.loads(r['root_phase']))
@@ -580,18 +597,19 @@ class SQLite(Persistence):
                     None,  # misc
                     r.metadata.job_id,
                     r.metadata.run_id,
+                    r.metadata.ordinal,
                     )
 
         update_sql = (
             "UPDATE history SET user_params=?, created=?, started=?, ended=?, exec_time=?, "
             "root_phase=?, output_locations=?, termination_status=?, faults=?, status=?, warnings=?, misc=? "
-            "WHERE job_id=? AND run_id=?"
+            "WHERE job_id=? AND run_id=? AND ordinal=?"
         )
         for run in job_runs:
             cursor = self._conn.execute(update_sql, to_tuple(run))
             if cursor.rowcount == 0:
-                log.warning("event=[store_no_init_row] job_id=[%s] run_id=[%s] No init row found; run not stored",
-                            run.metadata.job_id, run.metadata.run_id)
+                log.warning("event=[store_no_init_row] instance_id=[%s] No init row found; run not stored",
+                            run.metadata.instance_id)
         self._conn.commit()
 
     @override
@@ -603,10 +621,10 @@ class SQLite(Persistence):
         if not where_clause:
             raise ValueError("No rows to remove")
         cursor = self._conn.execute(
-            "DELETE FROM history" + where_clause + " RETURNING job_id, run_id", where_params)
+            "DELETE FROM history" + where_clause + " RETURNING job_id, run_id, ordinal", where_params)
         rows = cursor.fetchall()
         self._conn.commit()
-        return [InstanceID(job_id=r[0], run_id=r[1]) for r in rows]
+        return [InstanceID(job_id=r[0], run_id=r[1], ordinal=r[2]) for r in rows]
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()

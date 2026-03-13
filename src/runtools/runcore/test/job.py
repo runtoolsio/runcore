@@ -9,13 +9,13 @@ APPROVAL = 'approval'
 PROGRAM = 'program'
 
 
-def job_run(job_id, phase, *, run_id=None, user_params=None):
+def job_run(job_id, phase, *, run_id=None, ordinal=1, user_params=None):
     run_id = run_id or unique_timestamp_hex()
-    meta = JobInstanceMetadata(InstanceID(job_id, run_id), user_params or {})
+    meta = JobInstanceMetadata(InstanceID(job_id, run_id, ordinal), user_params or {})
     return JobRun(meta, phase)  # TODO Faults and status
 
 
-def fake_job_run(job_id, run_id='r1', *, created_at=None, offset_min=0, ended_at=None,
+def fake_job_run(job_id, run_id='r1', *, ordinal=1, created_at=None, offset_min=0, ended_at=None,
                  term_status=TerminationStatus.COMPLETED) -> JobRun:
     start_time = (created_at or utc_now().replace(microsecond=0)) + timedelta(minutes=offset_min)
     phase_builder = FakePhaseRunBuilder.root(base_ts=start_time)
@@ -31,4 +31,4 @@ def fake_job_run(job_id, run_id='r1', *, created_at=None, offset_min=0, ended_at
         phase_builder.add_phase(
             PROGRAM, term_status, term_ts=ended_at or (start_time + timedelta(minutes=5)))
 
-    return job_run(job_id, phase_builder.build(), run_id=run_id, user_params={'name': 'value'})
+    return job_run(job_id, phase_builder.build(), run_id=run_id, ordinal=ordinal, user_params={'name': 'value'})

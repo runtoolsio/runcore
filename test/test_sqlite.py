@@ -1,8 +1,7 @@
 from datetime import datetime as dt
+from datetime import timedelta
 
 import pytest
-
-from datetime import timedelta
 
 from runtools.runcore.criteria import JobRunCriteria, LifecycleCriterion, TerminationCriterion
 from runtools.runcore.db import sqlite, IncompatibleSchemaError, DuplicateInstanceError
@@ -20,7 +19,7 @@ parse = JobRunCriteria.parse
 def _init_and_store(db, *job_runs):
     """Initialize and store job runs (two-phase persistence)."""
     for run in job_runs:
-        db.init_job_run(InstanceID(run.metadata.job_id, run.metadata.run_id), run.metadata.user_params)
+        db.init_job_run(run.metadata.instance_id, run.metadata.user_params)
     db.store_job_runs(*job_runs)
 
 @pytest.fixture
@@ -43,8 +42,8 @@ def test_schema_version_mismatch_raises():
     import sqlite3
     conn = sqlite3.connect(':memory:')
     conn.execute('PRAGMA user_version = 999')
-    conn.execute('CREATE TABLE history (job_id text, run_id text, user_params text, '
-                 'created timestamp, started timestamp, ended timestamp, exec_time real, '
+    conn.execute('CREATE TABLE history (job_id text, run_id text, ordinal integer NOT NULL DEFAULT 1, '
+                 'user_params text, created timestamp, started timestamp, ended timestamp, exec_time real, '
                  'root_phase text, output_locations text, termination_status int, '
                  'faults text, status text, warnings int, misc text)')
     conn.commit()
@@ -264,3 +263,31 @@ def test_last_with_init_only_row(sut):
     jobs = sut.read_history_runs(last=True)
     assert len(jobs) == 1
     assert jobs[0].run_id == 'r1'
+
+
+# --- Ordinal tests ---
+
+def test_different_ordinals_are_not_duplicates(sut):
+    """Same logical run with different ordinals should coexist."""
+    sut.init_job_run(InstanceID('j1', 'r1', 1))
+    sut.init_job_run(InstanceID('j1', 'r1', 2))
+
+    # Both init rows exist (not yet completed, so not in history)
+    assert sut.read_history_runs() == []
+
+
+def test_same_ordinal_is_duplicate(sut):
+    sut.init_job_run(InstanceID('j1', 'r1', 1))
+
+    with pytest.raises(DuplicateInstanceError):
+        sut.init_job_run(InstanceID('j1', 'r1', 1))
+
+
+def test_ordinal_round_trips_through_store(sut):
+    run = fake_job_run('j1', 'r1', ordinal=3)
+    _init_and_store(sut, run)
+
+    jobs = sut.read_history_runs()
+    assert len(jobs) == 1
+    assert jobs[0].metadata.ordinal == 3
+    assert jobs[0].metadata.instance_id == InstanceID('j1', 'r1', 3)

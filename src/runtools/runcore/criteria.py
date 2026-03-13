@@ -28,33 +28,24 @@ class MatchCriteria(ABC, Generic[T]):
         raise NotImplementedError
 
 
-def negate_id(id_value: str) -> str:
-    """
-    Creates a negated ID pattern for matching.
-
-    Args:
-        id_value: The ID to negate
-
-    Returns:
-        A pattern that will match anything except the given ID
-    """
-    return f"!{id_value}" if id_value else id_value
-
-
 @dataclass
 class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
-    """
-    Specifies criteria for matching instance metadata.
-    If all fields are empty, the matching strategy defaults to `MatchingStrategy.ALWAYS_TRUE`.
+    """Specifies criteria for matching instance metadata.
+
+    If all fields are empty, the matching strategy defaults to ``MatchingStrategy.ALWAYS_TRUE``.
 
     Attributes:
-        job_id (str): The pattern for job ID matching. If empty, the field is ignored.
-        run_id (str): The pattern for run ID matching. If empty, the field is ignored.
-        match_any_field (bool): If True, matches if any provided field matches. If False, all fields must match.
-        strategy (MatchingStrategy): The strategy to use for matching. Default is `MatchingStrategy.EXACT`.
+        job_id (str): Pattern for job ID matching. Empty means ignored.
+        run_id (str): Pattern for run ID matching. Empty means ignored.
+        ordinal (int | None): Exact ordinal to match. ``None`` means any ordinal.
+        exclude (InstanceID | None): Concrete execution to exclude from results.
+        match_any_field (bool): If True, matches if any provided field matches. If False, all must match.
+        strategy (MatchingStrategy): The strategy to use for matching. Default is ``EXACT``.
     """
     job_id: str = ''
     run_id: str = ''
+    ordinal: int | None = None
+    exclude: InstanceID | None = None
     match_any_field: bool = False
     strategy: MatchingStrategy = MatchingStrategy.EXACT
 
@@ -65,33 +56,27 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
 
     @classmethod
     def all_except(cls, instance_id: InstanceID) -> 'MetadataCriterion':
-        """
-        Creates a criterion that matches any job run except the specified one.
+        """Creates a criterion that matches any job run except the specified concrete execution.
 
         Args:
-            instance_id: The specific job instance to exclude from matching.
+            instance_id (InstanceID): The specific instance to exclude (including ordinal).
 
         Returns:
-            MetadataCriterion: A criteria object that will match any job instance except the given one.
+            MetadataCriterion: A criteria object matching any instance except the given one.
         """
-        return MetadataCriterion(
-            job_id=negate_id(instance_id.job_id),
-            run_id=negate_id(instance_id.run_id),
-            match_any_field=True,
-        )
+        return MetadataCriterion(exclude=instance_id, strategy=MatchingStrategy.ALWAYS_TRUE)
 
     @classmethod
     def exact_match(cls, instance_id: InstanceID) -> 'MetadataCriterion':
-        """
-        Creates a criterion that matches a specific instance.
+        """Creates a criterion that matches a specific concrete execution.
 
         Args:
-            instance_id: The specific instance to create a match for.
+            instance_id (InstanceID): The specific instance to match (including ordinal).
 
         Returns:
-            MetadataCriterion: A criteria object that will match the given job instance.
+            MetadataCriterion: A criteria object matching the given instance.
         """
-        return cls(instance_id.job_id, instance_id.run_id)
+        return cls(instance_id.job_id, instance_id.run_id, instance_id.ordinal)
 
     @classmethod
     def parse(cls, pattern: str,
@@ -113,30 +98,34 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         if not pattern:
             return cls.all_match()
 
-        # Handle job@run pattern
+        # Handle job@run or job@run:ordinal pattern
         if '@' in pattern:
-            job_id, run_id = pattern.split('@', 1)
-            return cls(job_id, run_id, False, strategy)
+            job_id, rest = pattern.split('@', 1)
+            if ':' in rest:
+                run_id, ordinal_str = rest.rsplit(':', 1)
+                ordinal = int(ordinal_str) if ordinal_str else None
+            else:
+                run_id, ordinal = rest, None
+            return cls(job_id, run_id, ordinal=ordinal, match_any_field=False, strategy=strategy)
 
         # Handle plain text (match against job_id or run_id)
-        return cls(pattern, pattern, True, strategy)
+        return cls(pattern, pattern, match_any_field=True, strategy=strategy)
 
     @classmethod
     def parse_strict(cls, id_string: str) -> 'MetadataCriterion':
-        """
-        Parses an instance ID string and returns a criterion for exact matching.
+        """Parses an instance ID string and returns a criterion for exact matching.
 
-        Unlike `parse()`, this method requires a valid instance ID format and always uses exact matching
-        with match_any_field=False. Use this when you need to match a specific known instance.
+        Unlike ``parse()``, this requires a valid instance ID format and uses exact matching.
+        Supports ``'job_id@run_id'`` and ``'job_id@run_id:ordinal'``.
 
         Args:
-            id_string: Instance ID string in "job_id@run_id" format.
+            id_string (str): Instance ID string.
 
         Returns:
-            A criterion configured for exact matching of the specified instance.
+            MetadataCriterion: Configured for exact matching of the specified instance.
         """
         instance_id = InstanceID.parse(id_string)
-        return cls(instance_id.job_id, instance_id.run_id, match_any_field=False, strategy=MatchingStrategy.EXACT)
+        return cls.exact_match(instance_id)
 
     def _matches_id(self, actual: str, criteria: str) -> bool:
         """
@@ -172,23 +161,36 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         """
         if metadata is None:
             return False
+        if self.exclude is not None and metadata.instance_id == self.exclude:
+            return False
 
         job_id_match = self._matches_id(metadata.job_id, self.job_id)
         run_id_match = self._matches_id(metadata.run_id, self.run_id)
 
         if self.match_any_field:
-            return (not self.job_id or job_id_match) or (not self.run_id or run_id_match)
+            id_match = (not self.job_id or job_id_match) or (not self.run_id or run_id_match)
         else:
-            return (not self.job_id or job_id_match) and (not self.run_id or run_id_match)
+            id_match = (not self.job_id or job_id_match) and (not self.run_id or run_id_match)
+
+        if not id_match:
+            return False
+        if self.ordinal is not None and metadata.ordinal != self.ordinal:
+            return False
+        return True
 
     def serialize(self) -> Dict[str, Any]:
         """Serializes the criterion to a dictionary."""
-        return {
+        d: Dict[str, Any] = {
             'job_id': self.job_id,
             'run_id': self.run_id,
             'match_any_field': self.match_any_field,
             'strategy': self.strategy.name.lower(),
         }
+        if self.ordinal is not None:
+            d['ordinal'] = self.ordinal
+        if self.exclude is not None:
+            d['exclude'] = self.exclude.serialize()
+        return d
 
     @classmethod
     def deserialize(cls, as_dict: Dict[str, Any]) -> 'MetadataCriterion':
@@ -206,11 +208,14 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         if match_any is None:
             match_any = as_dict.get('match_any_id', False)
 
+        exclude_data = as_dict.get('exclude')
         return cls(
-            as_dict.get('job_id', ''),
-            as_dict.get('run_id', ''),
-            match_any,
-            MatchingStrategy[as_dict.get('strategy', 'exact').upper()],
+            job_id=as_dict.get('job_id', ''),
+            run_id=as_dict.get('run_id', ''),
+            ordinal=as_dict.get('ordinal'),
+            exclude=InstanceID.deserialize(exclude_data) if exclude_data else None,
+            match_any_field=match_any,
+            strategy=MatchingStrategy[as_dict.get('strategy', 'exact').upper()],
         )
 
     def __str__(self) -> str:
@@ -219,6 +224,10 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
             fields.append(f"job_id='{self.job_id}'")
         if self.run_id:
             fields.append(f"run_id='{self.run_id}'")
+        if self.ordinal is not None:
+            fields.append(f"ordinal={self.ordinal}")
+        if self.exclude is not None:
+            fields.append(f"exclude={self.exclude}")
         if self.match_any_field:
             fields.append("match_any_field=True")
         if self.strategy != MatchingStrategy.EXACT:

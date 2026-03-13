@@ -2,7 +2,7 @@ import json
 import logging
 import os
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
 from typing import List, Optional, Dict, Iterable, Literal
@@ -197,16 +197,19 @@ class OutputBackend(ABC):
 
 
 class FileOutputBackend(OutputBackend):
-    """File-backed output backend. Reads JSONL files from ``{base_dir}/{job_id}/{run_id}.jsonl``."""
+    """File-backed output backend. Reads JSONL files from ``{base_dir}/{job_id}/{run_id}__{ordinal}.jsonl``."""
 
     type = "file"
 
     def __init__(self, base_dir: Path):
         self._base_dir = base_dir
 
+    def _output_path(self, instance_id) -> Path:
+        return self._base_dir / instance_id.job_id / f"{instance_id.run_id}__{instance_id.ordinal}.jsonl"
+
     def read_output(self, instance_id, sources: set[str] | None = None,
                     max_lines: int = 0) -> List['OutputLine']:
-        path = self._base_dir / instance_id.job_id / f"{instance_id.run_id}.jsonl"
+        path = self._output_path(instance_id)
         try:
             if max_lines > 0:
                 if sources is not None:
@@ -222,7 +225,7 @@ class FileOutputBackend(OutputBackend):
 
     def delete_output(self, *instance_ids) -> None:
         for iid in instance_ids:
-            path = self._base_dir / iid.job_id / f"{iid.run_id}.jsonl"
+            path = self._output_path(iid)
             path.unlink(missing_ok=True)
             SourceIndex.path_for(path).unlink(missing_ok=True)
             try:

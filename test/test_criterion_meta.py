@@ -54,23 +54,21 @@ def test_negate():
     assert sut.matches(meta('j_id', 'r_id'))
 
 
-def test_all_except():
-    """Test that all_except correctly matches everything except the specified instance."""
-    # Create a criterion that excludes job1@run1
-    instance_id = InstanceID("job1", "run1")
-    sut = MetadataCriterion.all_except(instance_id)
+def meta_ord(job_id, run_id, ordinal=1):
+    return JobInstanceMetadata(InstanceID(job_id, run_id, ordinal))
 
-    # Test that the excluded instance doesn't match
+
+def test_all_except():
+    """Test that all_except excludes only the specific concrete execution."""
+    sut = MetadataCriterion.all_except(InstanceID("job1", "run1", 1))
+
+    # The excluded concrete execution does not match
     assert not sut.matches(meta("job1", "run1"))
 
-    # Test that different instances match
-    assert sut.matches(meta("job1", "run2"))  # Same job_id, different run_id
-    assert sut.matches(meta("job2", "run1"))  # Different job_id, same run_id
-    assert sut.matches(meta("job2", "run2"))  # Both different
+    # Different job or run matches
+    assert sut.matches(meta("job1", "run2"))
+    assert sut.matches(meta("job2", "run1"))
+    assert sut.matches(meta("job2", "run2"))
 
-    # Verify that the negation syntax is used correctly
-    assert sut.job_id.startswith("!")
-    assert sut.run_id.startswith("!")
-
-    # Verify match_any_field is false, requiring both conditions to match
-    assert sut.match_any_field
+    # Same logical run but different ordinal matches
+    assert sut.matches(meta_ord("job1", "run1", 2))
