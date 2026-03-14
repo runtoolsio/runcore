@@ -33,7 +33,7 @@ from pydantic import BaseModel, Field
 from runtools import runcore
 from runtools.runcore.criteria import SortOption
 from runtools.runcore.err import RuntoolsException
-from runtools.runcore.job import (InstanceLifecycleObserver, InstanceLifecycleEvent, DuplicateStrategy)
+from runtools.runcore.job import (InstanceLifecycleObserver, InstanceLifecycleEvent)
 from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.run import Stage
 
@@ -48,7 +48,7 @@ class DuplicateSubmission:
     job_id: str
     run_id: str
     timestamp: datetime
-    strategy: DuplicateStrategy
+    duplicate_type: str
 
 
 def load_database_module(db_type):
@@ -258,13 +258,11 @@ class Persistence(ABC):
         pass
 
     @abstractmethod
-    def record_duplicate_submission(self, job_id: str, run_id: str, strategy: 'DuplicateStrategy'):
+    def record_duplicate_submission(self, submission: DuplicateSubmission):
         """Record a duplicate submission event.
 
         Args:
-            job_id (str): Job identifier of the logical run.
-            run_id (str): Run identifier of the logical run.
-            strategy (DuplicateStrategy): The strategy that was in effect when the duplicate was encountered.
+            submission (DuplicateSubmission): The duplicate submission to store.
         """
 
     @abstractmethod
@@ -328,7 +326,7 @@ class NullPersistence(Persistence):
         pass
 
     @override
-    def record_duplicate_submission(self, job_id, run_id, strategy):
+    def record_duplicate_submission(self, submission):
         pass
 
     @override

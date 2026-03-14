@@ -14,8 +14,7 @@ from runtools.runcore import paths
 from runtools.runcore.criteria import LifecycleCriterion, SortOption
 from runtools.runcore.db import Persistence, IncompatibleSchemaError, DuplicateSubmission
 from runtools.runcore.err import InvalidStateError
-from runtools.runcore.job import (JobStats, JobRun, JobInstanceMetadata, InstanceID, DuplicateStrategy,
-                                  DuplicateInstanceError)
+from runtools.runcore.job import (JobStats, JobRun, JobInstanceMetadata, InstanceID, DuplicateInstanceError)
 from runtools.runcore.output import OutputLocation
 from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.run import TerminationStatus, Outcome, PhaseRun, Fault, Stage
@@ -336,7 +335,7 @@ class SQLite(Persistence):
                          (job_id TEXT NOT NULL,
                          run_id TEXT NOT NULL,
                          timestamp TIMESTAMP NOT NULL,
-                         strategy TEXT NOT NULL)
+                         duplicate_type TEXT NOT NULL)
                          ''')
             c.execute('CREATE INDEX duplicate_submissions_job_run_idx ON duplicate_submissions (job_id, run_id)')
             c.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')
@@ -636,12 +635,11 @@ class SQLite(Persistence):
 
     @override
     @ensure_open
-    def record_duplicate_submission(self, job_id, run_id, strategy):
+    def record_duplicate_submission(self, submission):
         """See `Persistence.record_duplicate_submission`."""
         self._conn.execute(
-            "INSERT INTO duplicate_submissions (job_id, run_id, timestamp, strategy) VALUES (?, ?, ?, ?)",
-            (job_id, run_id, format_dt_sql(utc_now()),
-             strategy.value if isinstance(strategy, DuplicateStrategy) else strategy)
+            "INSERT INTO duplicate_submissions (job_id, run_id, timestamp, duplicate_type) VALUES (?, ?, ?, ?)",
+            (submission.job_id, submission.run_id, format_dt_sql(submission.timestamp), submission.duplicate_type)
         )
         self._conn.commit()
 
@@ -658,7 +656,7 @@ class SQLite(Persistence):
             conditions.append("run_id = ?")
             params.append(run_id)
 
-        sql = "SELECT job_id, run_id, timestamp, strategy FROM duplicate_submissions"
+        sql = "SELECT job_id, run_id, timestamp, duplicate_type FROM duplicate_submissions"
         if conditions:
             sql += " WHERE " + " AND ".join(conditions)
         sql += " ORDER BY timestamp ASC"
@@ -668,8 +666,7 @@ class SQLite(Persistence):
         rows = cursor.fetchall()
         cursor.close()
         return [
-            DuplicateSubmission(job_id=r[0], run_id=r[1], timestamp=parse_dt_sql(r[2]),
-                                strategy=DuplicateStrategy(r[3]))
+            DuplicateSubmission(job_id=r[0], run_id=r[1], timestamp=parse_dt_sql(r[2]), duplicate_type=r[3])
             for r in rows
         ]
 

@@ -328,13 +328,8 @@ class InstanceID:
         return f"{self.job_id}@{self.run_id}:{self.ordinal}"
 
 
-class DuplicateStrategy(str, Enum):
-    DUPLICATE = 'duplicate'
-    SUPPRESS = 'suppress'
-    RERUN = 'rerun'
-
-
 class DuplicateInstanceError(RuntoolsException):
+    duplicate_type = 'duplicate'
 
     def __init__(self, instance_id):
         super().__init__(f'Duplicate instance: {instance_id}')
@@ -343,14 +338,41 @@ class DuplicateInstanceError(RuntoolsException):
 
 class SuppressedDuplicate(DuplicateInstanceError):
     """Duplicate was expected and suppressed — not an error, just observability."""
+    duplicate_type = 'suppress'
 
 
 class MaxRerunReached(DuplicateInstanceError):
-    """RERUN strategy exhausted all ordinals."""
+    """Rerun strategy exhausted all ordinals."""
+    duplicate_type = 'rerun'
 
     def __init__(self, instance_id, max_ordinal: int):
         super().__init__(instance_id)
         self.max_ordinal = max_ordinal
+
+
+class DuplicateStrategy:
+    """Factory for duplicate-handling policies.
+
+    Each policy is a callable ``(InstanceID) -> InstanceID`` that either returns the next ID to try
+    or raises a :class:`DuplicateInstanceError` subclass.
+    """
+
+    @staticmethod
+    def duplicate(instance_id: 'InstanceID') -> 'InstanceID':
+        raise DuplicateInstanceError(instance_id)
+
+    @staticmethod
+    def suppress(instance_id: 'InstanceID') -> 'InstanceID':
+        raise SuppressedDuplicate(instance_id)
+
+    @staticmethod
+    def rerun(max_ordinal: int = 10):
+        def _policy(instance_id: 'InstanceID') -> 'InstanceID':
+            if instance_id.ordinal >= max_ordinal:
+                raise MaxRerunReached(instance_id, max_ordinal)
+            return instance_id.increment_ordinal()
+
+        return _policy
 
 
 @dataclass(frozen=True)
