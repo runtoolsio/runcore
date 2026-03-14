@@ -11,10 +11,11 @@ import datetime
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import timedelta
-from enum import Enum, auto
+from enum import Enum
 from typing import Dict, Any, List, Optional, Tuple, ClassVar, Set, Callable, Protocol, override
 
 from runtools.runcore import util
+from runtools.runcore.err import RuntoolsException
 from runtools.runcore.output import OutputLine, Output, OutputLocation
 from runtools.runcore.run import TerminationStatus, Fault, PhaseRun, Stage, RunLifecycle, StopReason
 from runtools.runcore.status import Status
@@ -327,10 +328,29 @@ class InstanceID:
         return f"{self.job_id}@{self.run_id}:{self.ordinal}"
 
 
-class DuplicateStrategy(Enum):
-    IGNORE = auto()
-    SKIP = auto()
-    RERUN = auto()
+class DuplicateStrategy(str, Enum):
+    DUPLICATE = 'duplicate'
+    SUPPRESS = 'suppress'
+    RERUN = 'rerun'
+
+
+class DuplicateInstanceError(RuntoolsException):
+
+    def __init__(self, instance_id):
+        super().__init__(f'Duplicate instance: {instance_id}')
+        self.instance_id = instance_id
+
+
+class SuppressedDuplicate(DuplicateInstanceError):
+    """Duplicate was expected and suppressed — not an error, just observability."""
+
+
+class MaxRerunReached(DuplicateInstanceError):
+    """RERUN strategy exhausted all ordinals."""
+
+    def __init__(self, instance_id, max_ordinal: int):
+        super().__init__(instance_id)
+        self.max_ordinal = max_ordinal
 
 
 @dataclass(frozen=True)

@@ -12,9 +12,10 @@ from typing import List, Iterator, override
 
 from runtools.runcore import paths
 from runtools.runcore.criteria import LifecycleCriterion, SortOption
-from runtools.runcore.db import Persistence, IncompatibleSchemaError, DuplicateInstanceError
+from runtools.runcore.db import Persistence, IncompatibleSchemaError, DuplicateSubmission
 from runtools.runcore.err import InvalidStateError
-from runtools.runcore.job import JobStats, JobRun, JobInstanceMetadata, InstanceID
+from runtools.runcore.job import (JobStats, JobRun, JobInstanceMetadata, InstanceID, DuplicateStrategy,
+                                  DuplicateInstanceError)
 from runtools.runcore.output import OutputLocation
 from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.run import TerminationStatus, Outcome, PhaseRun, Fault, Stage
@@ -24,7 +25,7 @@ from runtools.runcore.util.dt import utc_now
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 DEFAULT_BATCH_SIZE = 100
 
 
@@ -326,13 +327,20 @@ class SQLite(Persistence):
                          misc text,
                          UNIQUE(job_id, run_id, ordinal))
                          ''')
-            c.execute('CREATE INDEX job_id_index ON history (job_id)')
-            c.execute('CREATE INDEX run_id_index ON history (run_id)')
-            c.execute('CREATE INDEX ended_index ON history (ended)')
-            c.execute('CREATE INDEX created_index ON history (created)')
-            c.execute('CREATE INDEX exec_time_index ON history (exec_time)')
+            c.execute('CREATE INDEX history_job_id_idx ON history (job_id)')
+            c.execute('CREATE INDEX history_run_id_idx ON history (run_id)')
+            c.execute('CREATE INDEX history_ended_idx ON history (ended)')
+            c.execute('CREATE INDEX history_created_idx ON history (created)')
+            c.execute('CREATE INDEX history_exec_time_idx ON history (exec_time)')
+            c.execute('''CREATE TABLE duplicate_submissions
+                         (job_id TEXT NOT NULL,
+                         run_id TEXT NOT NULL,
+                         timestamp TIMESTAMP NOT NULL,
+                         strategy TEXT NOT NULL)
+                         ''')
+            c.execute('CREATE INDEX duplicate_submissions_job_run_idx ON duplicate_submissions (job_id, run_id)')
             c.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')
-            log.debug('event=[table_created] table=[history]')
+            log.debug('event=[schema_created]')
             self._conn.commit()
         else:
             version = c.execute('PRAGMA user_version').fetchone()[0]
@@ -625,6 +633,45 @@ class SQLite(Persistence):
         rows = cursor.fetchall()
         self._conn.commit()
         return [InstanceID(job_id=r[0], run_id=r[1], ordinal=r[2]) for r in rows]
+
+    @override
+    @ensure_open
+    def record_duplicate_submission(self, job_id, run_id, strategy):
+        """See `Persistence.record_duplicate_submission`."""
+        self._conn.execute(
+            "INSERT INTO duplicate_submissions (job_id, run_id, timestamp, strategy) VALUES (?, ?, ?, ?)",
+            (job_id, run_id, format_dt_sql(utc_now()),
+             strategy.value if isinstance(strategy, DuplicateStrategy) else strategy)
+        )
+        self._conn.commit()
+
+    @override
+    @ensure_open
+    def read_duplicate_submissions(self, job_id=None, run_id=None):
+        """See `Persistence.read_duplicate_submissions`."""
+        conditions = []
+        params = []
+        if job_id is not None:
+            conditions.append("job_id = ?")
+            params.append(job_id)
+        if run_id is not None:
+            conditions.append("run_id = ?")
+            params.append(run_id)
+
+        sql = "SELECT job_id, run_id, timestamp, strategy FROM duplicate_submissions"
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
+        sql += " ORDER BY timestamp ASC"
+
+        cursor = self._conn.cursor()
+        cursor.execute(sql, params)
+        rows = cursor.fetchall()
+        cursor.close()
+        return [
+            DuplicateSubmission(job_id=r[0], run_id=r[1], timestamp=parse_dt_sql(r[2]),
+                                strategy=DuplicateStrategy(r[3]))
+            for r in rows
+        ]
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()

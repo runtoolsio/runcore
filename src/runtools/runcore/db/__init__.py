@@ -24,6 +24,8 @@ See Also:
 import importlib
 import pkgutil
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Dict, Any, Optional, override
 
 from pydantic import BaseModel, Field
@@ -31,13 +33,22 @@ from pydantic import BaseModel, Field
 from runtools import runcore
 from runtools.runcore.criteria import SortOption
 from runtools.runcore.err import RuntoolsException
-from runtools.runcore.job import InstanceLifecycleObserver, InstanceLifecycleEvent
+from runtools.runcore.job import (InstanceLifecycleObserver, InstanceLifecycleEvent, DuplicateStrategy)
 from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.run import Stage
 
 PERSISTING_OBSERVER_PRIORITY = 10  # High priority (low number) to ensure persistence before event dispatch
 
 _db_modules = {}
+
+
+@dataclass(frozen=True)
+class DuplicateSubmission:
+    """Record of a duplicate submission event."""
+    job_id: str
+    run_id: str
+    timestamp: datetime
+    strategy: DuplicateStrategy
 
 
 def load_database_module(db_type):
@@ -91,13 +102,6 @@ class DatabaseNotFoundError(RuntoolsException):
     def __init__(self, module_):
         super().__init__(f'Cannot find database module {module_}. Ensure this module is installed '
                          f'or check that the provided persistence type value is correct.')
-
-
-class DuplicateInstanceError(RuntoolsException):
-
-    def __init__(self, instance_id):
-        super().__init__(f'Instance {instance_id} already exists in persistence')
-        self.instance_id = instance_id
 
 
 class IncompatibleSchemaError(RuntoolsException):
@@ -254,6 +258,29 @@ class Persistence(ABC):
         pass
 
     @abstractmethod
+    def record_duplicate_submission(self, job_id: str, run_id: str, strategy: 'DuplicateStrategy'):
+        """Record a duplicate submission event.
+
+        Args:
+            job_id (str): Job identifier of the logical run.
+            run_id (str): Run identifier of the logical run.
+            strategy (DuplicateStrategy): The strategy that was in effect when the duplicate was encountered.
+        """
+
+    @abstractmethod
+    def read_duplicate_submissions(self, job_id: Optional[str] = None,
+                                   run_id: Optional[str] = None) -> list[DuplicateSubmission]:
+        """Read duplicate submission records, optionally filtered by job_id and/or run_id.
+
+        Args:
+            job_id (str): Filter by job identifier. None returns all jobs.
+            run_id (str): Filter by run identifier. None returns all runs.
+
+        Returns:
+            list[DuplicateSubmission]: Matching duplicate submission records.
+        """
+
+    @abstractmethod
     def close(self):
         """Close the persistence connection and release resources."""
         pass
@@ -299,6 +326,14 @@ class NullPersistence(Persistence):
     @override
     def enforce_retention(self, job_id: str, policy: RetentionPolicy) -> None:
         pass
+
+    @override
+    def record_duplicate_submission(self, job_id, run_id, strategy):
+        pass
+
+    @override
+    def read_duplicate_submissions(self, job_id=None, run_id=None) -> list[DuplicateSubmission]:
+        return []
 
     @override
     def close(self) -> None:

@@ -4,9 +4,9 @@ from datetime import timedelta
 import pytest
 
 from runtools.runcore.criteria import JobRunCriteria, LifecycleCriterion, TerminationCriterion
-from runtools.runcore.db import sqlite, IncompatibleSchemaError, DuplicateInstanceError
+from runtools.runcore.db import sqlite, IncompatibleSchemaError
 from runtools.runcore.db.sqlite import SCHEMA_VERSION
-from runtools.runcore.job import InstanceID
+from runtools.runcore.job import DuplicateInstanceError, DuplicateStrategy, InstanceID
 from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.run import TerminationStatus, Outcome
 from runtools.runcore.test.job import fake_job_run
@@ -291,3 +291,52 @@ def test_ordinal_round_trips_through_store(sut):
     assert len(jobs) == 1
     assert jobs[0].metadata.ordinal == 3
     assert jobs[0].metadata.instance_id == InstanceID('j1', 'r1', 3)
+
+
+# --- Duplicate submissions tests ---
+
+def test_record_and_read_duplicate_submission(sut):
+    sut.record_duplicate_submission('j1', 'r1', DuplicateStrategy.SUPPRESS)
+
+    results = sut.read_duplicate_submissions()
+    assert len(results) == 1
+    assert results[0].job_id == 'j1'
+    assert results[0].run_id == 'r1'
+    assert results[0].strategy == DuplicateStrategy.SUPPRESS
+
+
+def test_record_duplicate_rerun(sut):
+    sut.record_duplicate_submission('j1', 'r1', DuplicateStrategy.RERUN)
+
+    results = sut.read_duplicate_submissions()
+    assert len(results) == 1
+    assert results[0].strategy == DuplicateStrategy.RERUN
+
+
+def test_read_duplicates_filtered_by_job(sut):
+    sut.record_duplicate_submission('j1', 'r1', DuplicateStrategy.SUPPRESS)
+    sut.record_duplicate_submission('j2', 'r2', DuplicateStrategy.SUPPRESS)
+
+    results = sut.read_duplicate_submissions(job_id='j1')
+    assert len(results) == 1
+    assert results[0].job_id == 'j1'
+
+
+def test_read_duplicates_filtered_by_run(sut):
+    sut.record_duplicate_submission('j1', 'r1', DuplicateStrategy.SUPPRESS)
+    sut.record_duplicate_submission('j1', 'r2', DuplicateStrategy.RERUN)
+
+    results = sut.read_duplicate_submissions(run_id='r2')
+    assert len(results) == 1
+    assert results[0].run_id == 'r2'
+
+
+def test_multiple_duplicates_for_same_run(sut):
+    sut.record_duplicate_submission('j1', 'r1', DuplicateStrategy.SUPPRESS)
+    sut.record_duplicate_submission('j1', 'r1', DuplicateStrategy.SUPPRESS)
+    sut.record_duplicate_submission('j1', 'r1', DuplicateStrategy.RERUN)
+
+    results = sut.read_duplicate_submissions(job_id='j1', run_id='r1')
+    assert len(results) == 3
+    assert results[0].strategy == DuplicateStrategy.SUPPRESS
+    assert results[2].strategy == DuplicateStrategy.RERUN
