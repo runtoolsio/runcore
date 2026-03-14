@@ -11,7 +11,7 @@ import datetime
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import timedelta
-from enum import Enum
+from enum import Enum, auto
 from typing import Dict, Any, List, Optional, Tuple, ClassVar, Set, Callable, Protocol, override
 
 from runtools.runcore import util
@@ -268,6 +268,9 @@ class InstanceID:
         """The logical run key — not fully unique without ordinal."""
         return self.job_id, self.run_id
 
+    def increment_ordinal(self):
+        return InstanceID(self.job_id, self.run_id, self.ordinal + 1)
+
     @classmethod
     def parse(cls, id_string: str) -> "InstanceID":
         """Parse an instance ID from ``'job_id@run_id'`` or ``'job_id@run_id:ordinal'``.
@@ -322,6 +325,12 @@ class InstanceID:
         if self.ordinal == 1:
             return f"{self.job_id}@{self.run_id}"
         return f"{self.job_id}@{self.run_id}:{self.ordinal}"
+
+
+class DuplicateStrategy(Enum):
+    IGNORE = auto()
+    SKIP = auto()
+    RERUN = auto()
 
 
 @dataclass(frozen=True)
