@@ -12,7 +12,7 @@ from typing import List, Iterator, override
 
 from runtools.runcore import paths
 from runtools.runcore.criteria import LifecycleCriterion, SortOption
-from runtools.runcore.db import Persistence, IncompatibleSchemaError, DuplicateSubmission
+from runtools.runcore.db import Persistence, IncompatibleSchemaError, DuplicateSubmission, JobRunDetail, HistoryEntries
 from runtools.runcore.err import InvalidStateError
 from runtools.runcore.job import (JobStats, JobRun, JobInstanceMetadata, InstanceID, DuplicateInstanceError)
 from runtools.runcore.output import OutputLocation
@@ -275,6 +275,27 @@ def _build_where_clause(run_match, alias=''):
     return (" WHERE " + " AND ".join(conditions), params) if conditions else ("", [])
 
 
+def _to_dup(r) -> DuplicateSubmission:
+    """Convert a database row to DuplicateSubmission."""
+    return DuplicateSubmission(job_id=r[0], run_id=r[1], timestamp=parse_dt_sql(r[2]), duplicate_type=r[3])
+
+
+def _to_job_run(r) -> JobRun:
+    """Convert a sqlite3.Row from the history table into a JobRun."""
+    metadata = JobInstanceMetadata(
+        InstanceID(r['job_id'], r['run_id'], r['ordinal']),
+        json.loads(r['user_params']) if r['user_params'] else {},
+    )
+    root_phase = PhaseRun.deserialize(json.loads(r['root_phase']))
+    output_locations = (
+        tuple(OutputLocation.deserialize(loc) for loc in json.loads(r['output_locations']))
+        if r['output_locations'] else ()
+    )
+    faults = tuple(Fault.deserialize(f) for f in json.loads(r['faults'])) if r['faults'] else ()
+    status = Status.deserialize(json.loads(r['status'])) if r['status'] else None
+    return JobRun(metadata, root_phase, output_locations, faults, status)
+
+
 class SQLite(Persistence):
 
     def __init__(self, connection_factory, batch_size=DEFAULT_BATCH_SIZE):
@@ -363,10 +384,39 @@ class SQLite(Persistence):
             raise DuplicateInstanceError(instance_id)
 
     @override
-    def read_history_runs(self, run_match=None, sort=SortOption.ENDED, *,
-                          asc=True, limit=-1, offset=-1, last=False) -> list[JobRun]:
-        """See `Persistence.read_history_runs`."""
-        return list(self.iter_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last))
+    def read_history(self, run_match=None, sort=SortOption.ENDED, *,
+                     asc=True, limit=-1, offset=-1, last=False) -> HistoryEntries:
+        """See `Persistence.read_history`."""
+        job_runs = list(self.iter_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last))
+        if not job_runs:
+            return HistoryEntries(runs=[])
+
+        dup_map = self._fetch_duplicates_for_runs(job_runs)
+        return HistoryEntries(runs=[
+            JobRunDetail(job_run=run, duplicates=dup_map.get((run.instance_id.job_id, run.instance_id.run_id), []))
+            for run in job_runs
+        ])
+
+    @ensure_open
+    def _fetch_duplicates_for_runs(self, job_runs: list[JobRun]) -> dict[tuple[str, str], list[DuplicateSubmission]]:
+        keys = list({(r.instance_id.job_id, r.instance_id.run_id) for r in job_runs})
+        conditions = " OR ".join(["(job_id = ? AND run_id = ?)"] * len(keys))
+        params = [v for key in keys for v in key]
+
+        cursor = self._conn.cursor()
+        try:
+            cursor.execute(
+                f"SELECT job_id, run_id, timestamp, duplicate_type"
+                f" FROM duplicate_submissions WHERE {conditions} ORDER BY timestamp ASC",
+                params,
+            )
+            result: dict[tuple[str, str], list[DuplicateSubmission]] = {}
+            for r in cursor.fetchall():
+                dup = _to_dup(r)
+                result.setdefault((dup.job_id, dup.run_id), []).append(dup)
+            return result
+        finally:
+            cursor.close()
 
     @override
     def iter_history_runs(self, run_match=None, sort=SortOption.ENDED, *,
@@ -467,23 +517,9 @@ class SQLite(Persistence):
         cursor.row_factory = sqlite3.Row
         cursor.execute(statement, where_params + [batch_size, batch_offset])
 
-        def to_job_run(r):
-            metadata = JobInstanceMetadata(
-                InstanceID(r['job_id'], r['run_id'], r['ordinal']),
-                json.loads(r['user_params']) if r['user_params'] else {},
-            )
-            root_phase = PhaseRun.deserialize(json.loads(r['root_phase']))
-            output_locations = (
-                tuple(OutputLocation.deserialize(l) for l in json.loads(r['output_locations']))
-                if r['output_locations'] else ()
-            )
-            faults = tuple(Fault.deserialize(f) for f in json.loads(r['faults'])) if r['faults'] else ()
-            status = Status.deserialize(json.loads(r['status'])) if r['status'] else None
-            return JobRun(metadata, root_phase, output_locations, faults, status)
-
         try:
             rows = cursor.fetchall()
-            return [to_job_run(row) for row in rows]
+            return [_to_job_run(row) for row in rows]
         finally:
             cursor.close()
 
@@ -630,8 +666,25 @@ class SQLite(Persistence):
         cursor = self._conn.execute(
             "DELETE FROM history" + where_clause + " RETURNING job_id, run_id, ordinal", where_params)
         rows = cursor.fetchall()
+        removed = [InstanceID(job_id=r[0], run_id=r[1], ordinal=r[2]) for r in rows]
+
+        # Clean up orphaned duplicate_submissions: only delete when no history rows
+        # remain for that logical key (job_id, run_id). This preserves duplicates that
+        # still belong to other ordinals of the same logical run.
+        if removed:
+            logical_keys = list({(r.job_id, r.run_id) for r in removed})
+            conditions = " OR ".join(["(job_id = ? AND run_id = ?)"] * len(logical_keys))
+            params = [v for key in logical_keys for v in key]
+            self._conn.execute(
+                f"DELETE FROM duplicate_submissions WHERE ({conditions})"
+                f" AND NOT EXISTS ("
+                f"SELECT 1 FROM history h WHERE h.job_id = duplicate_submissions.job_id"
+                f" AND h.run_id = duplicate_submissions.run_id)",
+                params,
+            )
+
         self._conn.commit()
-        return [InstanceID(job_id=r[0], run_id=r[1], ordinal=r[2]) for r in rows]
+        return removed
 
     @override
     @ensure_open
@@ -665,10 +718,7 @@ class SQLite(Persistence):
         cursor.execute(sql, params)
         rows = cursor.fetchall()
         cursor.close()
-        return [
-            DuplicateSubmission(job_id=r[0], run_id=r[1], timestamp=parse_dt_sql(r[2]), duplicate_type=r[3])
-            for r in rows
-        ]
+        return [_to_dup(r) for r in rows]
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()

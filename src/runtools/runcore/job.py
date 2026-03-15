@@ -337,7 +337,12 @@ class DuplicateInstanceError(RuntoolsException):
 
 
 class SuppressedDuplicate(DuplicateInstanceError):
-    """Duplicate was expected and suppressed — not an error, just observability."""
+    """Duplicate was expected and can be silently ignored by the submitter.
+
+    Still raised to pass control back to the caller, but the ``suppress`` type signals
+    that this is a no-op rather than a failure — the submitter should swallow the exception
+    instead of treating it as an error.
+    """
     duplicate_type = 'suppress'
 
 
@@ -354,7 +359,12 @@ class DuplicateStrategy:
     """Factory for duplicate-handling policies.
 
     Each policy is a callable ``(InstanceID) -> InstanceID`` that either returns the next ID to try
-    or raises a :class:`DuplicateInstanceError` subclass.
+    or raises a :class:`DuplicateInstanceError` subclass. All policies that raise are recorded as
+    duplicate submissions in persistence. The exception subtype tells the submitter how to react:
+
+    - ``duplicate``: raises :class:`DuplicateInstanceError` — treat as a real conflict.
+    - ``suppress``: raises :class:`SuppressedDuplicate` — submitter should silently ignore.
+    - ``rerun``: returns next ordinal ID, or raises :class:`MaxRerunReached` when exhausted.
     """
 
     @staticmethod
@@ -363,6 +373,7 @@ class DuplicateStrategy:
 
     @staticmethod
     def suppress(instance_id: 'InstanceID') -> 'InstanceID':
+        """Record the duplicate and raise so the submitter can silently ignore it."""
         raise SuppressedDuplicate(instance_id)
 
     @staticmethod
@@ -610,6 +621,33 @@ class JobRun:
         """
         self.root_phase.accept_visitor(visitor)
         return visitor
+
+
+@dataclass(frozen=True)
+class DuplicateSubmission:
+    """Record of a duplicate submission event."""
+    job_id: str
+    run_id: str
+    timestamp: datetime.datetime
+    duplicate_type: str
+
+
+@dataclass(frozen=True)
+class JobRunDetail:
+    """A job run enriched with associated duplicate submissions."""
+    job_run: JobRun
+    duplicates: list[DuplicateSubmission] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class HistoryEntries:
+    """Result of a history query: runs with their duplicate submissions."""
+    runs: list[JobRunDetail]
+
+    @property
+    def job_runs(self) -> list[JobRun]:
+        """Convenience accessor for callers that don't need duplicate details."""
+        return [r.job_run for r in self.runs]
 
 
 class InstanceEvent(Protocol):

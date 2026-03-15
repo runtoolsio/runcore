@@ -303,10 +303,10 @@ class EnvironmentConnector(ABC):
         if runs:
             return runs[0]
         try:
-            history = self.read_history_runs(criteria, asc=False, limit=1, offset=0)
+            history = self.read_history(criteria, asc=False, limit=1, offset=0)
         except PersistenceDisabledError:
             return None
-        return history[0] if history else None
+        return history.job_runs[0] if history.job_runs else None
 
     @abstractmethod
     def iter_history_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
@@ -315,7 +315,7 @@ class EnvironmentConnector(ABC):
 
         This method provides memory-efficient access to job history by yielding
         results one at a time rather than loading all records into memory.
-        For large result sets, this is preferred over read_history_runs().
+        For large result sets, this is preferred over read_history().
 
         Args:
             run_match: Criteria to match specific job instances
@@ -345,7 +345,7 @@ class EnvironmentConnector(ABC):
         pass
 
     @abstractmethod
-    def read_history_runs(self, run_match, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+    def read_history(self, run_match, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
         pass
 
     @abstractmethod
@@ -430,7 +430,7 @@ class EnvironmentConnector(ABC):
                         return
 
             def _watch_history(self):
-                runs = connector.read_history_runs(run_match, limit=stop_count)
+                runs = connector.read_history(run_match, limit=stop_count).job_runs
                 with self._watch_lock:
                     self._add_matched(runs)
 
@@ -597,8 +597,8 @@ class LocalConnector(EnvironmentConnector):
 
         return instances
 
-    def read_history_runs(self, run_match, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
-        return self._persistence.read_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+    def read_history(self, run_match, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+        return self._persistence.read_history(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
 
     def iter_history_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
         return self._persistence.iter_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)

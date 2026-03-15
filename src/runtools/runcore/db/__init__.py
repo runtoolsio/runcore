@@ -25,7 +25,6 @@ import importlib
 import pkgutil
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Dict, Any, Optional, override
 
 from pydantic import BaseModel, Field
@@ -33,22 +32,14 @@ from pydantic import BaseModel, Field
 from runtools import runcore
 from runtools.runcore.criteria import SortOption
 from runtools.runcore.err import RuntoolsException
-from runtools.runcore.job import (InstanceLifecycleObserver, InstanceLifecycleEvent)
+from runtools.runcore.job import (InstanceLifecycleObserver, InstanceLifecycleEvent, JobRun,
+                                  DuplicateSubmission, JobRunDetail, HistoryEntries)
 from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.run import Stage
 
 PERSISTING_OBSERVER_PRIORITY = 10  # High priority (low number) to ensure persistence before event dispatch
 
 _db_modules = {}
-
-
-@dataclass(frozen=True)
-class DuplicateSubmission:
-    """Record of a duplicate submission event."""
-    job_id: str
-    run_id: str
-    timestamp: datetime
-    duplicate_type: str
 
 
 def load_database_module(db_type):
@@ -167,11 +158,12 @@ class Persistence(ABC):
         """
 
     @abstractmethod
-    def read_history_runs(self, run_match=None, sort=SortOption.CREATED, *, asc, limit, offset, last=False):
+    def read_history(self, run_match=None, sort=SortOption.CREATED, *, asc, limit, offset, last=False):
         """
-        Fetch ended job runs matching the specified criteria.
+        Fetch ended job runs with their duplicate submissions.
 
-        Loads all matching records into memory. For large result sets, use :meth:`iter_history_runs` instead.
+        Each run is returned as a :class:`JobRunDetail` with its associated
+        :class:`DuplicateSubmission` records.
 
         Args:
             run_match (JobRunCriteria): Criteria to filter job instances. None returns all records.
@@ -182,7 +174,7 @@ class Persistence(ABC):
             last (bool): If True, return only the most recent run for each job.
 
         Returns:
-            List[JobRun]: Collection of matching job runs.
+            HistoryEntries: Runs with their duplicate submissions.
         """
         pass
 
@@ -301,7 +293,7 @@ class NullPersistence(Persistence):
         pass
 
     @override
-    def read_history_runs(self, run_match=None, sort=SortOption.CREATED, *, asc, limit, offset, last=False):
+    def read_history(self, run_match=None, sort=SortOption.CREATED, *, asc, limit, offset, last=False):
         raise PersistenceDisabledError("Persistence is disabled; no history available.")
 
     @override
