@@ -336,54 +336,20 @@ class DuplicateInstanceError(RuntoolsException):
         self.instance_id = instance_id
 
 
-class SuppressedDuplicate(DuplicateInstanceError):
-    """Duplicate was expected and can be silently ignored by the submitter.
+class DuplicateStrategy(Enum):
+    """Strategy for handling duplicate job submissions.
 
-    Still raised to pass control back to the caller, but the ``suppress`` type signals
-    that this is a no-op rather than a failure — the submitter should swallow the exception
-    instead of treating it as an error.
+    Each variant carries an optional StopReason. When set, the duplicate is auto-terminated
+    with that reason. When None, the instance is either raised as error (RAISE) or returned
+    to the caller (CONTINUE).
     """
-    duplicate_type = 'suppress'
+    RAISE = "raise", None
+    DUPLICATE = "duplicate", StopReason.DUPLICATE
+    SUPPRESS = "suppress", StopReason.SUPPRESSED
+    ALLOW = "allow", None
 
-
-class MaxRerunReached(DuplicateInstanceError):
-    """Rerun strategy exhausted all ordinals."""
-    duplicate_type = 'rerun'
-
-    def __init__(self, instance_id, max_ordinal: int):
-        super().__init__(instance_id)
-        self.max_ordinal = max_ordinal
-
-
-class DuplicateStrategy:
-    """Factory for duplicate-handling policies.
-
-    Each policy is a callable ``(InstanceID) -> InstanceID`` that either returns the next ID to try
-    or raises a :class:`DuplicateInstanceError` subclass. All policies that raise are recorded as
-    duplicate submissions in persistence. The exception subtype tells the submitter how to react:
-
-    - ``duplicate``: raises :class:`DuplicateInstanceError` — treat as a real conflict.
-    - ``suppress``: raises :class:`SuppressedDuplicate` — submitter should silently ignore.
-    - ``rerun``: returns next ordinal ID, or raises :class:`MaxRerunReached` when exhausted.
-    """
-
-    @staticmethod
-    def duplicate(instance_id: 'InstanceID') -> 'InstanceID':
-        raise DuplicateInstanceError(instance_id)
-
-    @staticmethod
-    def suppress(instance_id: 'InstanceID') -> 'InstanceID':
-        """Record the duplicate and raise so the submitter can silently ignore it."""
-        raise SuppressedDuplicate(instance_id)
-
-    @staticmethod
-    def rerun(max_ordinal: int = 10):
-        def _policy(instance_id: 'InstanceID') -> 'InstanceID':
-            if instance_id.ordinal >= max_ordinal:
-                raise MaxRerunReached(instance_id, max_ordinal)
-            return instance_id.increment_ordinal()
-
-        return _policy
+    def __init__(self, val, stop_reason):
+        self.stop_reason = stop_reason
 
 
 @dataclass(frozen=True)
@@ -621,33 +587,6 @@ class JobRun:
         """
         self.root_phase.accept_visitor(visitor)
         return visitor
-
-
-@dataclass(frozen=True)
-class DuplicateSubmission:
-    """Record of a duplicate submission event."""
-    job_id: str
-    run_id: str
-    timestamp: datetime.datetime
-    duplicate_type: str
-
-
-@dataclass(frozen=True)
-class JobRunDetail:
-    """A job run enriched with associated duplicate submissions."""
-    job_run: JobRun
-    duplicates: list[DuplicateSubmission] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
-class HistoryEntries:
-    """Result of a history query: runs with their duplicate submissions."""
-    runs: list[JobRunDetail]
-
-    @property
-    def job_runs(self) -> list[JobRun]:
-        """Convenience accessor for callers that don't need duplicate details."""
-        return [r.job_run for r in self.runs]
 
 
 class InstanceEvent(Protocol):

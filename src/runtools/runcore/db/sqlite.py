@@ -12,7 +12,7 @@ from typing import List, Iterator, override
 
 from runtools.runcore import paths
 from runtools.runcore.criteria import LifecycleCriterion, SortOption
-from runtools.runcore.db import Persistence, IncompatibleSchemaError, DuplicateSubmission, JobRunDetail, HistoryEntries
+from runtools.runcore.db import Persistence, IncompatibleSchemaError
 from runtools.runcore.err import InvalidStateError
 from runtools.runcore.job import (JobStats, JobRun, JobInstanceMetadata, InstanceID, DuplicateInstanceError)
 from runtools.runcore.output import OutputLocation
@@ -24,7 +24,7 @@ from runtools.runcore.util.dt import utc_now
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 DEFAULT_BATCH_SIZE = 100
 
 
@@ -275,11 +275,6 @@ def _build_where_clause(run_match, alias=''):
     return (" WHERE " + " AND ".join(conditions), params) if conditions else ("", [])
 
 
-def _to_dup(r) -> DuplicateSubmission:
-    """Convert a database row to DuplicateSubmission."""
-    return DuplicateSubmission(job_id=r[0], run_id=r[1], timestamp=parse_dt_sql(r[2]), duplicate_type=r[3])
-
-
 def _to_job_run(r) -> JobRun:
     """Convert a sqlite3.Row from the history table into a JobRun."""
     metadata = JobInstanceMetadata(
@@ -327,105 +322,86 @@ class SQLite(Persistence):
     @ensure_open
     def _init_schema(self):
         c = self._conn.cursor()
-        c.execute("SELECT count(name) FROM sqlite_master WHERE type='table' AND name='history'")
-        if c.fetchone()[0] != 1:
-            c.execute('''CREATE TABLE history
-                         (job_id text,
-                         run_id text,
-                         ordinal integer NOT NULL DEFAULT 1,
-                         user_params text,
-                         created timestamp,
-                         started timestamp,
-                         ended timestamp,
-                         exec_time real,
-                         root_phase text,
-                         output_locations text,
-                         termination_status int,
-                         faults text,
-                         status text,
-                         warnings int,
-                         misc text,
-                         UNIQUE(job_id, run_id, ordinal))
-                         ''')
-            c.execute('CREATE INDEX history_job_id_idx ON history (job_id)')
-            c.execute('CREATE INDEX history_run_id_idx ON history (run_id)')
-            c.execute('CREATE INDEX history_ended_idx ON history (ended)')
-            c.execute('CREATE INDEX history_created_idx ON history (created)')
-            c.execute('CREATE INDEX history_exec_time_idx ON history (exec_time)')
-            c.execute('''CREATE TABLE duplicate_submissions
-                         (job_id TEXT NOT NULL,
-                         run_id TEXT NOT NULL,
-                         timestamp TIMESTAMP NOT NULL,
-                         duplicate_type TEXT NOT NULL)
-                         ''')
-            c.execute('CREATE INDEX duplicate_submissions_job_run_idx ON duplicate_submissions (job_id, run_id)')
-            c.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')
-            log.debug('event=[schema_created]')
-            self._conn.commit()
-        else:
+        c.execute("SELECT count(name) FROM sqlite_master WHERE type='table' AND name='runs'")
+        if c.fetchone()[0] == 1:
             version = c.execute('PRAGMA user_version').fetchone()[0]
             if version != SCHEMA_VERSION:
                 raise IncompatibleSchemaError(version, SCHEMA_VERSION)
+            c.close()
+            return
+
+        # Fresh schema
+        c.execute('''CREATE TABLE runs
+                     (job_id text,
+                     run_id text,
+                     ordinal integer NOT NULL DEFAULT 1,
+                     user_params text,
+                     created timestamp,
+                     started timestamp,
+                     ended timestamp,
+                     exec_time real,
+                     root_phase text,
+                     output_locations text,
+                     termination_status int,
+                     faults text,
+                     status text,
+                     warnings int,
+                     misc text,
+                     UNIQUE(job_id, run_id, ordinal))
+                     ''')
+        c.execute('CREATE INDEX runs_job_id_idx ON runs (job_id)')
+        c.execute('CREATE INDEX runs_run_id_idx ON runs (run_id)')
+        c.execute('CREATE INDEX runs_ended_idx ON runs (ended)')
+        c.execute('CREATE INDEX runs_created_idx ON runs (created)')
+        c.execute('CREATE INDEX runs_exec_time_idx ON runs (exec_time)')
+        c.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')
+        log.debug('event=[schema_created]')
+        self._conn.commit()
         c.close()
 
     @override
     @ensure_open
-    def init_job_run(self, instance_id, user_params=None):
-        """See `Persistence.init_job_run`."""
-        try:
-            self._conn.execute(
-                "INSERT INTO history (job_id, run_id, ordinal, user_params, created) VALUES (?, ?, ?, ?, ?)",
-                (instance_id.job_id, instance_id.run_id, instance_id.ordinal,
-                 json.dumps(dict(user_params)) if user_params else None,
-                 format_dt_sql(utc_now()))
-            )
-            self._conn.commit()
-        except sqlite3.IntegrityError:
-            raise DuplicateInstanceError(instance_id)
+    def init_run(self, job_id, run_id, user_params=None, *, auto_increment=False, max_retries=5):
+        """See `Persistence.init_run`."""
+        params_json = json.dumps(dict(user_params)) if user_params else None
+        if not auto_increment:
+            try:
+                self._conn.execute(
+                    "INSERT INTO runs (job_id, run_id, ordinal, user_params, created) VALUES (?, ?, ?, ?, ?)",
+                    (job_id, run_id, 1, params_json, format_dt_sql(utc_now())))
+                self._conn.commit()
+                return InstanceID(job_id, run_id, 1)
+            except sqlite3.IntegrityError:
+                raise DuplicateInstanceError(InstanceID(job_id, run_id, 1))
+
+        cursor = self._conn.execute(
+            "SELECT MAX(ordinal) FROM runs WHERE job_id = ? AND run_id = ?",
+            (job_id, run_id))
+        ordinal = (cursor.fetchone()[0] or 0) + 1
+        for _ in range(max_retries):
+            try:
+                self._conn.execute(
+                    "INSERT INTO runs (job_id, run_id, ordinal, user_params, created) VALUES (?, ?, ?, ?, ?)",
+                    (job_id, run_id, ordinal, params_json, format_dt_sql(utc_now())))
+                self._conn.commit()
+                return InstanceID(job_id, run_id, ordinal)
+            except sqlite3.IntegrityError:
+                ordinal += 1
+        raise sqlite3.IntegrityError(
+            f"Failed to allocate ordinal for ({job_id}, {run_id}) after {max_retries} retries")
 
     @override
-    def read_history(self, run_match=None, sort=SortOption.ENDED, *,
-                     asc=True, limit=-1, offset=-1, last=False) -> HistoryEntries:
-        """See `Persistence.read_history`."""
-        job_runs = list(self.iter_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last))
-        if not job_runs:
-            return HistoryEntries(runs=[])
-
-        dup_map = self._fetch_duplicates_for_runs(job_runs)
-        return HistoryEntries(runs=[
-            JobRunDetail(job_run=run, duplicates=dup_map.get((run.instance_id.job_id, run.instance_id.run_id), []))
-            for run in job_runs
-        ])
-
-    @ensure_open
-    def _fetch_duplicates_for_runs(self, job_runs: list[JobRun]) -> dict[tuple[str, str], list[DuplicateSubmission]]:
-        keys = list({(r.instance_id.job_id, r.instance_id.run_id) for r in job_runs})
-        conditions = " OR ".join(["(job_id = ? AND run_id = ?)"] * len(keys))
-        params = [v for key in keys for v in key]
-
-        cursor = self._conn.cursor()
-        try:
-            cursor.execute(
-                f"SELECT job_id, run_id, timestamp, duplicate_type"
-                f" FROM duplicate_submissions WHERE {conditions} ORDER BY timestamp ASC",
-                params,
-            )
-            result: dict[tuple[str, str], list[DuplicateSubmission]] = {}
-            for r in cursor.fetchall():
-                dup = _to_dup(r)
-                result.setdefault((dup.job_id, dup.run_id), []).append(dup)
-            return result
-        finally:
-            cursor.close()
+    def read_runs(self, run_match=None, sort=SortOption.ENDED, *,
+                  asc=True, limit=-1, offset=-1, last=False) -> list[JobRun]:
+        """See `Persistence.read_runs`."""
+        return list(self.iter_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last))
 
     @override
-    def iter_history_runs(self, run_match=None, sort=SortOption.ENDED, *,
-                          asc=True, limit=-1, offset=-1, last=False) -> Iterator[JobRun]:
-        """See `Persistence.iter_history_runs`.
+    def iter_runs(self, run_match=None, sort=SortOption.ENDED, *,
+                  asc=True, limit=-1, offset=-1, last=False) -> Iterator[JobRun]:
+        """See `Persistence.iter_runs`.
 
-        Note:
-            Uses batched fetching to minimize lock contention. Batch size is configurable
-            via the `batch_size` parameter when creating the SQLite instance.
+        Uses batched fetching to minimize lock contention.
         """
         current_offset = offset if offset >= 0 else 0
         remaining_limit = limit if limit >= 0 else float('inf')
@@ -433,7 +409,7 @@ class SQLite(Persistence):
         while remaining_limit > 0:
             # Fetch next batch
             batch_size = min(self._batch_size, remaining_limit) if remaining_limit != float('inf') else self._batch_size
-            batch = self._fetch_batch_history_runs(
+            batch = self._fetch_batch_runs(
                 run_match, sort, asc=asc, batch_offset=current_offset, batch_size=batch_size, last=last
             )
 
@@ -452,7 +428,7 @@ class SQLite(Persistence):
                 break
 
     @ensure_open
-    def _fetch_batch_history_runs(self, run_match=None, sort=SortOption.ENDED, *,
+    def _fetch_batch_runs(self, run_match=None, sort=SortOption.ENDED, *,
                                   asc=True, batch_offset=0, batch_size=DEFAULT_BATCH_SIZE,
                                   last=False) -> List[JobRun]:
         """
@@ -491,7 +467,7 @@ class SQLite(Persistence):
                 case _:
                     raise ValueError(f"Unsupported sort option: {sort}")
 
-        statement = "SELECT * FROM history h"
+        statement = "SELECT * FROM runs h"
         where_clause, where_params = _build_where_clause(run_match, alias='h')
         # Exclude incomplete (init-only) records
         if where_clause:
@@ -501,7 +477,7 @@ class SQLite(Persistence):
         statement += where_clause
 
         if last:
-            statement += " AND h.rowid IN (SELECT MAX(rowid) FROM history WHERE ended IS NOT NULL GROUP BY job_id)"
+            statement += " AND h.rowid IN (SELECT MAX(rowid) FROM runs WHERE ended IS NOT NULL GROUP BY job_id)"
 
         # Apply the sort direction to all columns in the ORDER BY clause
         sort_direction = " ASC" if asc else " DESC"
@@ -536,7 +512,7 @@ class SQLite(Persistence):
             int: Total count of job instances matching the specified criteria.
         """
         where_clause, where_params = _build_where_clause(run_match, alias='h')
-        sql = f"SELECT COUNT(*) FROM history h {where_clause}"
+        sql = f"SELECT COUNT(*) FROM runs h {where_clause}"
         c = self._conn.execute(sql, where_params)
         return c.fetchone()[0]
 
@@ -546,20 +522,20 @@ class SQLite(Persistence):
         """Prune old runs according to retention policy (per-job then per-env)."""
         if policy.max_runs_per_job >= 0:
             self._conn.execute(
-                "DELETE FROM history WHERE job_id = ? AND rowid NOT IN "
-                "(SELECT rowid FROM history WHERE job_id = ? ORDER BY ended DESC LIMIT ?)",
+                "DELETE FROM runs WHERE job_id = ? AND rowid NOT IN "
+                "(SELECT rowid FROM runs WHERE job_id = ? ORDER BY ended DESC LIMIT ?)",
                 (job_id, job_id, policy.max_runs_per_job))
         if policy.max_runs_per_env >= 0:
             self._conn.execute(
-                "DELETE FROM history WHERE rowid NOT IN "
-                "(SELECT rowid FROM history ORDER BY ended DESC LIMIT ?)",
+                "DELETE FROM runs WHERE rowid NOT IN "
+                "(SELECT rowid FROM runs ORDER BY ended DESC LIMIT ?)",
                 (policy.max_runs_per_env,))
         self._conn.commit()
 
     @override
     @ensure_open
-    def read_history_stats(self, run_match=None) -> List[JobStats]:
-        """See `Persistence.read_history_stats`."""
+    def read_run_stats(self, run_match=None) -> List[JobStats]:
+        """See `Persistence.read_run_stats`."""
 
         where_clause, where_params = _build_where_clause(run_match, alias='h')
         # Exclude incomplete (init-only) records
@@ -571,7 +547,7 @@ class SQLite(Persistence):
         fault_placeholders = ', '.join(str(s.value) for s in fault_statuses)
         sql = f'''
             WITH filtered AS (
-                SELECT rowid, * FROM history h
+                SELECT rowid, * FROM runs h
                 {where_clause}
             ),
             last_per_job AS (
@@ -622,8 +598,8 @@ class SQLite(Persistence):
 
     @override
     @ensure_open
-    def store_job_runs(self, *job_runs):
-        """See `Persistence.store_job_runs`."""
+    def store_runs(self, *job_runs):
+        """See `Persistence.store_runs`."""
 
         def to_tuple(r: JobRun):
             return (json.dumps(dict(r.metadata.user_params)) if r.metadata.user_params else None,
@@ -644,7 +620,7 @@ class SQLite(Persistence):
                     )
 
         update_sql = (
-            "UPDATE history SET user_params=?, created=?, started=?, ended=?, exec_time=?, "
+            "UPDATE runs SET user_params=?, created=?, started=?, ended=?, exec_time=?, "
             "root_phase=?, output_locations=?, termination_status=?, faults=?, status=?, warnings=?, misc=? "
             "WHERE job_id=? AND run_id=? AND ordinal=?"
         )
@@ -657,68 +633,18 @@ class SQLite(Persistence):
 
     @override
     @ensure_open
-    def remove_job_runs(self, run_match):
-        """See `Persistence.remove_job_runs`."""
+    def remove_runs(self, run_match):
+        """See `Persistence.remove_runs`."""
 
         where_clause, where_params = _build_where_clause(run_match)
         if not where_clause:
             raise ValueError("No rows to remove")
         cursor = self._conn.execute(
-            "DELETE FROM history" + where_clause + " RETURNING job_id, run_id, ordinal", where_params)
+            "DELETE FROM runs" + where_clause + " RETURNING job_id, run_id, ordinal", where_params)
         rows = cursor.fetchall()
         removed = [InstanceID(job_id=r[0], run_id=r[1], ordinal=r[2]) for r in rows]
-
-        # Clean up orphaned duplicate_submissions: only delete when no history rows
-        # remain for that logical key (job_id, run_id). This preserves duplicates that
-        # still belong to other ordinals of the same logical run.
-        if removed:
-            logical_keys = list({(r.job_id, r.run_id) for r in removed})
-            conditions = " OR ".join(["(job_id = ? AND run_id = ?)"] * len(logical_keys))
-            params = [v for key in logical_keys for v in key]
-            self._conn.execute(
-                f"DELETE FROM duplicate_submissions WHERE ({conditions})"
-                f" AND NOT EXISTS ("
-                f"SELECT 1 FROM history h WHERE h.job_id = duplicate_submissions.job_id"
-                f" AND h.run_id = duplicate_submissions.run_id)",
-                params,
-            )
-
         self._conn.commit()
         return removed
-
-    @override
-    @ensure_open
-    def record_duplicate_submission(self, submission):
-        """See `Persistence.record_duplicate_submission`."""
-        self._conn.execute(
-            "INSERT INTO duplicate_submissions (job_id, run_id, timestamp, duplicate_type) VALUES (?, ?, ?, ?)",
-            (submission.job_id, submission.run_id, format_dt_sql(submission.timestamp), submission.duplicate_type)
-        )
-        self._conn.commit()
-
-    @override
-    @ensure_open
-    def read_duplicate_submissions(self, job_id=None, run_id=None):
-        """See `Persistence.read_duplicate_submissions`."""
-        conditions = []
-        params = []
-        if job_id is not None:
-            conditions.append("job_id = ?")
-            params.append(job_id)
-        if run_id is not None:
-            conditions.append("run_id = ?")
-            params.append(run_id)
-
-        sql = "SELECT job_id, run_id, timestamp, duplicate_type FROM duplicate_submissions"
-        if conditions:
-            sql += " WHERE " + " AND ".join(conditions)
-        sql += " ORDER BY timestamp ASC"
-
-        cursor = self._conn.cursor()
-        cursor.execute(sql, params)
-        rows = cursor.fetchall()
-        cursor.close()
-        return [_to_dup(r) for r in rows]
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()

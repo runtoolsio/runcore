@@ -88,6 +88,8 @@ class TerminationStatus(Enum):
     OVERLAP = 22, Outcome.REJECTED
     UNSATISFIED = 23, Outcome.REJECTED
     DENIED = 24, Outcome.REJECTED
+    DUPLICATE = 25, Outcome.REJECTED
+    SUPPRESSED = 26, Outcome.REJECTED
 
     FAILED = 31, Outcome.FAULT
     ERROR = 32, Outcome.FAULT
@@ -111,6 +113,8 @@ class StopReason(Enum):
     INTERRUPTED = auto()  # Keyboard interrupt
     SIGNAL = auto()  # Termination signal received
     TIMEOUT = auto()  # Execution time exceeded
+    DUPLICATE = auto()  # Duplicate submission recorded
+    SUPPRESSED = auto()  # Duplicate submission suppressed
 
     @property
     def termination_status(self):
@@ -119,6 +123,8 @@ class StopReason(Enum):
             StopReason.INTERRUPTED: TerminationStatus.INTERRUPTED,
             StopReason.SIGNAL: TerminationStatus.SIGNAL,
             StopReason.TIMEOUT: TerminationStatus.TIMEOUT,
+            StopReason.DUPLICATE: TerminationStatus.DUPLICATE,
+            StopReason.SUPPRESSED: TerminationStatus.SUPPRESSED,
         }
         return mapping.get(self, TerminationStatus.STOPPED)
 

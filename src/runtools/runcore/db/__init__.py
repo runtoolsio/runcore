@@ -24,7 +24,6 @@ See Also:
 import importlib
 import pkgutil
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from typing import Dict, Any, Optional, override
 
 from pydantic import BaseModel, Field
@@ -32,8 +31,7 @@ from pydantic import BaseModel, Field
 from runtools import runcore
 from runtools.runcore.criteria import SortOption
 from runtools.runcore.err import RuntoolsException
-from runtools.runcore.job import (InstanceLifecycleObserver, InstanceLifecycleEvent, JobRun,
-                                  DuplicateSubmission, JobRunDetail, HistoryEntries)
+from runtools.runcore.job import InstanceLifecycleObserver, InstanceLifecycleEvent, InstanceID, JobRun
 from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.run import Stage
 
@@ -150,20 +148,33 @@ class Persistence(ABC):
         pass
 
     @abstractmethod
-    def init_job_run(self, instance_id, user_params=None):
+    def init_run(self, job_id: str, run_id: str, user_params=None, *,
+                     auto_increment: bool = False, max_retries: int = 5) -> 'InstanceID':
         """Insert a partial record at instance creation time.
 
+        Semantics:
+            - auto_increment=False: insert with ordinal 1. If the (job_id, run_id, 1) key
+              already exists, raise DuplicateInstanceError.
+            - auto_increment=True: allocate the next free ordinal for (job_id, run_id),
+              insert, and return the concrete InstanceID.
+
+        Args:
+            job_id: The job identifier.
+            run_id: The run identifier.
+            user_params: Optional user-defined parameters.
+            auto_increment: If True, automatically assign the next available ordinal.
+
+        Returns:
+            InstanceID: The instance ID of the inserted record.
+
         Raises:
-            DuplicateInstanceError: If a record with this instance ID already exists.
+            DuplicateInstanceError: If a duplicate exists and auto_increment is False.
         """
 
     @abstractmethod
-    def read_history(self, run_match=None, sort=SortOption.CREATED, *, asc, limit, offset, last=False):
+    def read_runs(self, run_match=None, sort=SortOption.CREATED, *, asc, limit, offset, last=False):
         """
-        Fetch ended job runs with their duplicate submissions.
-
-        Each run is returned as a :class:`JobRunDetail` with its associated
-        :class:`DuplicateSubmission` records.
+        Fetch ended job runs matching the specified criteria.
 
         Args:
             run_match (JobRunCriteria): Criteria to filter job instances. None returns all records.
@@ -174,26 +185,17 @@ class Persistence(ABC):
             last (bool): If True, return only the most recent run for each job.
 
         Returns:
-            HistoryEntries: Runs with their duplicate submissions.
+            list[JobRun]: Matching job runs.
         """
         pass
 
     @abstractmethod
-    def iter_history_runs(self, run_match=None, sort=SortOption.CREATED, *,
-                          asc=True, limit=-1, offset=-1, last=False):
+    def iter_runs(self, run_match=None, sort=SortOption.CREATED, *,
+                  asc=True, limit=-1, offset=-1, last=False):
         """
         Iterate over ended job runs matching the specified criteria.
 
-        This method provides memory-efficient access to job history by yielding
-        results one at a time rather than loading all records into memory.
-
-        Args:
-            run_match (JobRunCriteria): Criteria to match specific job instances. None returns all records.
-            sort (SortOption): Field by which records are sorted.
-            asc (bool): Sort order (True for ascending).
-            limit (int): Maximum number of records (-1 for unlimited).
-            offset (int): Number of records to skip (-1 for no offset).
-            last (bool): If True, only the last record for each job.
+        Memory-efficient access to job runs by yielding results one at a time.
 
         Returns:
             Iterator[JobRun]: Iterator over matching job run records.
@@ -201,7 +203,7 @@ class Persistence(ABC):
         pass
 
     @abstractmethod
-    def read_history_stats(self, run_match=None):
+    def read_run_stats(self, run_match=None):
         """
         Compute aggregate statistics for jobs matching the specified criteria.
 
@@ -214,7 +216,7 @@ class Persistence(ABC):
         pass
 
     @abstractmethod
-    def store_job_runs(self, *job_runs):
+    def store_runs(self, *job_runs):
         """
         Store one or more completed job runs.
 
@@ -224,7 +226,7 @@ class Persistence(ABC):
         pass
 
     @abstractmethod
-    def remove_job_runs(self, run_match) -> list:
+    def remove_runs(self, run_match) -> list:
         """
         Remove job runs matching the specified criteria.
 
@@ -250,27 +252,6 @@ class Persistence(ABC):
         pass
 
     @abstractmethod
-    def record_duplicate_submission(self, submission: DuplicateSubmission):
-        """Record a duplicate submission event.
-
-        Args:
-            submission (DuplicateSubmission): The duplicate submission to store.
-        """
-
-    @abstractmethod
-    def read_duplicate_submissions(self, job_id: Optional[str] = None,
-                                   run_id: Optional[str] = None) -> list[DuplicateSubmission]:
-        """Read duplicate submission records, optionally filtered by job_id and/or run_id.
-
-        Args:
-            job_id (str): Filter by job identifier. None returns all jobs.
-            run_id (str): Filter by run identifier. None returns all runs.
-
-        Returns:
-            list[DuplicateSubmission]: Matching duplicate submission records.
-        """
-
-    @abstractmethod
     def close(self):
         """Close the persistence connection and release resources."""
         pass
@@ -289,41 +270,36 @@ class NullPersistence(Persistence):
         return False
 
     @override
-    def init_job_run(self, instance_id, user_params=None):
-        pass
+    def init_run(self, job_id, run_id, user_params=None, *, auto_increment=False):
+        # TODO: Restore no-persistence execution support. The new admission flow depends on
+        # init_run() for ordinal allocation and duplicate handling, so disabled persistence
+        # currently blocks instance creation entirely.
+        raise PersistenceDisabledError  # TODO
 
     @override
-    def read_history(self, run_match=None, sort=SortOption.CREATED, *, asc, limit, offset, last=False):
-        raise PersistenceDisabledError("Persistence is disabled; no history available.")
+    def read_runs(self, run_match=None, sort=SortOption.CREATED, *, asc, limit, offset, last=False):
+        raise PersistenceDisabledError("Persistence is disabled; no runs available.")
 
     @override
-    def iter_history_runs(self, run_match=None, sort=SortOption.CREATED, *,
-                          asc=True, limit=-1, offset=-1, last=False):
-        raise PersistenceDisabledError("Persistence is disabled; no history available.")
+    def iter_runs(self, run_match=None, sort=SortOption.CREATED, *,
+                  asc=True, limit=-1, offset=-1, last=False):
+        raise PersistenceDisabledError("Persistence is disabled; no runs available.")
 
     @override
-    def read_history_stats(self, run_match=None) -> dict:
+    def read_run_stats(self, run_match=None) -> dict:
         raise PersistenceDisabledError("Persistence is disabled; no stats available.")
 
     @override
-    def store_job_runs(self, *job_runs) -> None:
+    def store_runs(self, *job_runs) -> None:
         pass
 
     @override
-    def remove_job_runs(self, run_match) -> list:
+    def remove_runs(self, run_match) -> list:
         return []
 
     @override
     def enforce_retention(self, job_id: str, policy: RetentionPolicy) -> None:
         pass
-
-    @override
-    def record_duplicate_submission(self, submission):
-        pass
-
-    @override
-    def read_duplicate_submissions(self, job_id=None, run_id=None) -> list[DuplicateSubmission]:
-        return []
 
     @override
     def close(self) -> None:
@@ -356,7 +332,7 @@ class PersistingObserver(InstanceLifecycleObserver):
 
     def instance_lifecycle_update(self, event: InstanceLifecycleEvent):
         if event.new_stage == Stage.ENDED:
-            self._persistence.store_job_runs(event.job_run)
+            self._persistence.store_runs(event.job_run)
 
 
 class PersistenceDisabledError(RuntoolsException):

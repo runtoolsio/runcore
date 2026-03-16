@@ -303,37 +303,17 @@ class EnvironmentConnector(ABC):
         if runs:
             return runs[0]
         try:
-            history = self.read_history(criteria, asc=False, limit=1, offset=0)
+            runs = self.read_runs(criteria, asc=False, limit=1, offset=0)
         except PersistenceDisabledError:
             return None
-        return history.job_runs[0] if history.job_runs else None
+        return runs[0] if runs else None
 
     @abstractmethod
-    def iter_history_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
-        """
-        Iterate over ended job instances based on specified criteria.
+    def read_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+        pass
 
-        This method provides memory-efficient access to job history by yielding
-        results one at a time rather than loading all records into memory.
-        For large result sets, this is preferred over read_history().
-
-        Args:
-            run_match: Criteria to match specific job instances
-            sort: Field by which records are sorted (default: SortCriteria.ENDED)
-            asc: Sort order - True for ascending, False for descending (default: True)
-            limit: Maximum number of records to yield, -1 for unlimited (default: -1)
-            offset: Number of records to skip before yielding (default: 0)
-            last: If True, only yield the last record for each job (default: False)
-
-        Yields:
-            JobRun: Individual job instances matching the criteria
-
-        Returns:
-            Iterator[JobRun]: An iterator over JobRun instances
-
-        Raises:
-            PersistenceDisabledError: If persistence is not enabled for this environment
-        """
+    @abstractmethod
+    def iter_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
         pass
 
     def get_instance(self, instance_id) -> JobInstance:
@@ -345,11 +325,7 @@ class EnvironmentConnector(ABC):
         pass
 
     @abstractmethod
-    def read_history(self, run_match, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
-        pass
-
-    @abstractmethod
-    def read_history_stats(self, run_match=None):
+    def read_run_stats(self, run_match=None):
         pass
 
     @abstractmethod
@@ -430,7 +406,7 @@ class EnvironmentConnector(ABC):
                         return
 
             def _watch_history(self):
-                runs = connector.read_history(run_match, limit=stop_count).job_runs
+                runs = connector.read_runs(run_match, limit=stop_count)
                 with self._watch_lock:
                     self._add_matched(runs)
 
@@ -597,20 +573,20 @@ class LocalConnector(EnvironmentConnector):
 
         return instances
 
-    def read_history(self, run_match, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
-        return self._persistence.read_history(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+    def read_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+        return self._persistence.read_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
 
-    def iter_history_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
-        return self._persistence.iter_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+    def iter_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+        return self._persistence.iter_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
 
-    def read_history_stats(self, run_match=None):
-        return self._persistence.read_history_stats(run_match)
+    def read_run_stats(self, run_match=None):
+        return self._persistence.read_run_stats(run_match)
 
     def remove_history_runs(self, run_match):
         active = self.get_active_runs(run_match)
         if active:
             raise ValueError(f"Cannot remove active runs: {', '.join(str(r.instance_id) for r in active)}")
-        removed_ids = self._persistence.remove_job_runs(run_match)
+        removed_ids = self._persistence.remove_runs(run_match)
         for backend in self._output_backends:
             backend.delete_output(*removed_ids)
         return removed_ids
