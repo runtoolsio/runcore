@@ -604,7 +604,7 @@ class SQLite(Persistence):
         def to_tuple(r: JobRun):
             return (json.dumps(dict(r.metadata.user_params)) if r.metadata.user_params else None,
                     format_dt_sql(r.lifecycle.created_at),
-                    format_dt_sql(r.lifecycle.started_at),
+                    format_dt_sql(r.lifecycle.started_at) if r.lifecycle.started_at else None,
                     format_dt_sql(r.lifecycle.termination.terminated_at) if r.lifecycle.termination else None,
                     round(r.lifecycle.total_run_time.total_seconds(), 3) if r.lifecycle.total_run_time else None,
                     json.dumps(r.root_phase.serialize()),
