@@ -40,6 +40,7 @@ class Outcome(Enum):
         ABORTED:  User-initiated cancellation (is_success=False)
         REJECTED: Prevented from running (is_success=False)
         FAULT:    Failed due to error (is_success=False)
+        IGNORED:  Noted but not executed (is_success=False)
     """
 
     def __new__(cls, value, is_success):
@@ -52,6 +53,7 @@ class Outcome(Enum):
     ABORTED = 2, False
     REJECTED = 3, False
     FAULT = 4, False
+    IGNORED = 5, False
 
     @classmethod
     def get_outcomes(cls, *, success: bool) -> set['Outcome']:
@@ -89,7 +91,7 @@ class TerminationStatus(Enum):
     UNSATISFIED = 23, Outcome.REJECTED
     DENIED = 24, Outcome.REJECTED
     DUPLICATE = 25, Outcome.REJECTED
-    SUPPRESSED = 26, Outcome.REJECTED
+    SUPPRESSED = 26, Outcome.IGNORED
 
     FAILED = 31, Outcome.FAULT
     ERROR = 32, Outcome.FAULT
