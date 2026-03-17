@@ -344,7 +344,7 @@ class DuplicateStrategy(Enum):
     to the caller (CONTINUE).
     """
     RAISE = "raise", None
-    DUPLICATE = "duplicate", StopReason.DUPLICATE
+    DISALLOW = "disallow", StopReason.DUPLICATE
     SUPPRESS = "suppress", StopReason.SUPPRESSED
     ALLOW = "allow", None
 
