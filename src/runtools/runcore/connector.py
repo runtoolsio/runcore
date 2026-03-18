@@ -22,6 +22,7 @@ import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
 from threading import Event, Lock
+from dataclasses import dataclass
 from typing import Callable, Optional, Iterable, List, override
 
 from runtools.runcore import paths, util, db, output
@@ -264,6 +265,13 @@ def clean_stale_component_dirs(env_dir: Path) -> List[Path]:
     return removed
 
 
+@dataclass
+class WatchedRun:
+    """A single criterion–run pair tracked by a Watcher."""
+    criteria: JobRunCriteria
+    matched_run: Optional[JobRun] = None
+
+
 class EnvironmentConnector(ABC):
     """
     An abstract base class defining the interface for connecting to and interacting with an environment.
@@ -353,33 +361,48 @@ class EnvironmentConnector(ABC):
         """Register observers here to receive events from all instances in this environment."""
 
     # noinspection PyProtectedMember
-    def watcher(self, run_match, *, search_past, stop_count=1):
+    def watcher(self, *criteria: JobRunCriteria, search_past: bool):
+        """Create a watcher that waits until each criterion is satisfied by a matching run.
+
+        Criteria are evaluated in order — earlier criteria get first claim on matching runs.
+        Each run can satisfy at most one criterion (one-to-one assignment).
+
+        Args:
+            *criteria (JobRunCriteria): One or more criteria, each must be matched by a distinct run.
+            search_past (bool): If True, check history and active runs before waiting for live events.
+
+        Returns:
+            Watcher with wait()/cancel() interface. Bool-true when all criteria are satisfied.
+        """
         connector = self
 
         class Watcher(InstanceLifecycleObserver):
 
             def __init__(self):
-                self._matched_runs: List[JobRun] = []
-                self._matched_ids: set = set()
+                self._entries = [WatchedRun(c) for c in criteria]
+                # Guarded by _lock:
+                # - _claimed_ids
+                # - WatchedRun.matched_run on entries in _entries
+                self._claimed_ids: set[InstanceID] = set()
                 self._event = Event()
-                self._watch_lock = Lock()
+                self._lock = Lock()
                 self._timed_out = False
                 self._cancelled = False
 
             def __bool__(self):
-                return self.remaining_count == 0
+                return self._is_complete
 
             @property
-            def run_match(self):
-                return run_match
+            def _is_complete(self) -> bool:
+                return all(entry.matched_run is not None for entry in self._entries)
 
             @property
-            def matched_runs(self):
-                return self._matched_runs.copy()
+            def watched_runs(self) -> list[WatchedRun]:
+                return self._entries.copy()
 
             @property
-            def remaining_count(self):
-                return stop_count - len(self._matched_runs)
+            def matched_runs(self) -> list[JobRun]:
+                return [e.matched_run for e in self._entries if e.matched_run is not None]
 
             @property
             def is_timed_out(self):
@@ -389,55 +412,71 @@ class EnvironmentConnector(ABC):
             def is_cancelled(self):
                 return self._cancelled
 
-            def _close(self):
-                connector.notifications.remove_observer_lifecycle(self)
-                self._event.set()
-
-            def _add_matched(self, matched):
-                if self.remaining_count == 0:
-                    return
-                for run in matched:
-                    if run.instance_id in self._matched_ids:
-                        continue
-                    self._matched_ids.add(run.instance_id)
-                    self._matched_runs.append(run)
-                    if self.remaining_count == 0:
-                        self._close()
+            def _try_close(self, force=False):
+                with self._lock:
+                    if (not force and not bool(self)) or self._event.is_set():
                         return
+                    self._event.set()
+                connector.notifications.remove_observer_lifecycle(self)
 
-            def _watch_history(self):
-                runs = connector.read_runs(run_match, limit=stop_count)
-                with self._watch_lock:
-                    self._add_matched(runs)
+            def _unmatched_entries(self) -> list[WatchedRun]:
+                return [entry for entry in self._entries if entry.matched_run is None]
 
-            def _watch_active(self):
-                runs = connector.get_active_runs(run_match)
-                with self._watch_lock:
-                    self._add_matched(runs)
+            def _claim(self, entry: WatchedRun, runs: Iterable[JobRun]):
+                """Try to satisfy one entry with the oldest-created unclaimed matching run."""
+                with self._lock:
+                    if entry.matched_run is not None:
+                        return
+                    candidates = sorted(
+                        (r for r in runs if r.instance_id not in self._claimed_ids),
+                        key=lambda r: r.lifecycle.created_at,
+                    )
+                    if candidates:
+                        match = candidates[0]
+                        entry.matched_run = match
+                        self._claimed_ids.add(match.instance_id)
+
+            def _bootstrap_from(self, source):
+                for entry in self._unmatched_entries():
+                    self._claim(entry, source(entry.criteria))
+                self._try_close()
 
             def instance_lifecycle_update(self, event: InstanceLifecycleEvent):
-                if run_match(event.job_run):
-                    with self._watch_lock:
-                        self._add_matched([event.job_run])
+                for entry in self._unmatched_entries():
+                    if entry.criteria(event.job_run):
+                        self._claim(entry, [event.job_run])
+                        self._try_close()
+                        break
 
             def wait(self, *, timeout=None):
+                """Block until all criteria are satisfied, timeout expires, or watcher is cancelled.
+
+                Returns:
+                    bool: True if all criteria were satisfied, False on timeout or cancellation.
+                """
                 try:
-                    completed = self._event.wait(timeout)
-                    self._timed_out = not completed
-                    return False if self._cancelled else completed
+                    self._event.wait(timeout)
+                    if self._cancelled:
+                        return False
+                    if self._is_complete:
+                        return True
+                    self._timed_out = True
+                    return False
                 finally:
                     connector.notifications.remove_observer_lifecycle(self)
 
             def cancel(self):
+                if self._is_complete:
+                    return
                 self._cancelled = True
-                self._close()
+                self._try_close(force=True)
 
         watcher = Watcher()
         self.notifications.add_observer_lifecycle(watcher)
         if search_past:
-            watcher._watch_history()
-            if watcher.remaining_count:
-                watcher._watch_active()
+            watcher._bootstrap_from(lambda crit: connector.read_runs(crit, sort=SortOption.CREATED, asc=True))
+            if not watcher:
+                watcher._bootstrap_from(connector.get_active_runs)
 
         return watcher
 
