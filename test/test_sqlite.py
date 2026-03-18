@@ -3,7 +3,7 @@ from datetime import timedelta
 
 import pytest
 
-from runtools.runcore.criteria import JobRunCriteria, LifecycleCriterion, TerminationCriterion
+from runtools.runcore.criteria import criteria, JobRunCriteria, LifecycleCriterion
 from runtools.runcore.db import sqlite, IncompatibleSchemaError
 from runtools.runcore.db.sqlite import SCHEMA_VERSION
 from runtools.runcore.job import DuplicateInstanceError, InstanceID
@@ -11,7 +11,7 @@ from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.run import TerminationStatus, Outcome
 from runtools.runcore.test.job import fake_job_run
 from runtools.runcore.util import MatchingStrategy
-from runtools.runcore.util.dt import TimeRange
+from runtools.runcore.util.dt import TimeRange, DateTimeRange
 
 parse = JobRunCriteria.parse
 
@@ -171,21 +171,24 @@ def test_interval(sut):
     _init_and_store(sut, fake_job_run('j3', created_at=dt(2023, 4, 22), ended_at=dt(2023, 4, 22, 23, 59, 58)))
 
     # Test ended_from
-    jobs = sut.read_runs(JobRunCriteria().created(since=dt(2023, 4, 23)))
+    jobs = sut.read_runs(criteria().created(since=dt(2023, 4, 23)).build())
     assert [j.job_id for j in jobs] == ['j1']
 
     # Test ended_to inclusive
-    jobs = sut.read_runs(JobRunCriteria().ended(until=dt(2023, 4, 22, 23, 59, 59), until_incl=True))
+    jobs = sut.read_runs(criteria().ended(until=dt(2023, 4, 22, 23, 59, 59), until_incl=True).build())
     assert sorted([j.job_id for j in jobs]) == ['j2', 'j3']
 
     # Test ended_to exclusive
-    jobs = sut.read_runs(JobRunCriteria().ended(until=dt(2023, 4, 22, 23, 59, 59)))
+    jobs = sut.read_runs(criteria().ended(until=dt(2023, 4, 22, 23, 59, 59)).build())
     assert [j.job_id for j in jobs] == ['j3']
 
     # Test combined ended_from (incl) and created_to
-    jobs = sut.read_runs(JobRunCriteria()
-                                 .created(until=dt(2023, 4, 23), until_incl=True)
-                                 .ended(since=dt(2023, 4, 22, 23, 59, 59)))
+    jobs = sut.read_runs(JobRunCriteria(lifecycle_criteria=(
+        LifecycleCriterion(
+            created=DateTimeRange(until=dt(2023, 4, 23), until_included=True),
+            ended=DateTimeRange(since=dt(2023, 4, 22, 23, 59, 59)),
+        ),
+    )))
     assert sorted([j.job_id for j in jobs]) == ['j1', 'j2']
 
 
@@ -195,8 +198,8 @@ def test_termination_status(sut):
         fake_job_run('j2', term_status=TerminationStatus.FAILED),
         fake_job_run('j3', term_status=TerminationStatus.COMPLETED))
 
-    criteria = JobRunCriteria().add(LifecycleCriterion(termination=TerminationCriterion(status=TerminationStatus.FAILED)))
-    jobs = sut.read_runs(criteria)
+    run_match = criteria().termination_status(TerminationStatus.FAILED).build()
+    jobs = sut.read_runs(run_match)
     assert [j.job_id for j in jobs] == ['j2']
 
 
@@ -206,8 +209,8 @@ def test_termination_outcome(sut):
         fake_job_run('j2', term_status=TerminationStatus.FAILED),
         fake_job_run('j3', term_status=TerminationStatus.STOPPED))
 
-    criteria = JobRunCriteria().add(LifecycleCriterion(termination=TerminationCriterion(outcome=Outcome.FAULT)))
-    jobs = sut.read_runs(criteria)
+    run_match = criteria().termination_outcome(Outcome.FAULT).build()
+    jobs = sut.read_runs(run_match)
     assert [j.job_id for j in jobs] == ['j2']
 
 
@@ -218,8 +221,8 @@ def test_total_run_time(sut):
         fake_job_run('j3', created_at=dt(2023, 1, 1, 12, 0), ended_at=dt(2023, 1, 1, 12, 30)))  # 30 min
 
     # Filter runs between 5 and 15 minutes
-    criteria = JobRunCriteria().add(LifecycleCriterion(total_run_time=TimeRange(min=timedelta(minutes=5), max=timedelta(minutes=15))))
-    jobs = sut.read_runs(criteria)
+    run_match = JobRunCriteria(lifecycle_criteria=(LifecycleCriterion(total_run_time=TimeRange(min=timedelta(minutes=5), max=timedelta(minutes=15))),))
+    jobs = sut.read_runs(run_match)
     assert [j.job_id for j in jobs] == ['j2']
 
 

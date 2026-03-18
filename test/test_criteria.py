@@ -1,11 +1,11 @@
-from runtools.runcore.criteria import TerminationCriterion, JobRunCriteria
+from runtools.runcore.criteria import criteria, TerminationCriterion
 from runtools.runcore.run import TerminationStatus, TerminationInfo, Outcome
 
 from runtools.runcore.util import utc_now, DateTimeRange
 
 
 def test_interval_utc_conversion():
-    c = JobRunCriteria().created(*DateTimeRange.parse_to_utc(from_val='2023-11-10T09:00+02:00', to_val=None))
+    c = criteria().created(*DateTimeRange.parse_to_utc(from_val='2023-11-10T09:00+02:00', to_val=None)).build()
     assert c.lifecycle_criteria[-1].created.since.hour == 7
 
 

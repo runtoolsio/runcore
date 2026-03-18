@@ -1,16 +1,28 @@
 """
 This module provides various criteria objects used to match job instances or their parts.
+
+Matching rules:
+    - Within a single criterion: all set fields are AND'd.
+    - Within a ``JobRunCriteria`` list: criteria of the same type are OR'd.
+    - Between ``JobRunCriteria`` lists: the three lists (metadata, lifecycle, phase) are AND'd.
+
+Use ``criteria()`` or ``JobRunCriteria.builder()`` to incrementally compose criteria via a fluent API.
 """
+
+from __future__ import annotations
 
 from abc import abstractmethod, ABC
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
-from typing import Dict, Any, Optional, TypeVar, Generic, Iterable
+from types import MappingProxyType
+from collections.abc import Mapping
+from typing import Any, Self, TypeVar, Generic, Iterable
 
 from runtools.runcore.job import JobInstanceMetadata, JobRun, InstanceID
 from runtools.runcore.run import Outcome, TerminationInfo, \
     PhaseRun, TerminationStatus, RunLifecycle, Stage
-from runtools.runcore.util import MatchingStrategy, to_list, DateTimeRange, TimeRange
+from runtools.runcore.util import MatchingStrategy, DateTimeRange, TimeRange
 
 T = TypeVar('T')
 
@@ -28,7 +40,7 @@ class MatchCriteria(ABC, Generic[T]):
         raise NotImplementedError
 
 
-@dataclass
+@dataclass(frozen=True)
 class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
     """Specifies criteria for matching instance metadata.
 
@@ -50,12 +62,12 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
     strategy: MatchingStrategy = MatchingStrategy.EXACT
 
     @classmethod
-    def all_match(cls) -> 'MetadataCriterion':
+    def all_match(cls) -> MetadataCriterion:
         """Creates a criterion that matches all instances."""
         return cls(strategy=MatchingStrategy.ALWAYS_TRUE)
 
     @classmethod
-    def all_except(cls, instance_id: InstanceID) -> 'MetadataCriterion':
+    def all_except(cls, instance_id: InstanceID) -> MetadataCriterion:
         """Creates a criterion that matches any job run except the specified concrete execution.
 
         Args:
@@ -67,7 +79,7 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         return MetadataCriterion(exclude=instance_id, strategy=MatchingStrategy.ALWAYS_TRUE)
 
     @classmethod
-    def exact_match(cls, instance_id: InstanceID) -> 'MetadataCriterion':
+    def exact_match(cls, instance_id: InstanceID) -> MetadataCriterion:
         """Creates a criterion that matches a specific concrete execution.
 
         Args:
@@ -80,7 +92,7 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
 
     @classmethod
     def parse(cls, pattern: str,
-              strategy: MatchingStrategy = MatchingStrategy.EXACT) -> 'MetadataCriterion':
+              strategy: MatchingStrategy = MatchingStrategy.EXACT) -> MetadataCriterion:
         """
         Parses the provided pattern and returns the corresponding metadata criterion.
 
@@ -112,7 +124,7 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         return cls(pattern, pattern, match_any_field=True, strategy=strategy)
 
     @classmethod
-    def parse_strict(cls, id_string: str) -> 'MetadataCriterion':
+    def parse_strict(cls, id_string: str) -> MetadataCriterion:
         """Parses an instance ID string and returns a criterion for exact matching.
 
         Unlike ``parse()``, this requires a valid instance ID format and uses exact matching.
@@ -145,11 +157,11 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
             return not self.strategy(actual, criteria[1:])
         return self.strategy(actual, criteria)
 
-    def __call__(self, metadata: Optional[JobInstanceMetadata]) -> bool:
+    def __call__(self, metadata: JobInstanceMetadata | None) -> bool:
         """Makes the criterion callable, delegating to matches()."""
         return self.matches(metadata)
 
-    def matches(self, metadata: Optional[JobInstanceMetadata]) -> bool:
+    def matches(self, metadata: JobInstanceMetadata | None) -> bool:
         """
         Check if the provided metadata matches this object.
 
@@ -178,9 +190,9 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
             return False
         return True
 
-    def serialize(self) -> Dict[str, Any]:
+    def serialize(self) -> dict[str, Any]:
         """Serializes the criterion to a dictionary."""
-        d: Dict[str, Any] = {
+        d: dict[str, Any] = {
             'job_id': self.job_id,
             'run_id': self.run_id,
             'match_any_field': self.match_any_field,
@@ -193,7 +205,7 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         return d
 
     @classmethod
-    def deserialize(cls, as_dict: Dict[str, Any]) -> 'MetadataCriterion':
+    def deserialize(cls, as_dict: dict[str, Any]) -> MetadataCriterion:
         """
         Deserializes a criterion from a dictionary.
 
@@ -235,7 +247,7 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         return f"<{', '.join(fields)}>" if fields else ""
 
 
-@dataclass
+@dataclass(frozen=True)
 class TerminationCriterion(MatchCriteria[TerminationInfo]):
     """
     Criteria for matching termination information.
@@ -246,13 +258,13 @@ class TerminationCriterion(MatchCriteria[TerminationInfo]):
         success: Match by success/non-success (True = success, False = non-success, None = no filter)
         ended_range: Match by termination timestamp range
     """
-    status: Optional[TerminationStatus] = None
-    outcome: Optional[Outcome] = None
-    success: Optional[bool] = None
-    ended_range: Optional[DateTimeRange] = None
+    status: TerminationStatus | None = None
+    outcome: Outcome | None = None
+    success: bool | None = None
+    ended_range: DateTimeRange | None = None
 
     @classmethod
-    def deserialize(cls, as_dict: Dict[str, Any]) -> 'TerminationCriterion':
+    def deserialize(cls, as_dict: dict[str, Any]) -> TerminationCriterion:
         return cls(
             status=TerminationStatus[as_dict['status']] if as_dict.get('status') else None,
             outcome=Outcome[as_dict['outcome']] if as_dict.get('outcome') else None,
@@ -260,7 +272,7 @@ class TerminationCriterion(MatchCriteria[TerminationInfo]):
             ended_range=DateTimeRange.deserialize(as_dict['ended_range']) if as_dict.get('ended_range') else None
         )
 
-    def serialize(self) -> Dict[str, Any]:
+    def serialize(self) -> dict[str, Any]:
         return {
             'status': self.status.name if self.status else None,
             'outcome': self.outcome.name if self.outcome else None,
@@ -268,7 +280,7 @@ class TerminationCriterion(MatchCriteria[TerminationInfo]):
             'ended_range': self.ended_range.serialize() if self.ended_range else None,
         }
 
-    def matches(self, term_info: Optional[TerminationInfo]) -> bool:
+    def matches(self, term_info: TerminationInfo | None) -> bool:
         if term_info is None:
             return False
 
@@ -287,7 +299,7 @@ class TerminationCriterion(MatchCriteria[TerminationInfo]):
 
         return True
 
-    def __call__(self, term_info: Optional[TerminationInfo]) -> bool:
+    def __call__(self, term_info: TerminationInfo | None) -> bool:
         return self.matches(term_info)
 
     def __bool__(self) -> bool:
@@ -323,19 +335,72 @@ class PhaseMatch(Enum):
     DESCENDANTS_ONLY = "DESCENDANTS_ONLY"
 
 
-@dataclass
+@dataclass(frozen=True)
 class LifecycleCriterion(MatchCriteria[RunLifecycle]):
     """
     Criteria for matching run lifecycle information.
     """
-    stage: Optional[Stage] = None
-    created: Optional[DateTimeRange] = None
-    started: Optional[DateTimeRange] = None
-    ended: Optional[DateTimeRange] = None
-    total_run_time: Optional[TimeRange] = None
-    termination: Optional[TerminationCriterion] = None
+    stage: Stage | None = None
+    created: DateTimeRange | None = None
+    started: DateTimeRange | None = None
+    ended: DateTimeRange | None = None
+    total_run_time: TimeRange | None = None
+    termination: TerminationCriterion | None = None
 
-    def serialize(self) -> Dict[str, Any]:
+    @classmethod
+    def reached_stage(cls, stage: Stage) -> LifecycleCriterion:
+        """Create a criterion that matches runs which have reached the given stage.
+
+        Args:
+            stage: The stage that must have been reached.
+        """
+        match stage:
+            case Stage.CREATED:
+                return cls(created=DateTimeRange.unbounded())
+            case Stage.RUNNING:
+                return cls(started=DateTimeRange.unbounded())
+            case Stage.ENDED:
+                return cls(ended=DateTimeRange.unbounded())
+            case _:
+                raise ValueError(f"Unknown stage: {stage}")
+
+    @classmethod
+    def for_date_range(cls, date_range: DateTimeRange, for_stage: Stage) -> LifecycleCriterion:
+        """Create a criterion with a pre-built DateTimeRange on the specified stage's timestamp.
+
+        Use this when you already have a DateTimeRange (e.g. from ``DateTimeRange.days_range()``).
+        For raw datetime bounds, see ``for_period()``.
+
+        Args:
+            date_range (DateTimeRange): The date range to apply.
+            for_stage (Stage): Which stage timestamp field to filter on.
+        """
+        match for_stage:
+            case Stage.CREATED:
+                return cls(created=date_range)
+            case Stage.RUNNING:
+                return cls(started=date_range)
+            case Stage.ENDED:
+                return cls(ended=date_range)
+            case _:
+                raise ValueError(f"Unknown stage: {for_stage}")
+
+    @classmethod
+    def for_period(cls, for_stage: Stage, *, since: datetime | None = None, until: datetime | None = None) \
+            -> LifecycleCriterion:
+        """Create a criterion with explicit datetime bounds on the specified stage's timestamp.
+
+        Convenience alternative to ``for_date_range()`` when you have raw datetime values
+        instead of a DateTimeRange object.
+
+        Args:
+            for_stage (Stage): Which stage timestamp field to filter on.
+            since (datetime | None): Inclusive lower bound. None means unbounded.
+            until (datetime | None): Exclusive upper bound. None means unbounded.
+        """
+        return cls.for_date_range(DateTimeRange(since=since, until=until), for_stage)
+
+    def serialize(self) -> dict[str, Any]:
         """Serialize to a dictionary."""
         data = {}
         if self.stage:
@@ -353,7 +418,7 @@ class LifecycleCriterion(MatchCriteria[RunLifecycle]):
         return data
 
     @classmethod
-    def deserialize(cls, as_dict: Dict[str, Any]) -> 'LifecycleCriterion':
+    def deserialize(cls, as_dict: dict[str, Any]) -> LifecycleCriterion:
         """Deserialize from a dictionary."""
         return cls(
             stage=Stage[as_dict['stage']] if as_dict.get('stage') else None,
@@ -364,10 +429,10 @@ class LifecycleCriterion(MatchCriteria[RunLifecycle]):
             termination=TerminationCriterion.deserialize(as_dict['termination']) if as_dict.get('termination') else None
         )
 
-    def __call__(self, lifecycle: Optional[RunLifecycle]):
+    def __call__(self, lifecycle: RunLifecycle | None):
         return self.matches(lifecycle)
 
-    def matches(self, lifecycle: Optional[RunLifecycle]) -> bool:
+    def matches(self, lifecycle: RunLifecycle | None) -> bool:
         """Check if the lifecycle matches all specified criteria."""
         if lifecycle is None:
             return False
@@ -396,67 +461,6 @@ class LifecycleCriterion(MatchCriteria[RunLifecycle]):
 
         return True
 
-    def set_created(self, since=None, until=None, until_incl=False):
-        self.created = DateTimeRange(since, until, until_incl)
-        return self
-
-    def set_started(self, since=None, until=None, until_incl=False):
-        self.started = DateTimeRange(since, until, until_incl)
-        return self
-
-    def set_ended(self, since=None, until=None, until_incl=False):
-        self.ended = DateTimeRange(since, until, until_incl)
-        return self
-
-    def set_date_range(self, date_range: DateTimeRange, for_stage: Stage) -> 'LifecycleCriterion':
-        """
-        Sets the appropriate date range based on the filter type.
-
-        Args:
-            date_range: The date range to apply
-            for_stage: Which stage timestamp field to filter on
-
-        Returns:
-            Self for method chaining
-        """
-        match for_stage:
-            case Stage.CREATED:
-                self.created = date_range
-            case Stage.RUNNING:
-                self.started = date_range
-            case Stage.ENDED:
-                self.ended = date_range
-            case _:
-                raise ValueError(f"Unknown stage field: {for_stage}")
-        return self
-
-    def reached_stage(self, stage: Stage) -> 'LifecycleCriterion':
-        """
-        Configure criterion to match runs that have reached or passed the specified stage.
-
-        Args:
-            stage: The stage that must have been reached
-
-        Returns:
-            Self for method chaining
-
-        Examples:
-            # Find all runs that have started (reached RUNNING or ENDED)
-            criteria.reached_stage(Stage.RUNNING)
-
-            # Find all runs that have completed (reached ENDED)
-            criteria.reached_stage(Stage.ENDED)
-        """
-        match stage:
-            case Stage.CREATED:
-                self.created = DateTimeRange.unbounded()
-            case Stage.RUNNING:
-                self.started = DateTimeRange.unbounded()  # Must have a started timestamp
-            case Stage.ENDED:
-                self.ended = DateTimeRange.unbounded()  # Must have an ended timestamp (termination)
-
-        return self
-
     def __bool__(self) -> bool:
         """Check if any criteria are set."""
         return bool(self.stage or self.created or self.started or self.ended or self.total_run_time or self.termination)
@@ -479,7 +483,7 @@ class LifecycleCriterion(MatchCriteria[RunLifecycle]):
         return f"<{', '.join(fields)}>" if fields else ""
 
 
-@dataclass
+@dataclass(frozen=True)
 class PhaseCriterion(MatchCriteria[PhaseRun]):
     """
     Criteria for matching phase details, incorporating phase-specific and lifecycle criteria.
@@ -496,15 +500,20 @@ class PhaseCriterion(MatchCriteria[PhaseRun]):
         lifecycle: Criteria for matching lifecycle information. For root phase only.
         match_type: How phases are matched. Defaults to ROOT.
     """
-    phase_type: Optional[str] = None
-    phase_id: Optional[str] = None
-    idle: Optional[bool] = None
-    attributes: Optional[Dict[str, Any]] = None
-    lifecycle: Optional[LifecycleCriterion] = None
+    phase_type: str | None = None
+    phase_id: str | None = None
+    idle: bool | None = None
+    attributes: Mapping[str, Any] | None = None
+    lifecycle: LifecycleCriterion | None = None
     match_type: PhaseMatch = PhaseMatch.ROOT
 
+    def __post_init__(self):
+        """Wrap mutable dict in MappingProxyType so the frozen dataclass stays truly immutable."""
+        if self.attributes is not None and not isinstance(self.attributes, MappingProxyType):
+            object.__setattr__(self, 'attributes', MappingProxyType(self.attributes))
+
     @classmethod
-    def deserialize(cls, as_dict: Dict[str, Any]) -> 'PhaseCriterion':
+    def deserialize(cls, as_dict: dict[str, Any]) -> PhaseCriterion:
         """Deserialize a dictionary into a PhaseCriterion instance."""
         return cls(
             phase_type=as_dict.get('phase_type'),
@@ -515,13 +524,13 @@ class PhaseCriterion(MatchCriteria[PhaseRun]):
             match_type=PhaseMatch[as_dict.get('match_type', PhaseMatch.ROOT.name)]
         )
 
-    def serialize(self) -> Dict[str, Any]:
+    def serialize(self) -> dict[str, Any]:
         """Serialize this criterion into a dictionary."""
         return {
             'phase_type': self.phase_type,
             'phase_id': self.phase_id,
             'idle': self.idle,
-            'attributes': self.attributes,
+            'attributes': dict(self.attributes) if self.attributes else None,
             'lifecycle': self.lifecycle.serialize() if self.lifecycle else None,
             'match_type': self.match_type.name
         }
@@ -561,10 +570,10 @@ class PhaseCriterion(MatchCriteria[PhaseRun]):
                 return True
         return False
 
-    def __call__(self, phase: Optional[PhaseRun]):
+    def __call__(self, phase: PhaseRun | None):
         return self.matches(phase)
 
-    def matches(self, phase: Optional[PhaseRun]) -> bool:
+    def matches(self, phase: PhaseRun | None) -> bool:
         """Check if phase or its descendants match based on match_type."""
         if phase is None:
             return False
@@ -601,27 +610,46 @@ class PhaseCriterion(MatchCriteria[PhaseRun]):
         return f"<{', '.join(fields)}>" if fields else ""
 
 
+@dataclass(frozen=True)
 class JobRunCriteria(MatchCriteria[JobRun]):
     """
-    Criteria for querying and matching job instances.
+    Immutable criteria for querying and matching job runs.
+
+    Matching rules:
+        - Within each tuple: criteria are OR'd (any match suffices).
+        - Between tuples: the three groups are AND'd (all groups must match).
+
+    Use factory classmethods for one-shot construction, or ``builder()`` for incremental composition.
     """
+    metadata_criteria: tuple[MetadataCriterion, ...] = ()
+    lifecycle_criteria: tuple[LifecycleCriterion, ...] = ()
+    phase_criteria: tuple[PhaseCriterion, ...] = ()
 
-    def __init__(self, *, metadata_criteria=None, lifecycle_criteria=None, phase_criteria=None):
-        self.metadata_criteria = to_list(metadata_criteria)
-        self.lifecycle_criteria = to_list(lifecycle_criteria)
-        self.phase_criteria = to_list(phase_criteria)
+    def __post_init__(self):
+        """Coerce any iterables to tuples so callers can pass lists without breaking immutability."""
+        if not isinstance(self.metadata_criteria, tuple):
+            object.__setattr__(self, 'metadata_criteria', tuple(self.metadata_criteria))
+        if not isinstance(self.lifecycle_criteria, tuple):
+            object.__setattr__(self, 'lifecycle_criteria', tuple(self.lifecycle_criteria))
+        if not isinstance(self.phase_criteria, tuple):
+            object.__setattr__(self, 'phase_criteria', tuple(self.phase_criteria))
 
     @classmethod
-    def all(cls):
-        return cls(metadata_criteria=MetadataCriterion.all_match())
+    def builder(cls) -> JobRunCriteriaBuilder:
+        """Create a new builder for incremental criteria composition."""
+        return JobRunCriteriaBuilder()
 
     @classmethod
-    def deserialize(cls, as_dict):
-        new = cls()
-        new.metadata_criteria = [MetadataCriterion.deserialize(c) for c in as_dict.get('metadata_criteria', ())]
-        new.lifecycle_criteria = [LifecycleCriterion.deserialize(c) for c in as_dict.get('lifecycle_criteria', ())]
-        new.phase_criteria = [PhaseCriterion.deserialize(c) for c in as_dict.get('phase_criteria', ())]
-        return new
+    def all(cls) -> JobRunCriteria:
+        return cls(metadata_criteria=(MetadataCriterion.all_match(),))
+
+    @classmethod
+    def deserialize(cls, as_dict) -> JobRunCriteria:
+        return cls(
+            metadata_criteria=tuple(MetadataCriterion.deserialize(c) for c in as_dict.get('metadata_criteria', ())),
+            lifecycle_criteria=tuple(LifecycleCriterion.deserialize(c) for c in as_dict.get('lifecycle_criteria', ())),
+            phase_criteria=tuple(PhaseCriterion.deserialize(c) for c in as_dict.get('phase_criteria', ())),
+        )
 
     def serialize(self):
         return {
@@ -631,63 +659,32 @@ class JobRunCriteria(MatchCriteria[JobRun]):
         }
 
     @classmethod
-    def parse(cls, pattern: str, strategy: MatchingStrategy = MatchingStrategy.EXACT) -> "JobRunCriteria":
-        new = cls()
-        new += MetadataCriterion.parse(pattern, strategy)
-        return new
+    def parse(cls, pattern: str, strategy: MatchingStrategy = MatchingStrategy.EXACT) -> JobRunCriteria:
+        return cls(metadata_criteria=(MetadataCriterion.parse(pattern, strategy),))
 
     @classmethod
-    def parse_all(cls, patterns: Iterable[str], strategy: MatchingStrategy = MatchingStrategy.EXACT) \
-            -> "JobRunCriteria":
-        new = cls()
-        for p in patterns:
-            new += MetadataCriterion.parse(p, strategy)
-        return new
+    def parse_all(cls, patterns: Iterable[str], strategy: MatchingStrategy = MatchingStrategy.EXACT) -> JobRunCriteria:
+        return cls(metadata_criteria=tuple(MetadataCriterion.parse(p, strategy) for p in patterns))
 
     @classmethod
-    def parse_strict(cls, id_string) -> "JobRunCriteria":
-        new = cls()
-        new += MetadataCriterion.parse_strict(id_string)
-        return new
+    def parse_strict(cls, id_string) -> JobRunCriteria:
+        return cls(metadata_criteria=(MetadataCriterion.parse_strict(id_string),))
 
     @classmethod
-    def job_match(cls, job_id, strategy: MatchingStrategy = MatchingStrategy.EXACT):
-        new = cls()
-        new += MetadataCriterion(job_id=job_id, strategy=strategy)
-        return new
+    def job_match(cls, job_id, strategy: MatchingStrategy = MatchingStrategy.EXACT) -> JobRunCriteria:
+        return cls(metadata_criteria=(MetadataCriterion(job_id=job_id, strategy=strategy),))
 
     @classmethod
-    def exact_match(cls, job_run):
-        new = cls()
-        new += MetadataCriterion.exact_match(job_run.instance_id)
-        return new
+    def exact_match(cls, job_run) -> JobRunCriteria:
+        return cls(metadata_criteria=(MetadataCriterion.exact_match(job_run.instance_id),))
 
     @classmethod
-    def all_except(cls, job_run):
-        new = cls()
-        new += MetadataCriterion.all_except(job_run.instance_id)
-        return new
+    def all_except(cls, job_run) -> JobRunCriteria:
+        return cls(metadata_criteria=(MetadataCriterion.all_except(job_run.instance_id),))
 
     @classmethod
-    def instance_match(cls, instance_id):
-        new = cls()
-        new += MetadataCriterion.exact_match(instance_id)
-        return new
-
-    def __iadd__(self, criterion):
-        return self.add(criterion)
-
-    def add(self, criterion):
-        match criterion:
-            case MetadataCriterion():
-                self.metadata_criteria.append(criterion)
-            case LifecycleCriterion():
-                self.lifecycle_criteria.append(criterion)
-            case PhaseCriterion():
-                self.phase_criteria.append(criterion)
-            case _:
-                raise ValueError(f"Invalid criterion type: {type(criterion)}")
-        return self
+    def instance_match(cls, instance_id) -> JobRunCriteria:
+        return cls(metadata_criteria=(MetadataCriterion.exact_match(instance_id),))
 
     def matches_metadata(self, job_run):
         return not self.metadata_criteria or any(c(job_run.metadata) for c in self.metadata_criteria)
@@ -705,10 +702,10 @@ class JobRunCriteria(MatchCriteria[JobRun]):
                 return True
         return False
 
-    def __call__(self, job_run: Optional[JobRun]):
+    def __call__(self, job_run: JobRun | None):
         return self.matches(job_run)
 
-    def matches(self, job_run: Optional[JobRun]):
+    def matches(self, job_run: JobRun | None):
         """Check if a job run matches all criteria."""
         if job_run is None:
             return False
@@ -739,53 +736,137 @@ class JobRunCriteria(MatchCriteria[JobRun]):
         return (f"JobRunCriteria(metadata_criteria={self.metadata_criteria!r}, "
                 f"lifecycle_criteria={self.lifecycle_criteria!r}, phase_criteria={self.phase_criteria!r})")
 
-    def _last_lc_criterion(self):
-        """Get or create the last lifecycle criterion for fluent modification.
 
-        Note: The fluent methods (created, started, ended) modify the last lifecycle criterion in place.
-        Calling them multiple times on the same instance updates the same criterion rather than adding new ones.
-        To add separate OR conditions, use `+=` with new LifecycleCriterion instances instead.
-        """
-        if not self.lifecycle_criteria:
-            self.lifecycle_criteria = [LifecycleCriterion()]
-        return self.lifecycle_criteria[-1]
+class JobRunCriteriaBuilder:
+    """Fluent builder for constructing frozen ``JobRunCriteria``.
 
-    def created(self, since=None, until=None, until_incl=False):
-        """Set created time range on the current lifecycle criterion. See _last_lc_criterion for mutation behavior."""
-        self._last_lc_criterion().created = DateTimeRange(since, until, until_incl)
+    Each method call appends one criterion to the appropriate list (OR semantics).
+    To AND multiple fields within a single criterion, construct the criterion object directly
+    and pass it via the typed core methods.
+
+    Example::
+
+        result = (criteria()
+            .pattern("backup*", MatchingStrategy.FN_MATCH)
+            .reached_stage(Stage.ENDED)
+            .build())
+    """
+
+    def __init__(self):
+        self._metadata: list[MetadataCriterion] = []
+        self._lifecycle: list[LifecycleCriterion] = []
+        self._phase: list[PhaseCriterion] = []
+
+    # -- Typed core methods --
+
+    def metadata(self, *criteria: MetadataCriterion) -> Self:
+        """Append one or more metadata criteria."""
+        self._metadata.extend(criteria)
         return self
 
-    def started(self, since=None, until=None, until_incl=False):
-        """Set started time range on the current lifecycle criterion. See _last_lc_criterion for mutation behavior."""
-        self._last_lc_criterion().started = DateTimeRange(since, until, until_incl)
+    def lifecycle(self, *criteria: LifecycleCriterion) -> Self:
+        """Append one or more lifecycle criteria."""
+        self._lifecycle.extend(criteria)
         return self
 
-    def ended(self, since=None, until=None, until_incl=False):
-        """Set ended time range on the current lifecycle criterion. See _last_lc_criterion for mutation behavior."""
-        self._last_lc_criterion().ended = DateTimeRange(since, until, until_incl)
+    def phase(self, *criteria: PhaseCriterion) -> Self:
+        """Append one or more phase criteria."""
+        self._phase.extend(criteria)
         return self
 
-    def add_date_filters(self, for_stage: Stage, from_date=None, to_date=None,
-                         today=False, yesterday=False, week=False, fortnight=False,
-                         three_weeks=False, four_weeks=False, month=False, days_back=None):
-        """
-        Apply date filtering options using OR logic on specified timestamp field.
+    # -- Convenience: metadata --
+
+    def pattern(self, text: str, strategy: MatchingStrategy = MatchingStrategy.EXACT) -> Self:
+        """Append a metadata criterion parsed from a pattern string."""
+        self._metadata.append(MetadataCriterion.parse(text, strategy))
+        return self
+
+    def patterns_or_all(self, patterns: Iterable[str] | None,
+                        strategy: MatchingStrategy = MatchingStrategy.EXACT) -> Self:
+        """Append a metadata criterion for each pattern, or match-all if patterns is empty/None."""
+        added = False
+        for p in (patterns or ()):
+            self._metadata.append(MetadataCriterion.parse(p, strategy))
+            added = True
+        if not added:
+            self._metadata.append(MetadataCriterion.all_match())
+        return self
+
+    def job(self, job_id: str, strategy: MatchingStrategy = MatchingStrategy.EXACT) -> Self:
+        """Append a metadata criterion matching a job ID."""
+        self._metadata.append(MetadataCriterion(job_id=job_id, strategy=strategy))
+        return self
+
+    def instance(self, instance_id: InstanceID) -> Self:
+        """Append a metadata criterion matching a specific instance."""
+        self._metadata.append(MetadataCriterion.exact_match(instance_id))
+        return self
+
+    def all_except(self, instance_id: InstanceID) -> Self:
+        """Append a metadata criterion matching everything except a specific instance."""
+        self._metadata.append(MetadataCriterion.all_except(instance_id))
+        return self
+
+    # -- Convenience: lifecycle --
+
+    def created(self, since=None, until=None, until_incl=False) -> Self:
+        """Append a lifecycle criterion filtering by creation timestamp."""
+        self._lifecycle.append(LifecycleCriterion(created=DateTimeRange(since, until, until_incl)))
+        return self
+
+    def started(self, since=None, until=None, until_incl=False) -> Self:
+        """Append a lifecycle criterion filtering by start timestamp."""
+        self._lifecycle.append(LifecycleCriterion(started=DateTimeRange(since, until, until_incl)))
+        return self
+
+    def ended(self, since=None, until=None, until_incl=False) -> Self:
+        """Append a lifecycle criterion filtering by end timestamp."""
+        self._lifecycle.append(LifecycleCriterion(ended=DateTimeRange(since, until, until_incl)))
+        return self
+
+    def reached_stage(self, stage: Stage) -> Self:
+        """Append a lifecycle criterion matching runs that reached the given stage."""
+        self._lifecycle.append(LifecycleCriterion.reached_stage(stage))
+        return self
+
+    def termination(self, criterion: TerminationCriterion) -> Self:
+        """Append a lifecycle criterion wrapping a termination criterion."""
+        self._lifecycle.append(LifecycleCriterion(termination=criterion))
+        return self
+
+    def termination_status(self, status: TerminationStatus) -> Self:
+        """Append a lifecycle criterion matching a specific termination status."""
+        return self.termination(TerminationCriterion(status=status))
+
+    def termination_outcome(self, outcome: Outcome) -> Self:
+        """Append a lifecycle criterion matching a specific outcome category."""
+        return self.termination(TerminationCriterion(outcome=outcome))
+
+    def success(self) -> Self:
+        """Append a lifecycle criterion matching successful runs."""
+        return self.termination(TerminationCriterion(success=True))
+
+    def nonsuccess(self) -> Self:
+        """Append a lifecycle criterion matching non-successful runs."""
+        return self.termination(TerminationCriterion(success=False))
+
+    def during(self, for_stage: Stage, from_date=None, to_date=None,
+                     today=False, yesterday=False, week=False, fortnight=False,
+                     three_weeks=False, four_weeks=False, month=False, days_back=None) -> Self:
+        """Append lifecycle criteria for each specified date filter (OR logic).
 
         Args:
-            for_stage: Which timestamp field to filter on (CREATED, RUNNING, ENDED)
-            from_date: Start date string
-            to_date: End date string
-            today: Filter for today
-            yesterday: Filter for yesterday
-            week: Filter for last week
-            fortnight: Filter for last 2 weeks
-            three_weeks: Filter for last 3 weeks
-            four_weeks: Filter for last 4 weeks
-            month: Filter for last month
-            days_back: Filter for N days back
-
-        Returns:
-            Self for method chaining
+            for_stage: Which timestamp field to filter on (CREATED, RUNNING, ENDED).
+            from_date: Start date string.
+            to_date: End date string.
+            today: Filter for today.
+            yesterday: Filter for yesterday.
+            week: Filter for last week.
+            fortnight: Filter for last 2 weeks.
+            three_weeks: Filter for last 3 weeks.
+            four_weeks: Filter for last 4 weeks.
+            month: Filter for last month.
+            days_back: Filter for N days back.
         """
         date_ranges = []
 
@@ -808,10 +889,23 @@ class JobRunCriteria(MatchCriteria[JobRun]):
         if days_back is not None:
             date_ranges.append(DateTimeRange.days_range(-days_back, to_utc=True))
 
-        for date_range in date_ranges:
-            self += LifecycleCriterion().set_date_range(date_range, for_stage)
+        for dr in date_ranges:
+            self._lifecycle.append(LifecycleCriterion.for_date_range(dr, for_stage))
 
         return self
+
+    def build(self) -> JobRunCriteria:
+        """Construct the frozen ``JobRunCriteria``."""
+        return JobRunCriteria(
+            metadata_criteria=tuple(self._metadata),
+            lifecycle_criteria=tuple(self._lifecycle),
+            phase_criteria=tuple(self._phase),
+        )
+
+
+def criteria() -> JobRunCriteriaBuilder:
+    """Shorthand for ``JobRunCriteria.builder()``."""
+    return JobRunCriteriaBuilder()
 
 
 class SortOption(str, Enum):

@@ -20,4 +20,4 @@ def test_get_outcomes():
     assert success_outcomes == {Outcome.SUCCESS}
 
     nonsuccess_outcomes = Outcome.get_outcomes(success=False)
-    assert nonsuccess_outcomes == {Outcome.ABORTED, Outcome.REJECTED, Outcome.FAULT}
+    assert nonsuccess_outcomes == {Outcome.ABORTED, Outcome.REJECTED, Outcome.FAULT, Outcome.IGNORED}
