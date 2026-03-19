@@ -27,7 +27,7 @@ from typing import Callable, Optional, Iterable, List, override
 
 from runtools.runcore import paths, util, db, output
 from runtools.runcore.client import LocalInstanceClient
-from runtools.runcore.criteria import JobRunCriteria, SortOption
+from runtools.runcore.matching import JobRunCriteria, SortOption
 from runtools.runcore.db import PersistenceDisabledError, sqlite
 from runtools.runcore.env import LocalEnvironmentConfig, \
     EnvironmentConfigUnion, EnvironmentNotFoundError, DEFAULT_LOCAL_ENVIRONMENT, get_env_config

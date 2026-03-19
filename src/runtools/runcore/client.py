@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from json import JSONDecodeError
 from typing import List, Any, Optional, TypeVar, Generic, Callable, Iterable
 
-from runtools.runcore.criteria import JobRunCriteria
+from runtools.runcore.matching import JobRunCriteria
 from runtools.runcore.err import RuntoolsException
 from runtools.runcore.job import JobRun, InstanceID
 from runtools.runcore.run import StopReason

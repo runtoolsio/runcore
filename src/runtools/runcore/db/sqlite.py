@@ -11,7 +11,7 @@ from threading import Lock
 from typing import List, Iterator, override
 
 from runtools.runcore import paths
-from runtools.runcore.criteria import LifecycleCriterion, SortOption
+from runtools.runcore.matching import LifecycleCriterion, SortOption
 from runtools.runcore.db import Persistence, IncompatibleSchemaError
 from runtools.runcore.err import InvalidStateError
 from runtools.runcore.job import (JobStats, JobRun, JobInstanceMetadata, InstanceID, DuplicateInstanceError)

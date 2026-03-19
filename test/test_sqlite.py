@@ -3,7 +3,7 @@ from datetime import timedelta
 
 import pytest
 
-from runtools.runcore.criteria import criteria, JobRunCriteria, LifecycleCriterion
+from runtools.runcore.matching import criteria, JobRunCriteria, LifecycleCriterion
 from runtools.runcore.db import sqlite, IncompatibleSchemaError
 from runtools.runcore.db.sqlite import SCHEMA_VERSION
 from runtools.runcore.job import DuplicateInstanceError, InstanceID

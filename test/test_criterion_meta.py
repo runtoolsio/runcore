@@ -1,6 +1,6 @@
 from operator import eq
 
-from runtools.runcore.criteria import MetadataCriterion
+from runtools.runcore.matching import MetadataCriterion
 from runtools.runcore.job import JobInstanceMetadata, InstanceID
 from runtools.runcore.util import MatchingStrategy
 

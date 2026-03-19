@@ -29,7 +29,7 @@ from typing import Dict, Any, Optional, override
 from pydantic import BaseModel, Field
 
 from runtools import runcore
-from runtools.runcore.criteria import SortOption
+from runtools.runcore.matching import SortOption
 from runtools.runcore.err import RuntoolsException
 from runtools.runcore.job import InstanceLifecycleObserver, InstanceLifecycleEvent, InstanceID, JobRun
 from runtools.runcore.retention import RetentionPolicy

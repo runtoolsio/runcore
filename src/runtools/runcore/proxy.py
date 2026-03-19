@@ -1,7 +1,7 @@
 from typing import override
 
 from runtools.runcore.client import TargetNotFoundError, InstanceCallError
-from runtools.runcore.criteria import JobRunCriteria, MetadataCriterion
+from runtools.runcore.matching import JobRunCriteria, MetadataCriterion
 from runtools.runcore.err import RuntoolsException
 from runtools.runcore.job import (
     JobRun, JobInstance, InstanceID, InstanceNotifications, InstanceObservableNotifications,
