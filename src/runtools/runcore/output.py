@@ -10,7 +10,7 @@ from urllib.parse import urlparse, unquote
 from urllib.request import pathname2url
 
 from itertools import count
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from runtools.runcore import paths, util
 from runtools.runcore.err import InvalidStateError
@@ -264,6 +264,8 @@ class MultiSourceOutputReader:
 
 
 class OutputStorageConfig(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     enabled: bool = Field(default=False, description="Enable output storage")
     type: str = Field(default="file", description="Storage backend type")
 
@@ -281,7 +283,10 @@ OutputStorageConfigUnion = FileOutputStorageConfig
 
 
 class OutputConfig(BaseModel):
-    tail_buffer_size: int = Field(default=DEFAULT_TAIL_BUFFER_SIZE, description="Max bytes for in-memory tail buffer")
+    model_config = ConfigDict(frozen=True)
+
+    default_tail_buffer_size: int = Field(default=DEFAULT_TAIL_BUFFER_SIZE,
+                                          description="Default max bytes for in-memory tail buffer")
     storages: list[OutputStorageConfigUnion] = Field(
         default_factory=lambda: [FileOutputStorageConfig(enabled=True)],
         description="Output storage configurations",

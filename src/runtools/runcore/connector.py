@@ -16,26 +16,26 @@ The module provides factory methods for quickly creating commonly used connector
         active_runs = connector.get_active_runs()
 """
 
-import fcntl
 import logging
 import shutil
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
 from threading import Event, Lock
-from dataclasses import dataclass
 from typing import Callable, Optional, Iterable, List, override
 
-from runtools.runcore import paths, util, db, output
+import fcntl
+
+from runtools.runcore import paths, util, output
 from runtools.runcore.client import LocalInstanceClient
-from runtools.runcore.matching import JobRunCriteria, SortOption
-from runtools.runcore.db import PersistenceDisabledError, sqlite
-from runtools.runcore.env import LocalEnvironmentConfig, \
-    EnvironmentConfigUnion, EnvironmentNotFoundError, DEFAULT_LOCAL_ENVIRONMENT, get_env_config
+from runtools.runcore.db import EnvironmentDatabase
+from runtools.runcore.env import LocalEnvironmentConfig, EnvironmentConfigUnion, EnvironmentEntry, \
+    _open_environment, resolve_env_ref
 from runtools.runcore.err import run_isolated_collect_exceptions
 from runtools.runcore.job import InstanceNotifications, JobInstance, InstanceLifecycleObserver, InstanceLifecycleEvent, \
     JobRun, InstanceID
 from runtools.runcore.listening import EventReceiver, InstanceEventReceiver
-from runtools.runcore.paths import ConfigFileNotFoundError
+from runtools.runcore.matching import JobRunCriteria, SortOption
 from runtools.runcore.proxy import JobInstanceProxy
 
 log = logging.getLogger(__name__)
@@ -291,11 +291,6 @@ class EnvironmentConnector(ABC):
         self.open()
         return self
 
-    @property
-    @abstractmethod
-    def persistence_enabled(self) -> bool:
-        pass
-
     @abstractmethod
     def open(self):
         pass
@@ -310,10 +305,7 @@ class EnvironmentConnector(ABC):
         runs = self.get_active_runs(criteria)
         if runs:
             return runs[0]
-        try:
-            runs = self.read_runs(criteria, asc=False, limit=1, offset=0)
-        except PersistenceDisabledError:
-            return None
+        runs = self.read_runs(criteria, asc=False, limit=1, offset=0)
         return runs[0] if runs else None
 
     @abstractmethod
@@ -488,39 +480,35 @@ class EnvironmentConnector(ABC):
         pass
 
 
-def create(env_config: EnvironmentConfigUnion) -> EnvironmentConnector:
-    """Create a connector from an environment configuration.
-
-    Args:
-        env_config (EnvironmentConfigUnion): Environment configuration that determines the connector type and settings.
-
-    Returns:
-        EnvironmentConnector: Configured connector for the environment.
-    """
+def _create(env_db: EnvironmentDatabase, env_config: EnvironmentConfigUnion) -> EnvironmentConnector:
+    """Internal: create a connector from an environment database and configuration."""
     if isinstance(env_config, LocalEnvironmentConfig):
-        persistence = db.create_persistence(env_config.id, env_config.persistence)
         output_backends = output.create_backends(env_config.id, env_config.output.storages)
         layout = StandardLocalConnectorLayout.from_config(env_config)
-        return _local(env_config.id, persistence, layout, output_backends)
+        return _local(env_config.id, env_db, layout, output_backends)
 
     raise AssertionError(f"Unsupported environment type: {env_config.type}. This is a programming error.")
 
 
-def _local(env_id, persistence, connector_layout, output_backends=()) -> EnvironmentConnector:
+def _local(env_id, env_db, connector_layout, output_backends=()) -> EnvironmentConnector:
     clean_stale_component_dirs(connector_layout.env_dir)
     client = LocalInstanceClient(connector_layout.server_sockets_provider)
     event_receiver = EventReceiver(connector_layout.listener_events_socket_path)
-    return LocalConnector(env_id, connector_layout, persistence, client, event_receiver, output_backends)
+    return LocalConnector(env_id, connector_layout, env_db, client, event_receiver, output_backends)
 
 
-def connect(env_id: Optional[str] = None) -> EnvironmentConnector:
-    """Connect to an environment by ID, falling back to default local config if no config exists."""
+def connect(env_ref: EnvironmentEntry | str | None = None) -> EnvironmentConnector:
+    """Connect to an environment. Opens DB, reads config, creates connector.
+
+    Args:
+        env_ref: Environment entry, env_id string, or None for built-in local.
+    """
+    env_db, config = _open_environment(resolve_env_ref(env_ref))
     try:
-        return create(get_env_config(env_id))
-    except (EnvironmentNotFoundError, ConfigFileNotFoundError):
-        env_id = env_id or DEFAULT_LOCAL_ENVIRONMENT
-        log.debug(f"No config entry for environment '{env_id}', using default local config")
-        return create(LocalEnvironmentConfig(id=env_id))
+        return _create(env_db, config)
+    except BaseException:
+        env_db.close()
+        raise
 
 
 class LocalConnector(EnvironmentConnector):
@@ -532,11 +520,11 @@ class LocalConnector(EnvironmentConnector):
     and history. It handles both live job data via RPC calls and historical job data through persistence.
     """
 
-    def __init__(self, env_id, connector_layout, persistence, client, event_receiver, output_backends=()):
+    def __init__(self, env_id, connector_layout, env_db, client, event_receiver, output_backends=()):
         self._notifications = InstanceEventReceiver()
         self._env_id = env_id
         self._layout = connector_layout
-        self._persistence = persistence
+        self._db = env_db
         self._client = client
         self._event_receiver = event_receiver
         self._output_backends = tuple(output_backends)
@@ -552,16 +540,11 @@ class LocalConnector(EnvironmentConnector):
         return self._env_id
 
     @property
-    def persistence_enabled(self) -> bool:
-        return self._persistence.enabled
-
-    @property
     @override
     def output_backends(self):
         return self._output_backends
 
     def open(self):
-        self._persistence.open()
         self._event_receiver.start()
 
     def get_active_runs(self, run_match=None):
@@ -613,19 +596,19 @@ class LocalConnector(EnvironmentConnector):
         return instances
 
     def read_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
-        return self._persistence.read_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+        return self._db.read_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
 
     def iter_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
-        return self._persistence.iter_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+        return self._db.iter_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
 
     def read_run_stats(self, run_match=None):
-        return self._persistence.read_run_stats(run_match)
+        return self._db.read_run_stats(run_match)
 
     def remove_history_runs(self, run_match):
         active = self.get_active_runs(run_match)
         if active:
             raise ValueError(f"Cannot remove active runs: {', '.join(str(r.instance_id) for r in active)}")
-        removed_ids = self._persistence.remove_runs(run_match)
+        removed_ids = self._db.remove_runs(run_match)
         for backend in self._output_backends:
             backend.delete_output(*removed_ids)
         return removed_ids
@@ -635,7 +618,7 @@ class LocalConnector(EnvironmentConnector):
             "Errors during closing local environment",
             self._event_receiver.close,
             self._client.close,
-            self._persistence.close,
+            self._db.close,
             *(b.close for b in self._output_backends),
             self._layout.cleanup,
         )

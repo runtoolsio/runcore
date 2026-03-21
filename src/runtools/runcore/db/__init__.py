@@ -1,37 +1,44 @@
 """
-Persistence layer for storing and retrieving job run history.
+Environment database layer.
 
-This package provides a pluggable persistence abstraction with database-specific implementations
-loaded dynamically via :func:`load_database_module`. The default implementation uses SQLite.
-
-Environment nodes use :class:`PersistingObserver` to automatically store job runs on completion,
-while connectors use persistence for reading job run history.
+Each environment has a database that stores configuration, run history, and (future) permissions.
+The database is not optional — every environment has one, though it may be transient/in-memory
+for testing (in-process environments).
 
 Key Components:
-    Persistence: Abstract base class defining the storage interface for job runs.
-    NullPersistence: No-op implementation used when persistence is disabled.
-    PersistenceConfig: Pydantic model for configuring persistence settings.
-    PersistingObserver: Lifecycle observer that auto-persists job runs on completion.
+    EnvironmentDatabase: ABC combining ConfigStorage and RunStorage over a single backing store.
+    ConfigStorage: Protocol for environment configuration (config table).
+    RunStorage: Protocol for job run history (runs table).
+    PersistingObserver: Lifecycle observer that auto-stores job runs on completion.
 
 Factory Functions:
-    create_persistence: Creates a Persistence instance from config.
-    load_database_module: Dynamically loads a database backend module.
+    load_database_module: Dynamically loads a database backend module (e.g., sqlite).
+
+Driver Module Contract:
+    Each driver module must expose four module-level functions:
+
+    create_environment(entry, config) -> None
+        Provision the backing store, init schema, and seed config.
+    create(entry, **kwargs) -> EnvironmentDatabase
+        Return an (unopened) database handle for an existing environment.
+    exists(entry) -> bool
+        Check whether the backing store for the entry exists.
+    delete(entry) -> None
+        Delete the backing store if it exists.
 
 See Also:
-    runtools.runcore.db.sqlite: SQLite implementation with batch fetching.
+    runtools.runcore.db.sqlite: SQLite implementation.
 """
 
 import importlib
 import pkgutil
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, override
-
-from pydantic import BaseModel, Field
+from typing import Any, Iterator
 
 from runtools import runcore
-from runtools.runcore.matching import SortOption
 from runtools.runcore.err import RuntoolsException
 from runtools.runcore.job import InstanceLifecycleObserver, InstanceLifecycleEvent, InstanceID, JobRun
+from runtools.runcore.matching import SortOption
 from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.run import Stage
 
@@ -41,12 +48,11 @@ _db_modules = {}
 
 
 def load_database_module(db_type):
-    """
-    Load a database backend module by type name.
+    """Load a database backend module by type name.
 
     Searches for a submodule named `db_type` within the ``runtools.runcore.db`` package
     and returns it. The module is expected to provide a ``create()`` factory function
-    that returns a :class:`Persistence` instance.
+    that returns an :class:`EnvironmentDatabase` instance.
 
     Args:
         db_type: Database type identifier (e.g., "sqlite").
@@ -63,34 +69,18 @@ def load_database_module(db_type):
 
     for finder, name, is_pkg in pkgutil.iter_modules(runcore.db.__path__, runcore.db.__name__ + "."):
         if name == runcore.db.__name__ + "." + db_type:
-            return importlib.import_module(name)
+            module = importlib.import_module(name)
+            _db_modules[db_type] = module
+            return module
 
     raise DatabaseNotFoundError(runcore.db.__name__ + "." + db_type)
-
-
-def create_persistence(env_id, persistence_config):
-    """
-    Create a Persistence instance from configuration.
-
-    Args:
-        env_id: Environment identifier, used to locate the database for the environment when not provided in the config.
-        persistence_config: A :class:`PersistenceConfig` specifying the database type and settings.
-
-    Returns:
-        A :class:`Persistence` instance, or :class:`NullPersistence` if persistence is disabled.
-    """
-    if not persistence_config.enabled:
-        return NullPersistence()
-
-    return load_database_module(persistence_config.type).create(
-        env_id=env_id, database=persistence_config.database, **persistence_config.params)
 
 
 class DatabaseNotFoundError(RuntoolsException):
 
     def __init__(self, module_):
         super().__init__(f'Cannot find database module {module_}. Ensure this module is installed '
-                         f'or check that the provided persistence type value is correct.')
+                         f'or check that the provided database driver is correct.')
 
 
 class IncompatibleSchemaError(RuntoolsException):
@@ -103,53 +93,31 @@ class IncompatibleSchemaError(RuntoolsException):
         self.expected_version = expected_version
 
 
-class PersistenceConfig(BaseModel):
-    type: str
-    enabled: bool = True
-    database: Optional[str] = Field(default=None)
-    params: Dict[str, Any] = Field(default_factory=dict)
+class ConfigStorage(ABC):
+    """Environment configuration stored in the database."""
 
-    @classmethod
-    def default_sqlite(cls):
-        return cls(type="sqlite", enabled=True)
+    @abstractmethod
+    def load_config(self, env_id: str) -> dict[str, Any]:
+        """Load environment config as a dict ready for Pydantic validation.
 
-    @classmethod
-    def in_memory_sqlite(cls):
-        return cls(type="sqlite", enabled=True, database=":memory:")
+        Returns a dict with 'id' (injected) and all stored config keys with parsed values.
+        """
+
+    @abstractmethod
+    def save_config(self, env_id: str, config: dict[str, Any]):
+        """Replace all stored config keys.
+
+        Performs a full replace (delete + insert). The dict should contain
+        top-level config keys with JSON-serializable values (excluding id).
+        """
 
 
-class Persistence(ABC):
-    """
-    Abstract base class defining the storage interface for job run history.
-
-    Environment nodes use persistence (via :class:`PersistingObserver`) to automatically store job runs
-    when they complete. Connectors use persistence to read job history for querying and monitoring.
-
-    Implementations must provide methods for reading, writing, and cleaning up job run records.
-    The default implementation is :class:`~runtools.runcore.db.sqlite.SQLite`. Use :class:`NullPersistence`
-    when persistence should be disabled.
-
-    Lifecycle:
-        Call :meth:`open` before any read/write operations, and :meth:`close` when done.
-        Supports context manager protocol for automatic resource management.
-
-    See Also:
-        :func:`create_persistence`: Factory function to create instances from configuration.
-        :class:`PersistingObserver`: Observer that auto-persists job runs on completion.
-    """
-
-    @property
-    def enabled(self):
-        """Whether this persistence instance is enabled. Returns False for :class:`NullPersistence`."""
-        return True
-
-    def open(self):
-        """Open the persistence connection. Must be called before any read/write operations."""
-        pass
+class RunStorage(ABC):
+    """Job run history stored in the database."""
 
     @abstractmethod
     def init_run(self, job_id: str, run_id: str, user_params=None, *,
-                     auto_increment: bool = False, max_retries: int = 5) -> 'InstanceID':
+                 auto_increment: bool = False, max_retries: int = 5) -> InstanceID:
         """Insert a partial record at instance creation time.
 
         Semantics:
@@ -157,188 +125,73 @@ class Persistence(ABC):
               already exists, raise DuplicateInstanceError.
             - auto_increment=True: allocate the next free ordinal for (job_id, run_id),
               insert, and return the concrete InstanceID.
-
-        Args:
-            job_id: The job identifier.
-            run_id: The run identifier.
-            user_params: Optional user-defined parameters.
-            auto_increment: If True, automatically assign the next available ordinal.
-
-        Returns:
-            InstanceID: The instance ID of the inserted record.
-
-        Raises:
-            DuplicateInstanceError: If a duplicate exists and auto_increment is False.
         """
 
     @abstractmethod
-    def read_runs(self, run_match=None, sort=SortOption.CREATED, *, asc, limit, offset, last=False):
-        """
-        Fetch ended job runs matching the specified criteria.
-
-        Args:
-            run_match (JobRunCriteria): Criteria to filter job instances. None returns all records.
-            sort (SortOption): Field to sort by (default: CREATED).
-            asc (bool): Sort ascending if True, descending if False.
-            limit (int): Maximum records to return (-1 for unlimited).
-            offset (int): Number of records to skip (-1 for no offset).
-            last (bool): If True, return only the most recent run for each job.
-
-        Returns:
-            list[JobRun]: Matching job runs.
-        """
-        pass
+    def read_runs(self, run_match=None, sort=SortOption.CREATED, *, asc, limit, offset, last=False) -> list[JobRun]:
+        """Fetch ended job runs matching the specified criteria."""
 
     @abstractmethod
     def iter_runs(self, run_match=None, sort=SortOption.CREATED, *,
-                  asc=True, limit=-1, offset=-1, last=False):
-        """
-        Iterate over ended job runs matching the specified criteria.
-
-        Memory-efficient access to job runs by yielding results one at a time.
-
-        Returns:
-            Iterator[JobRun]: Iterator over matching job run records.
-        """
-        pass
+                  asc=True, limit=-1, offset=-1, last=False) -> Iterator[JobRun]:
+        """Iterate over ended job runs matching the specified criteria."""
 
     @abstractmethod
     def read_run_stats(self, run_match=None):
-        """
-        Compute aggregate statistics for jobs matching the specified criteria.
-
-        Args:
-            run_match (JobRunCriteria): Criteria to filter job instances. None includes all records.
-
-        Returns:
-            List[JobStats]: Statistics for each job including count, timing, and failure information.
-        """
-        pass
+        """Compute aggregate statistics for jobs matching the specified criteria."""
 
     @abstractmethod
     def store_runs(self, *job_runs):
-        """
-        Store one or more completed job runs.
-
-        Args:
-            *job_runs (JobRun): Job run instances to persist.
-        """
-        pass
+        """Store one or more completed job runs."""
 
     @abstractmethod
-    def remove_runs(self, run_match) -> list:
-        """
-        Remove job runs matching the specified criteria.
-
-        Args:
-            run_match (JobRunCriteria): Criteria identifying which job runs to delete.
-
-        Returns:
-            list[InstanceID]: Instance IDs of deleted runs.
-
-        Raises:
-            ValueError: If no criteria provided (to prevent accidental deletion of all records).
-        """
-        pass
+    def remove_runs(self, run_match) -> list[InstanceID]:
+        """Remove job runs matching the specified criteria."""
 
     @abstractmethod
     def enforce_retention(self, job_id: str, policy: RetentionPolicy):
-        """Prune old runs according to retention policy.
+        """Prune old runs according to retention policy."""
 
-        Args:
-            job_id: Job whose runs were just stored — per-job limit is applied to this job.
-            policy: Retention policy with per-job and per-env limits.
-        """
-        pass
+
+class EnvironmentDatabase(ConfigStorage, RunStorage, ABC):
+    """The environment's database — a single store implementing both ConfigStorage and RunStorage.
+
+    Lifecycle:
+        Call :meth:`open` before any read/write operations, and :meth:`close` when done.
+        Supports context manager protocol for automatic resource management.
+    """
+
+    @abstractmethod
+    def open(self):
+        """Open the database connection. Must be called before any operations."""
 
     @abstractmethod
     def close(self):
-        """Close the persistence connection and release resources."""
-        pass
+        """Close the database connection and release resources."""
 
+    def __enter__(self):
+        self.open()
+        return self
 
-class NullPersistence(Persistence):
-    """
-    A no-op persistence. .enabled == False, and any attempt to read/write
-    will raise PersistenceDisabledError so callers can distinguish "no-data"
-    from "disabled".
-    """
-
-    @property
-    @override
-    def enabled(self) -> bool:
-        return False
-
-    @override
-    def init_run(self, job_id, run_id, user_params=None, *, auto_increment=False):
-        # TODO: Restore no-persistence execution support. The new admission flow depends on
-        # init_run() for ordinal allocation and duplicate handling, so disabled persistence
-        # currently blocks instance creation entirely.
-        raise PersistenceDisabledError  # TODO
-
-    @override
-    def read_runs(self, run_match=None, sort=SortOption.CREATED, *, asc, limit, offset, last=False):
-        raise PersistenceDisabledError("Persistence is disabled; no runs available.")
-
-    @override
-    def iter_runs(self, run_match=None, sort=SortOption.CREATED, *,
-                  asc=True, limit=-1, offset=-1, last=False):
-        raise PersistenceDisabledError("Persistence is disabled; no runs available.")
-
-    @override
-    def read_run_stats(self, run_match=None) -> dict:
-        raise PersistenceDisabledError("Persistence is disabled; no stats available.")
-
-    @override
-    def store_runs(self, *job_runs) -> None:
-        pass
-
-    @override
-    def remove_runs(self, run_match) -> list:
-        return []
-
-    @override
-    def enforce_retention(self, job_id: str, policy: RetentionPolicy) -> None:
-        pass
-
-    @override
-    def close(self) -> None:
-        pass
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
 
 
 class PersistingObserver(InstanceLifecycleObserver):
-    """
-    Lifecycle observer that automatically persists job runs when they complete.
+    """Lifecycle observer that automatically stores job runs when they complete.
 
     Important:
         Register this observer with high priority (low number) to ensure runs are stored before
         other observers are notified. This prevents race conditions where another observer checks
-        persistence for a run that hasn't been stored yet.
-
-    Example race condition with wait command if priority is not set correctly::
-
-        1. Run ended event -> notification before wait set up its observer
-        2. Wait set up observer now and check persistence <-- no event
-        3. Run stored to persistence
-        4. -> Event missed by wait <-
+        the database for a run that hasn't been stored yet.
     """
 
-    def __init__(self, persistence):
+    def __init__(self, run_storage: RunStorage):
+        """Args:
+            run_storage: The RunStorage to store job runs to.
         """
-        Args:
-            persistence (Persistence): The persistence instance to store job runs to.
-        """
-        self._persistence = persistence
+        self._run_storage = run_storage
 
     def instance_lifecycle_update(self, event: InstanceLifecycleEvent):
         if event.new_stage == Stage.ENDED:
-            self._persistence.store_runs(event.job_run)
-
-
-class PersistenceDisabledError(RuntoolsException):
-    """
-    Raised when attempting to read from or query a disabled persistence layer.
-
-    This error is thrown by :class:`NullPersistence` to distinguish between "no data found" and "persistence is disabled".
-    """
-    pass
+            self._run_storage.store_runs(event.job_run)

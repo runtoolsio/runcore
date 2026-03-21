@@ -56,6 +56,18 @@ def read_toml_file(file_path) -> Dict[str, Any]:
         return tomllib.load(file)
 
 
+def write_toml_file(file_path, data: Dict[str, Any]):
+    """Write a dictionary as TOML to a file.
+
+    Args:
+        file_path (str|Path): The path to write to.
+        data: The dictionary to serialize as TOML.
+    """
+    with open(file_path, 'w') as f:
+        f.write(format_toml(data))
+        f.write('\n')
+
+
 def format_toml(data: Dict[str, Any], _prefix: str = "") -> str:
     """
     Format a dictionary as a TOML string.

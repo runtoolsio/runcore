@@ -20,6 +20,12 @@ from runtools.runcore.err import RuntoolsException
 
 CONFIG_DIR = 'runtools'
 JOBS_FILE = 'jobs.toml'
+REGISTRY_FILE = 'environments.toml'
+
+
+def registry_path() -> Path:
+    """Returns path to the environment registry file (~/.config/runtools/environments.toml)."""
+    return xdg_config_home() / CONFIG_DIR / REGISTRY_FILE
 
 
 def expand_user(file):

@@ -1,5 +1,5 @@
 """
-Persistence storage implementation using SQLite with batch fetching to avoid lock starvation.
+SQLite implementation of EnvironmentDatabase with batch fetching to avoid lock starvation.
 """
 
 import datetime
@@ -7,14 +7,15 @@ import json
 import logging
 import sqlite3
 from functools import wraps
+from pathlib import Path
 from threading import Lock
 from typing import List, Iterator, override
 
 from runtools.runcore import paths
-from runtools.runcore.matching import LifecycleCriterion, SortOption
-from runtools.runcore.db import Persistence, IncompatibleSchemaError
+from runtools.runcore.db import EnvironmentDatabase, IncompatibleSchemaError
 from runtools.runcore.err import InvalidStateError
 from runtools.runcore.job import (JobStats, JobRun, JobInstanceMetadata, InstanceID, DuplicateInstanceError)
+from runtools.runcore.matching import LifecycleCriterion, SortOption
 from runtools.runcore.output import OutputLocation
 from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.run import TerminationStatus, Outcome, PhaseRun, Fault, Stage
@@ -24,17 +25,45 @@ from runtools.runcore.util.dt import utc_now
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 DEFAULT_BATCH_SIZE = 100
 
 
-def create(*, env_id, database=None, **kwargs):
+def _resolve_path(entry) -> Path:
+    """Resolve the database file path from an EnvironmentEntry."""
+    return Path(paths.expand_user(entry.location)) if entry.location else paths.sqlite_db_path(entry.id)
+
+
+def exists(entry) -> bool:
+    """Check if the SQLite database file exists."""
+    return _resolve_path(entry).exists()
+
+
+def delete(entry) -> None:
+    """Delete the SQLite database file if it exists."""
+    db_file = _resolve_path(entry)
+    if db_file.exists():
+        db_file.unlink()
+
+
+def create_environment(entry, config) -> None:
+    """Create a new environment: provision backing store, init schema, and seed config.
+
+    Args:
+        entry: EnvironmentEntry describing the database location.
+        config: EnvironmentConfig to seed as the initial configuration.
+    """
+    _resolve_path(entry).parent.mkdir(parents=True, exist_ok=True)
+    with create(entry) as db:
+        db.save_config(entry.id, config.model_dump(mode='json', exclude={'id'}))
+
+
+def create(entry, **kwargs):
     """
     Creates SQLite persistence with configurable connection parameters.
 
     Args:
-        env_id: ID of database environment
-        database: Database path or ':memory:' for in-memory database.
+        entry: EnvironmentEntry describing the database location.
         **kwargs: Any valid keyword arguments for sqlite3.connect()
             Common options include:
             - timeout: Float timeout value in seconds (default: 5.0)
@@ -48,16 +77,18 @@ def create(*, env_id, database=None, **kwargs):
     Returns:
         SQLite: Configured SQLite persistence instance
     """
-    # Extract batch_size if provided
     batch_size = kwargs.pop('batch_size', DEFAULT_BATCH_SIZE)
-
-    # Force check_same_thread to False since we're using _conn_lock
     kwargs['check_same_thread'] = False
+    resolved = str(_resolve_path(entry))
 
-    def connection_factory():
-        return sqlite3.connect(database or paths.sqlite_db_path(env_id, create=True), **kwargs)
+    return SQLite(lambda: sqlite3.connect(resolved, **kwargs), batch_size)
 
-    return SQLite(connection_factory, batch_size)
+
+def create_memory(env_id: str, **kwargs) -> 'SQLite':
+    """Create an in-memory SQLite database for testing."""
+    kwargs['check_same_thread'] = False
+    batch_size = kwargs.pop('batch_size', DEFAULT_BATCH_SIZE)
+    return SQLite(lambda: sqlite3.connect(':memory:', **kwargs), batch_size)
 
 
 def ensure_open(f):
@@ -291,7 +322,7 @@ def _to_job_run(r) -> JobRun:
     return JobRun(metadata, root_phase, output_locations, faults, status)
 
 
-class SQLite(Persistence):
+class SQLite(EnvironmentDatabase):
 
     def __init__(self, connection_factory, batch_size=DEFAULT_BATCH_SIZE):
         """
@@ -303,10 +334,6 @@ class SQLite(Persistence):
         self._conn = None
         self._conn_lock = Lock()
         self._batch_size = batch_size
-
-    def __enter__(self):
-        self.open()
-        return self
 
     @override
     def open(self):
@@ -354,6 +381,7 @@ class SQLite(Persistence):
         c.execute('CREATE INDEX runs_ended_idx ON runs (ended)')
         c.execute('CREATE INDEX runs_created_idx ON runs (created)')
         c.execute('CREATE INDEX runs_exec_time_idx ON runs (exec_time)')
+        c.execute('CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
         c.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')
         log.debug('event=[schema_created]')
         self._conn.commit()
@@ -362,7 +390,7 @@ class SQLite(Persistence):
     @override
     @ensure_open
     def init_run(self, job_id, run_id, user_params=None, *, auto_increment=False, max_retries=5):
-        """See `Persistence.init_run`."""
+        """See `RunStorage.init_run`."""
         params_json = json.dumps(dict(user_params)) if user_params else None
         if not auto_increment:
             try:
@@ -393,13 +421,13 @@ class SQLite(Persistence):
     @override
     def read_runs(self, run_match=None, sort=SortOption.ENDED, *,
                   asc=True, limit=-1, offset=-1, last=False) -> list[JobRun]:
-        """See `Persistence.read_runs`."""
+        """See `RunStorage.read_runs`."""
         return list(self.iter_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last))
 
     @override
     def iter_runs(self, run_match=None, sort=SortOption.ENDED, *,
                   asc=True, limit=-1, offset=-1, last=False) -> Iterator[JobRun]:
-        """See `Persistence.iter_runs`.
+        """See `RunStorage.iter_runs`.
 
         Uses batched fetching to minimize lock contention.
         """
@@ -535,7 +563,7 @@ class SQLite(Persistence):
     @override
     @ensure_open
     def read_run_stats(self, run_match=None) -> List[JobStats]:
-        """See `Persistence.read_run_stats`."""
+        """See `RunStorage.read_run_stats`."""
 
         where_clause, where_params = _build_where_clause(run_match, alias='h')
         # Exclude incomplete (init-only) records
@@ -599,7 +627,7 @@ class SQLite(Persistence):
     @override
     @ensure_open
     def store_runs(self, *job_runs):
-        """See `Persistence.store_runs`."""
+        """See `RunStorage.store_runs`."""
 
         def to_tuple(r: JobRun):
             return (json.dumps(dict(r.metadata.user_params)) if r.metadata.user_params else None,
@@ -634,7 +662,7 @@ class SQLite(Persistence):
     @override
     @ensure_open
     def remove_runs(self, run_match):
-        """See `Persistence.remove_runs`."""
+        """See `RunStorage.remove_runs`."""
 
         where_clause, where_params = _build_where_clause(run_match)
         if not where_clause:
@@ -646,8 +674,25 @@ class SQLite(Persistence):
         self._conn.commit()
         return removed
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
+    @override
+    @ensure_open
+    def load_config(self, env_id: str) -> dict:
+        """Load environment config as a dict with parsed JSON values."""
+        c = self._conn.execute("SELECT key, value FROM config")
+        config_dict = {"id": env_id}
+        for key, value_json in c.fetchall():
+            config_dict[key] = json.loads(value_json)
+        return config_dict
+
+    @override
+    @ensure_open
+    def save_config(self, env_id: str, config: dict):
+        """Replace all config from a dict of non-default settings."""
+        self._conn.execute("DELETE FROM config")
+        for key, value in config.items():
+            self._conn.execute(
+                "INSERT INTO config (key, value) VALUES (?, ?)", (key, json.dumps(value)))
+        self._conn.commit()
 
     @override
     def close(self):

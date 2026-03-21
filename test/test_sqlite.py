@@ -3,10 +3,10 @@ from datetime import timedelta
 
 import pytest
 
-from runtools.runcore.matching import criteria, JobRunCriteria, LifecycleCriterion
 from runtools.runcore.db import sqlite, IncompatibleSchemaError
 from runtools.runcore.db.sqlite import SCHEMA_VERSION
 from runtools.runcore.job import DuplicateInstanceError, InstanceID
+from runtools.runcore.matching import criteria, JobRunCriteria, LifecycleCriterion
 from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.run import TerminationStatus, Outcome
 from runtools.runcore.test.job import fake_job_run
@@ -25,7 +25,7 @@ def _init_and_store(db, *job_runs):
 
 @pytest.fixture
 def sut():
-    with sqlite.create(env_id='test_env', database=':memory:') as db:
+    with sqlite.create_memory('test_env') as db:
         yield db
 
 
