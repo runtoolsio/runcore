@@ -159,11 +159,8 @@ def load_registry() -> Dict[str, EnvironmentEntry]:
 
 
 def available_environments() -> list[EnvironmentEntry]:
-    """Return all available environments: built-in local (if DB exists) + registered."""
-    entries = []
-    local_entry = EnvironmentEntry(id=BUILTIN_LOCAL, driver=_SQLITE_DRIVER)
-    if load_database_module(local_entry.driver).exists(local_entry):
-        entries.append(local_entry)
+    """Return all available environments: built-in local + registered."""
+    entries = [EnvironmentEntry(id=BUILTIN_LOCAL, driver=_SQLITE_DRIVER)]
     entries.extend(EnvironmentEntry(id=eid, **data) for eid, data in _load_registry().items())
     return entries
 
@@ -171,7 +168,7 @@ def available_environments() -> list[EnvironmentEntry]:
 def resolve_env_id(env_id: Optional[str] = None) -> str:
     """Non-interactive environment resolver (used by taro).
 
-    Available environments = registered environments + built-in local (if its DB exists).
+    Available environments = built-in local + registered environments.
 
     - If env_id given: return it.
     - If exactly 1 available: return it.
@@ -183,7 +180,7 @@ def resolve_env_id(env_id: Optional[str] = None) -> str:
     available = available_environments()
     if len(available) == 1:
         return available[0].id
-    if not available:
+    if not available:  # Currently unreachable (local always included), but needed once env disabling is implemented
         raise EnvironmentNotFoundError("No environments available. Use -e local or create one with `taro env create`.")
     raise AmbiguousEnvironmentError([e.id for e in available])
 
