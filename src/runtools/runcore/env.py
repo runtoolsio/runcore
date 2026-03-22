@@ -190,21 +190,26 @@ def resolve_env_id(env_id: Optional[str] = None) -> str:
 def _create_env_db(entry: EnvironmentEntry):
     """Create an EnvironmentDatabase instance from an entry (unopened).
 
-    For built-in local: creates the environment on first use.
-    For others: fails fast if the DB doesn't exist.
-
     Raises:
-        EnvironmentNotFoundError: If DB missing (non-builtin only).
-        DatabaseNotFoundError: If the driver module is not available.
+        EnvironmentNotFoundError: If the backing store does not exist.
     """
     driver = load_database_module(entry.driver)
     if not driver.exists(entry):
-        if entry.is_builtin_local:
-            driver.create_environment(entry, LocalEnvironmentConfig(id=entry.id))
-        else:
-            raise EnvironmentNotFoundError(
-                f"Database for environment '{entry.id}' not found", {entry.id})
+        raise EnvironmentNotFoundError(
+            f"Database for environment '{entry.id}' not found", {entry.id})
     return driver.create(entry)
+
+
+def ensure_environment(entry: EnvironmentEntry):
+    """Ensure the built-in local environment's backing store exists, creating it with defaults if needed.
+
+    Only applicable to the built-in local environment. Named environments must be created explicitly.
+    """
+    if not entry.is_builtin_local:
+        return
+    driver = load_database_module(entry.driver)
+    if not driver.exists(entry):
+        driver.create_environment(entry, LocalEnvironmentConfig(id=entry.id))
 
 
 def _open_environment(entry: EnvironmentEntry):
