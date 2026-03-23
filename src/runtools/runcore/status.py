@@ -46,6 +46,15 @@ class Operation:
     result: Optional[str] = None
     failed: bool = False
     source: Optional[str] = None
+    scope: Optional[str] = None
+
+    @property
+    def scoped(self) -> bool:
+        return self.scope is not None
+
+    @property
+    def display_name(self) -> str:
+        return f"{self.name}:{self.scope}" if self.scope else self.name
 
     @property
     def pct_done(self) -> Optional[float]:
@@ -66,6 +75,7 @@ class Operation:
             result=data.get('result'),
             failed=data.get('failed', False),
             source=data.get('source'),
+            scope=data.get('scope'),
         )
 
     def serialize(self) -> dict:
@@ -81,6 +91,8 @@ class Operation:
         }
         if self.failed:
             d['failed'] = True
+        if self.scope is not None:
+            d['scope'] = self.scope
         return d
 
     @property
@@ -132,12 +144,12 @@ class Operation:
         elapsed = self.elapsed
         if elapsed:
             parts.append(elapsed)
-        return f"{self.name} {mark} {' '.join(parts)}" if parts else f"{self.name} {mark}"
+        return f"{self.display_name} {mark} {' '.join(parts)}" if parts else f"{self.display_name} {mark}"
 
     def __str__(self):
         parts = []
         if self.name:
-            parts.append(self.name)
+            parts.append(self.display_name)
         if self.has_progress:
             parts.append(self._progress_str())
         if self.result:
@@ -173,25 +185,25 @@ class Status:
             dto['result'] = self.result.serialize()
         return dto
 
-    def find_operation(self, name: str) -> Optional[Operation]:
-        """
-        Find an operation by its name.
+    def find_operation(self, name: str, scope: Optional[str] = None) -> Optional[Operation]:
+        """Find an operation by name and scope.
 
         Args:
-            name: The name of the operation to find
+            name: The name of the operation to find.
+            scope: The scope to match. None matches only unscoped operations.
 
         Returns:
-            The matching Operation if found, None otherwise
+            The matching Operation if found, None otherwise.
         """
         for operation in self.operations:
-            if operation.name == name:
+            if operation.name == name and operation.scope == scope:
                 return operation
         return None
 
     @property
     def finished_ops_summary(self) -> str:
         """Summary of finished operations: ``Copy ✓ 50 files · Scan ✓ complete (+2 more)``."""
-        finished = [op for op in self.operations if op.finished]
+        finished = [op for op in self.operations if op.finished and not op.scoped]
         if not finished:
             return ""
         shown = finished[:MAX_OPS_IN_SUMMARY]
@@ -217,7 +229,7 @@ class Status:
         if self.result:
             parts.append(self.result.message)
         else:
-            active_ops = [str(op) for op in self.operations if not op.finished]
+            active_ops = [str(op) for op in self.operations if not op.finished and not op.scoped]
             if active_ops:
                 parts.append(" ".join(active_ops))
             elif self.last_event:
