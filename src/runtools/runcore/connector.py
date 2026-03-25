@@ -30,7 +30,7 @@ from runtools.runcore import paths, util, output
 from runtools.runcore.client import LocalInstanceClient
 from runtools.runcore.db import EnvironmentDatabase
 from runtools.runcore.env import LocalEnvironmentConfig, EnvironmentConfigUnion, EnvironmentEntry, \
-    _open_environment, resolve_env_ref
+    _open_environment, resolve_env_ref, ensure_environment
 from runtools.runcore.err import run_isolated_collect_exceptions
 from runtools.runcore.job import InstanceNotifications, JobInstance, InstanceLifecycleObserver, InstanceLifecycleEvent, \
     JobRun, InstanceID
@@ -500,10 +500,15 @@ def _local(env_id, env_db, connector_layout, output_backends=()) -> EnvironmentC
 def connect(env_ref: EnvironmentEntry | str | None = None) -> EnvironmentConnector:
     """Connect to an environment. Opens DB, reads config, creates connector.
 
+    The builtin local environment is auto-provisioned if its backing store doesn't exist yet.
+    Named environments must be created explicitly — connecting to a missing one raises EnvironmentNotFoundError.
+
     Args:
         env_ref: Environment entry, env_id string, or None for built-in local.
     """
-    env_db, config = _open_environment(resolve_env_ref(env_ref))
+    entry = resolve_env_ref(env_ref)
+    ensure_environment(entry)
+    env_db, config = _open_environment(entry)
     try:
         return _create(env_db, config)
     except BaseException:
