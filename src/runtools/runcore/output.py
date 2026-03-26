@@ -96,6 +96,11 @@ class OutputLine:
     source: Optional[str] = None
     fields: Dict[str, any] = None
 
+    @property
+    def is_op_update(self) -> bool:
+        """Whether this line is an operation status update, not meant for human output."""
+        return bool(self.fields and 'operation' in self.fields)
+
     @classmethod
     def deserialize(cls, data: dict) -> 'OutputLine':
         return cls(
