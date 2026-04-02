@@ -828,38 +828,28 @@ class InstanceStatusObserver(abc.ABC):
         pass
 
 
-class JobInstanceManager(ABC):
+class Feature(ABC):
+    """Interface for extending job instance lifecycle with additional functionality.
+
+    Features are notified when instances are added/removed from an environment node.
+    Used both for manual features (passed directly to node) and auto-discovered plugins.
     """
-    Interface for managing job instances. The ambiguous name 'Manager' is used because the
-    subclasses may implement diverse functionalities for the instances registered to this object.
-    """
 
-    @abstractmethod
-    def register_instance(self, job_instance):
-        """
-        Register a new job instance with the manager.
+    def on_open(self):
+        """Called when the environment node opens."""
+        pass
 
-        The specifics of what occurs upon registering an instance depend on the implementing class.
-        The class is not required to keep track of the instance if that is not needed for the provided functionality.
-
-        Args:
-            job_instance: The job instance to be registered.
-        """
+    def on_close(self):
+        """Called when the environment node closes."""
         pass
 
     @abstractmethod
-    def unregister_instance(self, job_instance):
-        """
-        Unregister an existing job instance from the manager.
+    def on_instance_added(self, job_instance: 'JobInstance'):
+        """Called when a new job instance is created and registered."""
 
-        This will trigger any necessary clean-up or de-initialization tasks if needed. The specifics of what occurs
-        upon unregistering an instance depend on the implementing class. It can be ignored if the manager does not
-        track the registered instances.
-
-        Args:
-            job_instance: The job instance to be unregistered.
-        """
-        pass
+    @abstractmethod
+    def on_instance_removed(self, job_instance: 'JobInstance'):
+        """Called when a job instance is removed from the environment."""
 
 
 class InstanceNotifications(ABC):

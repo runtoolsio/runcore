@@ -2,56 +2,38 @@
 Job Instance Plugin Module
 ===========================
 
-Purpose:
---------
-This module provides plugin mechanisms specifically for job instances. By using plugins, additional features
-related to job instance management and monitoring can be introduced, allowing customization based on the
-executing environment (plugins installed in the search path) and custom configuration (enabled plugins).
+Plugins extend job instance lifecycle with additional functionality (notifications, metrics, etc.).
+They are auto-discovered from the ``runtools.plugins`` namespace package and configured per environment.
 
-Plugin Representation:
-----------------------
-Plugins are subclasses of the `Plugin` ABC class and must implement the `JobInstanceManager` interface.
+Plugin API:
+    Subclass ``Plugin`` and implement ``on_instance_added()`` / ``on_instance_removed()``.
+    Plugins receive a config dict on construction from the environment's ``plugins`` config section.
 
-Registration:
--------------
-Plugins are automatically registered when their defining module is imported. The `load_modules` utility function
-can assist in this process.
+Discovery:
+    Plugins are registered automatically when their module is imported. ``load_modules()`` discovers
+    modules in the ``runtools.plugins`` namespace subpackage.
+    See: https://packaging.python.org/en/latest/guides/creating-and-discovering-plugins/#using-namespace-packages
 
-Plugin Location:
-----------------
-By default, the `load_modules` function locates modules in the `runtools.plugins` namespace subpackage. More details
-are available in the official documentation:
-https://packaging.python.org/en/latest/guides/creating-and-discovering-plugins/#using-namespace-packages
-
-Fetching Plugins:
------------------
-Before retrieving plugins, call the `load_modules` function to ensure all required plugins are registered. The
-`Plugin.fetch_plugins` class method can then be used to instantiate the plugins.
-
-Using Plugins:
---------------
-Plugins are designed for use by code that manages job instances. The most common practice is to call
-`register_instance()` when a new job instance is created and `unregister_instance()` when the job instance is
-to be discarded, which typically happens after the instance terminates.
-
-A convenient way to utilize plugins is to use the featured context from the `featurize` module with
-the plugins feature set up. This context then handles the registration and un-registration automatically.
+Lifecycle:
+    ``on_open()``             — environment node opened
+    ``on_instance_added()``   — new job instance created (subscribe to events here)
+    ``on_instance_removed()`` — job instance removed (cleanup)
+    ``on_close()``            — environment node closing (release resources)
 """
 
 
 import importlib
 import logging
 import pkgutil
-from abc import abstractmethod
 from types import ModuleType
 from typing import Dict, Type
 
-from runtools.runcore.job import JobInstanceManager
+from runtools.runcore.job import Feature
 
 log = logging.getLogger(__name__)
 
 
-class Plugin(JobInstanceManager):
+class Plugin(Feature):
     _name2subclass: Dict[str, Type] = {}
     _name2plugin: Dict[str, 'Plugin'] = {}
 
@@ -65,41 +47,32 @@ class Plugin(JobInstanceManager):
         log.debug("event=[plugin_registered] name=[%s] class=[%s]", res_name, cls)
 
     @classmethod
-    def fetch_plugins(cls, names, *, cached=False) -> Dict[str, 'Plugin']:
-        """
-        Instantiates and returns registered plugins based on the provided names.
-        A plugin gets registered once its defining module has been imported.
-
-        If the `cached` parameter is set to `True`, the behavior alters slightly:
-         1. All fetched plugins are stored in a cache.
-         2. If a plugin is already in the cache, it's not instantiated again but instead returned from the cache.
-
-        Note: If the cache is used, it is the code client's responsibility to execute `close_all`
-              when all cached plugins are no longer needed to ensure proper resource cleanup.
+    def fetch_plugins(cls, plugin_configs: Dict[str, dict], *, cached=False) -> Dict[str, 'Plugin']:
+        """Instantiate registered plugins with their configuration.
 
         Args:
-            names (List[str]): Names of the plugins to be fetched.
-            cached (bool): Determines if the listed plugins should be cached or retrieved from the cache.
+            plugin_configs: Mapping of plugin name to plugin-specific config dict.
+            cached: If True, reuse previously cached plugin instances (ignores new config for cached entries).
 
         Returns:
-            Dict[str, 'Plugin']: Dictionary mapping plugin names to their instances.
+            Dict mapping plugin name to instantiated Plugin.
         """
-        if not names:
+        if not plugin_configs:
             raise ValueError("Plugins not specified")
 
         if cached:
-            initialized = {name: cls._name2plugin[name] for name in names if name in cls._name2plugin}
+            initialized = {name: cls._name2plugin[name] for name in plugin_configs if name in cls._name2plugin}
         else:
             initialized = {}
 
-        for name in (name for name in names if name not in initialized):
+        for name, config in ((n, c) for n, c in plugin_configs.items() if n not in initialized):
             try:
                 plugin_cls = Plugin._name2subclass[name]
             except KeyError:
                 log.warning("event=[plugin_not_found] name=[%s]", name)
                 continue
             try:
-                plugin = plugin_cls()
+                plugin = plugin_cls(config)
                 initialized[name] = plugin
                 log.debug("event=[plugin_created] name=[%s] plugin=[%s]", name, plugin)
                 if cached:
@@ -115,26 +88,12 @@ class Plugin(JobInstanceManager):
     def close_all(cls):
         for name, plugin in cls._name2plugin.items():
             try:
-                plugin.close()
+                plugin.on_close()
             except Exception as e:
                 log.warning("event=[plugin_closing_failed] name=[%s] plugin=[%s] detail=[%s]", name, plugin, e)
 
-    @abstractmethod
-    def unregister_after_termination(self):
-        """
-        Determines if the manager of the plugin should always unregister an instance immediately after its termination.
-        This is useful for plugins which operate only with active instances.
-
-        Returns:
-            bool: `True` if the instance should be unregistered post-termination, otherwise `False`.
-        """
-        pass
-
-    @abstractmethod
-    def close(self):
-        """
-        Releases resources held by the plugin when it's no longer needed. (Or ignore when not required...)
-        """
+    def on_close(self):
+        """Releases resources held by the plugin. Called when the environment node closes."""
         pass
 
 

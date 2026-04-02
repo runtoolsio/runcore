@@ -28,6 +28,7 @@ class EnvironmentConfig(BaseModel):
 
     type: str
     id: str = Field(description="Environment identifier")
+    plugins: Dict[str, dict] = Field(default_factory=dict, description="Plugin name to config mapping")
 
 
 class LayoutConfig(BaseModel):
