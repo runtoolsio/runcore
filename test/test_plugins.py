@@ -1,56 +1,53 @@
 from typing import Optional
 
-import plugins as test_plugins
 from plugins import test_plugin
-from runtools.runcore import plugins
 from runtools.runcore.plugins import Plugin
 
 
-def test_plugin_discovered():
-    name2module = plugins.load_modules(['test_plugin'], package=test_plugins)
-    assert len(name2module) == 1
-    assert name2module['test_plugin'].__name__ == 'plugins.test_plugin'
-
-
-def test_invalid_plugin_ignored():
-    """Test that error raised during plugin import is captured"""
-    name2module = plugins.load_modules(['test_plugin_invalid'], package=test_plugins)
-    assert len(name2module) == 0
-
-
 def test_fetch_plugins():
-    plugins.load_modules(['test_plugin'], package=test_plugins)
-    name2plugin = plugins.Plugin.fetch_plugins({'plugin2': {}, 'test_plugin': {}})
+    """Plugins registered via plugin_name= are discoverable."""
+    name2plugin = Plugin.fetch_plugins({'plugin2': {}, 'test_plugin': {}})
     assert len(name2plugin) == 2
     assert isinstance(name2plugin['plugin2'], Plugin2)
     assert isinstance(name2plugin['test_plugin'], test_plugin.TestPlugin)
 
 
 def test_fetch_plugin_twice():
-    name2plugin_first = plugins.Plugin.fetch_plugins({'plugin3': {}})
-    name2plugin_second = plugins.Plugin.fetch_plugins({'plugin3': {}})
+    """Without caching, each fetch creates a new instance."""
+    name2plugin_first = Plugin.fetch_plugins({'plugin3': {}})
+    name2plugin_second = Plugin.fetch_plugins({'plugin3': {}})
 
     assert name2plugin_first != name2plugin_second
 
 
 def test_fetch_plugin_cached():
-    name2plugin_first = plugins.Plugin.fetch_plugins({'plugin3': {}}, cached=True)
-    name2plugin_second = plugins.Plugin.fetch_plugins({'plugin3': {}}, cached=True)
+    """With caching, the same instance is returned."""
+    name2plugin_first = Plugin.fetch_plugins({'plugin3': {}}, cached=True)
+    name2plugin_second = Plugin.fetch_plugins({'plugin3': {}}, cached=True)
 
     assert name2plugin_first == name2plugin_second
 
 
 def test_non_existing_plugin_ignored():
-    name2plugin = plugins.Plugin.fetch_plugins({'plugin2': {}, 'plugin4': {}})
+    """Unknown plugin names are skipped with a warning."""
+    name2plugin = Plugin.fetch_plugins({'plugin2': {}, 'plugin4': {}})
     assert len(name2plugin) == 1
     assert isinstance(name2plugin['plugin2'], Plugin2)
 
 
 def test_create_invalid_plugins():
+    """Plugins that raise on init are skipped."""
     Plugin2.error_on_init = Exception('Must be caught')
-    name2plugin = plugins.Plugin.fetch_plugins({'plugin2': {}, 'plugin3': {}})
+    name2plugin = Plugin.fetch_plugins({'plugin2': {}, 'plugin3': {}})
     assert len(name2plugin) == 1
     assert isinstance(name2plugin['plugin3'], Plugin3)
+
+
+def test_config_passed_to_plugin():
+    """Plugin receives its config dict on construction."""
+    name2plugin = Plugin.fetch_plugins({'test_plugin': {'key': 'value'}})
+    plugin = name2plugin['test_plugin']
+    assert plugin.config == {'key': 'value'}
 
 
 class Plugin2(Plugin, plugin_name='plugin2'):

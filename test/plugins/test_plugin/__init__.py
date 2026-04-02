@@ -6,7 +6,7 @@ from runtools.runcore.job import JobInstance
 from runtools.runcore.plugins import Plugin
 
 
-class TestPlugin(Plugin):
+class TestPlugin(Plugin, plugin_name='test_plugin'):
 
     instance_ref: Optional["ref"] = None
     error_on_new_job_instance: Optional[BaseException] = None

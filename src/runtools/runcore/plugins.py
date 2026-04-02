@@ -3,16 +3,19 @@ Job Instance Plugin Module
 ===========================
 
 Plugins extend job instance lifecycle with additional functionality (notifications, metrics, etc.).
-They are auto-discovered from the ``runtools.plugins`` namespace package and configured per environment.
+They are discovered via ``importlib.metadata`` entry points and configured per environment.
 
 Plugin API:
     Subclass ``Plugin`` and implement ``on_instance_added()`` / ``on_instance_removed()``.
     Plugins receive a config dict on construction from the environment's ``plugins`` config section.
 
 Discovery:
-    Plugins are registered automatically when their module is imported. ``load_modules()`` discovers
-    modules in the ``runtools.plugins`` namespace subpackage.
-    See: https://packaging.python.org/en/latest/guides/creating-and-discovering-plugins/#using-namespace-packages
+    Plugins register themselves via entry points in their ``pyproject.toml``::
+
+        [project.entry-points."runtools.plugins"]
+        sns = "taro_sns:SnsPlugin"
+
+    At runtime, ``fetch_plugins()`` loads entry points by name from the ``runtools.plugins`` group.
 
 Lifecycle:
     ``on_open()``             — environment node opened
@@ -21,34 +24,52 @@ Lifecycle:
     ``on_close()``            — environment node closing (release resources)
 """
 
-
-import importlib
 import logging
-import pkgutil
-from types import ModuleType
+from importlib.metadata import entry_points
 from typing import Dict, Type
 
 from runtools.runcore.job import Feature
 
 log = logging.getLogger(__name__)
 
+ENTRY_POINT_GROUP = "runtools.plugins"
+
 
 class Plugin(Feature):
-    _name2subclass: Dict[str, Type] = {}
     _name2plugin: Dict[str, 'Plugin'] = {}
+    # Fallback registry for plugins not using entry points (e.g., tests)
+    _name2subclass: Dict[str, Type] = {}
 
     def __init_subclass__(cls, *, plugin_name=None, **kwargs):
-        """
-        All plugins are registered using subclass registration:
-        https://www.python.org/dev/peps/pep-0487/#subclass-registration
-        """
-        res_name = plugin_name or cls.__module__.split('.')[-1]
-        cls._name2subclass[res_name] = cls
-        log.debug("event=[plugin_registered] name=[%s] class=[%s]", res_name, cls)
+        super().__init_subclass__(**kwargs)
+        if plugin_name:
+            cls._name2subclass[plugin_name] = cls
+
+    @classmethod
+    def _resolve_class(cls, name: str) -> Type['Plugin'] | None:
+        """Resolve a plugin class by name — entry points first, then fallback registry."""
+        # Try entry points
+        eps = entry_points(group=ENTRY_POINT_GROUP)
+        for ep in eps:
+            if ep.name == name:
+                try:
+                    plugin_cls = ep.load()
+                except Exception as e:
+                    log.warning("event=[plugin_load_failed] name=[%s] detail=[%s]", name, e)
+                    return None
+                log.debug("event=[plugin_loaded_from_entry_point] name=[%s] class=[%s]", name, plugin_cls)
+                return plugin_cls
+
+        # Fallback to subclass registration
+        if name in cls._name2subclass:
+            log.debug("event=[plugin_loaded_from_registry] name=[%s]", name)
+            return cls._name2subclass[name]
+
+        return None
 
     @classmethod
     def fetch_plugins(cls, plugin_configs: Dict[str, dict], *, cached=False) -> Dict[str, 'Plugin']:
-        """Instantiate registered plugins with their configuration.
+        """Instantiate plugins with their configuration.
 
         Args:
             plugin_configs: Mapping of plugin name to plugin-specific config dict.
@@ -66,9 +87,8 @@ class Plugin(Feature):
             initialized = {}
 
         for name, config in ((n, c) for n, c in plugin_configs.items() if n not in initialized):
-            try:
-                plugin_cls = Plugin._name2subclass[name]
-            except KeyError:
+            plugin_cls = cls._resolve_class(name)
+            if plugin_cls is None:
                 log.warning("event=[plugin_not_found] name=[%s]", name)
                 continue
             try:
@@ -85,6 +105,15 @@ class Plugin(Feature):
         return initialized
 
     @classmethod
+    def create_all(cls, plugin_configs: Dict[str, dict]) -> tuple['Plugin', ...]:
+        """Discover and instantiate plugins. Convenience wrapper for node creation.
+
+        Args:
+            plugin_configs: Mapping of plugin name to plugin-specific config dict.
+        """
+        return tuple(cls.fetch_plugins(plugin_configs).values())
+
+    @classmethod
     def close_all(cls):
         for name, plugin in cls._name2plugin.items():
             try:
@@ -98,47 +127,7 @@ class Plugin(Feature):
 
 
 class PluginDisabledError(Exception):
-    """
-    This exception can be thrown from plugin's init method to signalise that there is a condition preventing
-    the plugin to work. It can be an initialization error, missing configuration, etc.
-    """
+    """Raised from a plugin's __init__ to signal it cannot be activated (missing config, etc.)."""
 
     def __init__(self, message: str):
         super().__init__(message)
-
-
-def load_modules(modules, *, package=None) -> Dict[str, ModuleType]:
-    """
-    Utility function to ensure all plugins are registered before use.
-    Users of the plugins API should call this before utilizing any plugin.
-
-    Args:
-        modules (List[str]): Modules where plugins are defined.
-        package (ModuleType, optional): Base package for plugins. Defaults to `runtools.plugins` namespace sub-package.
-    """
-
-    if not modules:
-        raise ValueError("Modules for discovery not specified")
-
-    if package is None:
-        import runtools.plugins
-        package = runtools.plugins
-
-    discovered_modules = [name for _, name, __ in pkgutil.iter_modules(package.__path__, package.__name__ + ".")]
-    log.debug("event=[plugin_modules_discovered] names=[%s]", ",".join(discovered_modules))
-
-    name2module = {}
-    for name in modules:
-        full_name = f"{package.__name__}.{name}"
-        if full_name not in discovered_modules:
-            log.warning("event=[plugin_module_not_found] module=[%s]", name)
-            continue
-
-        try:
-            module = importlib.import_module(full_name)
-            name2module[name] = module
-            log.debug("event=[plugin_module_imported] name=[%s] module=[%s]", module, module)
-        except BaseException as e:
-            log.exception("event=[plugin_module_invalid] reason=[import_failed] name=[%s] detail=[%s]", name, e)
-
-    return name2module
