@@ -68,6 +68,33 @@ def write_toml_file(file_path, data: Dict[str, Any]):
         f.write('\n')
 
 
+def _format_toml_value(value) -> str:
+    """Format a single value as a TOML literal."""
+    if value is None:
+        return '""'  # TOML has no null; use empty string as placeholder
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, str):
+        return f'"{value}"'
+    if isinstance(value, dict):
+        return _format_inline_table(value)
+    if isinstance(value, list):
+        return f"[{', '.join(_format_toml_value(v) for v in value)}]"
+    return f'"{value}"'
+
+
+def _format_inline_table(d: dict) -> str:
+    """Format a dict as a TOML inline table: {key = value, ...}."""
+    pairs = []
+    for k, v in d.items():
+        if v is None:
+            continue
+        pairs.append(f"{k} = {_format_toml_value(v)}")
+    return "{" + ", ".join(pairs) + "}"
+
+
 def format_toml(data: Dict[str, Any], _prefix: str = "") -> str:
     """
     Format a dictionary as a TOML string.
@@ -84,12 +111,15 @@ def format_toml(data: Dict[str, Any], _prefix: str = "") -> str:
     """
     lines = []
     tables = []
+    array_tables = []
 
     for key, value in data.items():
         if value is None:
             continue
         if isinstance(value, dict):
             tables.append((key, value))
+        elif isinstance(value, list) and value and isinstance(value[0], dict):
+            array_tables.append((key, value))
         elif isinstance(value, bool):
             lines.append(f"{key} = {str(value).lower()}")
         elif isinstance(value, (int, float)):
@@ -97,13 +127,7 @@ def format_toml(data: Dict[str, Any], _prefix: str = "") -> str:
         elif isinstance(value, str):
             lines.append(f'{key} = "{value}"')
         elif isinstance(value, list):
-            formatted_items = []
-            for item in value:
-                if isinstance(item, str):
-                    formatted_items.append(f'"{item}"')
-                else:
-                    formatted_items.append(str(item))
-            lines.append(f"{key} = [{', '.join(formatted_items)}]")
+            lines.append(f"{key} = [{', '.join(_format_toml_value(v) for v in value)}]")
         else:
             lines.append(f'{key} = "{value}"')
 
@@ -113,6 +137,15 @@ def format_toml(data: Dict[str, Any], _prefix: str = "") -> str:
         if section_content.strip():
             lines.append(f"\n[{section}]")
             lines.append(section_content.rstrip())
+
+    for key, items in array_tables:
+        section = f"{_prefix}.{key}" if _prefix else key
+        for item in items:
+            lines.append(f"\n[[{section}]]")
+            for k, v in item.items():
+                if v is None:
+                    continue
+                lines.append(f"{k} = {_format_toml_value(v)}")
 
     return "\n".join(lines)
 
