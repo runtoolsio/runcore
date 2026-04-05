@@ -43,6 +43,7 @@ class Plugin(Feature):
     def __init_subclass__(cls, *, plugin_name=None, **kwargs):
         super().__init_subclass__(**kwargs)
         if plugin_name:
+            cls.name = plugin_name
             cls._name2subclass[plugin_name] = cls
 
     @classmethod

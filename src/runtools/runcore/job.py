@@ -362,6 +362,7 @@ class JobInstanceMetadata:
     """
     instance_id: InstanceID
     user_params: Dict[str, Any] = field(default_factory=dict, compare=False, hash=False)
+    features: Tuple[str, ...] = ()
 
     @property
     def job_id(self) -> str:
@@ -384,6 +385,8 @@ class JobInstanceMetadata:
             dto["ordinal"] = self.ordinal
         if self.user_params:
             dto["user_params"] = self.user_params
+        if self.features:
+            dto["features"] = list(self.features)
         return dto
 
     @classmethod
@@ -391,6 +394,7 @@ class JobInstanceMetadata:
         return cls(
             instance_id=InstanceID(as_dict['job_id'], as_dict['run_id'], as_dict.get('ordinal', 1)),
             user_params=as_dict.get('user_params', {}),
+            features=tuple(as_dict.get('features', ())),
         )
 
     def __eq__(self, other):
@@ -834,6 +838,8 @@ class Feature(ABC):
     Features are notified when instances are added/removed from an environment node.
     Used both for manual features (passed directly to node) and auto-discovered plugins.
     """
+
+    name: str | None = None
 
     def on_open(self):
         """Called when the environment node opens."""
