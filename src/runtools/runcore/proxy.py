@@ -85,6 +85,10 @@ class JobInstanceProxy(JobInstance):
         self._client.stop_instance(self._server_address, self._instance_id, stop_reason)
 
     @property
+    def tracking(self):
+        raise NotImplementedError("Remote status tracking not yet supported")
+
+    @property
     @override
     def notifications(self) -> InstanceNotifications:
         return self._notifications

@@ -18,7 +18,7 @@ from runtools.runcore import util
 from runtools.runcore.err import RuntoolsException
 from runtools.runcore.output import OutputLine, Output, OutputLocation
 from runtools.runcore.run import TerminationStatus, Fault, PhaseRun, Stage, RunLifecycle, StopReason
-from runtools.runcore.status import Status
+from runtools.runcore.status import Status, StatusTracking
 from runtools.runcore.util import MatchingStrategy, format_dt_iso, unique_timestamp_hex
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 
@@ -414,8 +414,6 @@ class JobInstance(abc.ABC):
     The `JobInstance` class is a central component of this package. It denotes a single occurrence of a job.
     While the job itself describes static attributes common to all its instances, the JobInstance class
     represents a specific run of that job.
-
-    TODO add/remove status output
     """
 
     @property
@@ -489,6 +487,11 @@ class JobInstance(abc.ABC):
             The way the stop request is handled can vary based on the implementation or the specific job.
             It's possible that not all instances will respond successfully to the stop request.
         """
+
+    @property
+    @abc.abstractmethod
+    def tracking(self) -> StatusTracking:
+        """Status tracking interface for writing warnings, events, and results."""
 
     @property
     @abc.abstractmethod
@@ -1062,6 +1065,10 @@ class JobInstanceDelegate(JobInstance):
     def stop(self, reason=StopReason.STOPPED):
         """Delegates to the wrapped instance's stop method"""
         return self._wrapped.stop(reason)
+
+    @property
+    def tracking(self):
+        return self._wrapped.tracking
 
     @property
     @override

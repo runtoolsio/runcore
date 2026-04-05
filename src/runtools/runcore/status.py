@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Protocol
 
 from runtools.runcore.util.dt import format_timedelta_compact
 
@@ -242,3 +242,13 @@ class Status:
             parts.append(f"(!{warnings_str})")
 
         return "  ".join(parts) if parts else ""
+
+
+class StatusTracking(Protocol):
+    """Write interface for status updates — warnings, events, and results."""
+
+    def warning(self, text: str) -> None: ...
+
+    def event(self, text: str) -> None: ...
+
+    def result(self, text: str) -> None: ...
