@@ -308,7 +308,8 @@ def _build_where_clause(run_match, alias=''):
 
 def _to_job_run(r) -> JobRun:
     """Convert a sqlite3.Row from the history table into a JobRun."""
-    metadata = JobInstanceMetadata(
+    meta_json = json.loads(r['metadata']) if r['metadata'] else None
+    metadata = JobInstanceMetadata.deserialize(meta_json) if meta_json else JobInstanceMetadata(
         InstanceID(r['job_id'], r['run_id'], r['ordinal']),
         json.loads(r['user_params']) if r['user_params'] else {},
     )
@@ -363,6 +364,7 @@ class SQLite(EnvironmentDatabase):
                      run_id text,
                      ordinal integer NOT NULL DEFAULT 1,
                      user_params text,
+                     metadata text,
                      created timestamp,
                      started timestamp,
                      ended timestamp,
@@ -631,6 +633,7 @@ class SQLite(EnvironmentDatabase):
 
         def to_tuple(r: JobRun):
             return (json.dumps(dict(r.metadata.user_params)) if r.metadata.user_params else None,
+                    json.dumps(r.metadata.serialize()),
                     format_dt_sql(r.lifecycle.created_at),
                     format_dt_sql(r.lifecycle.started_at) if r.lifecycle.started_at else None,
                     format_dt_sql(r.lifecycle.termination.terminated_at) if r.lifecycle.termination else None,
@@ -648,7 +651,7 @@ class SQLite(EnvironmentDatabase):
                     )
 
         update_sql = (
-            "UPDATE runs SET user_params=?, created=?, started=?, ended=?, exec_time=?, "
+            "UPDATE runs SET user_params=?, metadata=?, created=?, started=?, ended=?, exec_time=?, "
             "root_phase=?, output_locations=?, termination_status=?, faults=?, status=?, warnings=?, misc=? "
             "WHERE job_id=? AND run_id=? AND ordinal=?"
         )
