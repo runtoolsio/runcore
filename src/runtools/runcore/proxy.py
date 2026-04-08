@@ -5,7 +5,7 @@ from runtools.runcore.matching import JobRunCriteria, MetadataCriterion
 from runtools.runcore.err import RuntoolsException
 from runtools.runcore.job import (
     JobRun, JobInstance, InstanceID, InstanceNotifications, InstanceObservableNotifications,
-    InstanceLifecycleEvent,
+    InstanceLifecycleEvent, InstancePhaseEvent, InstanceStatusEvent,
 )
 from runtools.runcore.output import Output, Mode
 from runtools.runcore.run import StopReason, Stage
@@ -49,10 +49,19 @@ class JobInstanceProxy(JobInstance):
         self._notifications = InstanceObservableNotifications(instance_filter=instance_filter)
         self._notifications.bind_to(connector_notifications)
         self._notifications.add_observer_lifecycle(self._on_lifecycle_update)
+        self._notifications.add_observer_phase(self._on_phase_update)
+        self._notifications.add_observer_status(self._on_status_update)
 
     def _on_lifecycle_update(self, event: InstanceLifecycleEvent):
+        self._job_run = event.job_run
         if event.new_stage == Stage.ENDED:
             self._notifications.unbind_from(self._connector_notifications)
+
+    def _on_phase_update(self, event: InstancePhaseEvent):
+        self._job_run = event.job_run
+
+    def _on_status_update(self, event: InstanceStatusEvent):
+        self._job_run = event.job_run
 
     @property
     def metadata(self):
