@@ -97,9 +97,14 @@ class OutputLine:
     fields: Dict[str, any] = None
 
     @property
-    def is_op_update(self) -> bool:
-        """Whether this line is an operation status update, not meant for human output."""
-        return bool(self.fields and 'operation' in self.fields)
+    def has_tracking(self) -> bool:
+        """Whether this line contains any rt_ tracking fields."""
+        return bool(self.fields and any(k.startswith('rt_') for k in self.fields))
+
+    @property
+    def is_tracking_only(self) -> bool:
+        """Whether this line carries only tracking data with no human-readable message."""
+        return not self.message.strip() and self.has_tracking
 
     @classmethod
     def deserialize(cls, data: dict) -> 'OutputLine':
