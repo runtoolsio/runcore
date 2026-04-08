@@ -90,11 +90,23 @@ class OutputLine:
         source: Optional identifier of the output source
         fields: Structured key-value data (e.g., from logging extras)
     """
+    MESSAGE_TOKEN = "__RTM__"
+
     message: str
     ordinal: int
     is_error: bool = False
     source: Optional[str] = None
     fields: Dict[str, any] = None
+    formatted: Optional[str] = None
+
+    @property
+    def verbose_message(self) -> str:
+        """Rendered message for verbose mode: formatted template with message substituted, or plain message."""
+        if not self.formatted:
+            return self.message
+        if self.MESSAGE_TOKEN in self.formatted:
+            return self.formatted.replace(self.MESSAGE_TOKEN, self.message)
+        return self.formatted
 
     @property
     def has_tracking(self) -> bool:
@@ -114,6 +126,7 @@ class OutputLine:
             is_error=data.get("err", False),
             source=data.get("src"),
             fields=data.get("f"),
+            formatted=data.get("fmt"),
         )
 
     def serialize(self, truncate_length: Optional[int] = None, truncated_suffix: str = ".. (truncated)"):
@@ -126,6 +139,8 @@ class OutputLine:
         data["msg"] = message
         if self.fields is not None:
             data["f"] = self.fields
+        if self.formatted is not None:
+            data["fmt"] = self.formatted
         return data
 
 
@@ -134,9 +149,9 @@ class OutputLineFactory:
         self.default_source = default_source
         self._counter = count(1)
 
-    def __call__(self, message, is_error=False, source=None, fields=None) -> OutputLine:
+    def __call__(self, message, is_error=False, source=None, fields=None, formatted=None) -> OutputLine:
         ordinal = next(self._counter)
-        return OutputLine(message, ordinal, is_error, source or self.default_source, fields)
+        return OutputLine(message, ordinal, is_error, source or self.default_source, fields, formatted)
 
     def __getstate__(self):
         return {'default_source': self.default_source, 'counter_value': next(self._counter)}
