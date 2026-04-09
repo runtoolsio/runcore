@@ -2,7 +2,7 @@ import json
 import logging
 import os
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum, auto
 from pathlib import Path
 from typing import List, Optional, Dict, Iterable, Literal
@@ -78,35 +78,26 @@ class Output(ABC):
         pass
 
 
+_RESERVED_KEYS = frozenset({"_rt", "_msg", "_ts", "_lvl", "_logger"})
+
+
 @dataclass(frozen=True)
 class OutputLine:
-    """
-    A single unit of output from a job, supporting both plain text and structured data.
+    """A single structured output event from a job.
 
-    Attributes:
-        message: Human-readable text content
-        ordinal: Sequence number for ordering
-        is_error: Whether this is error output (stderr)
-        source: Optional identifier of the output source
-        fields: Structured key-value data (e.g., from logging extras)
+    Canonical envelope fields (message, timestamp, level, logger) are first-class.
+    Application-specific fields live in the flat ``fields`` dict.
+    Framework metadata (ordinal, source, error flag) is internal to runtools.
     """
-    MESSAGE_TOKEN = "__RTM__"
 
     message: str
     ordinal: int
     is_error: bool = False
     source: Optional[str] = None
-    fields: Dict[str, any] = None
-    formatted: Optional[str] = None
-
-    @property
-    def verbose_message(self) -> str:
-        """Rendered message for verbose mode: formatted template with message substituted, or plain message."""
-        if not self.formatted:
-            return self.message
-        if self.MESSAGE_TOKEN in self.formatted:
-            return self.formatted.replace(self.MESSAGE_TOKEN, self.message)
-        return self.formatted
+    timestamp: Optional[str] = None
+    level: Optional[str] = None
+    logger: Optional[str] = None
+    fields: Optional[Dict[str, any]] = None
 
     @property
     def has_tracking(self) -> bool:
@@ -118,29 +109,56 @@ class OutputLine:
         """Whether this line carries only tracking data with no human-readable message."""
         return not self.message.strip() and self.has_tracking
 
+    @property
+    def tracking_fields(self) -> Optional[Dict[str, any]]:
+        """Return only the rt_ tracking fields, or None if there are none."""
+        if not self.fields:
+            return None
+        tracking = {k: v for k, v in self.fields.items() if k.startswith('rt_')}
+        return tracking or None
+
+    def with_fields(self, fields: Optional[Dict[str, any]]) -> 'OutputLine':
+        """Return a copy with replaced fields."""
+        return replace(self, fields=fields)
+
+    def without_tracking_fields(self) -> 'OutputLine':
+        """Return a copy with rt_ tracking fields stripped from fields."""
+        if not self.fields:
+            return self
+        clean = {k: v for k, v in self.fields.items() if not k.startswith('rt_')}
+        return replace(self, fields=clean or None) if len(clean) != len(self.fields) else self
+
     @classmethod
     def deserialize(cls, data: dict) -> 'OutputLine':
+        rt = data.get("_rt", {})
+        fields = {k: v for k, v in data.items() if k not in _RESERVED_KEYS}
         return cls(
-            message=data["msg"],
-            ordinal=data["n"],
-            is_error=data.get("err", False),
-            source=data.get("src"),
-            fields=data.get("f"),
-            formatted=data.get("fmt"),
+            message=data["_msg"],
+            ordinal=rt.get("n", 0),
+            timestamp=data.get("_ts"),
+            level=data.get("_lvl"),
+            logger=data.get("_logger"),
+            is_error=rt.get("err", False),
+            source=rt.get("src"),
+            fields=fields or None,
         )
 
     def serialize(self, truncate_length: Optional[int] = None, truncated_suffix: str = ".. (truncated)"):
         message = util.truncate(self.message, truncate_length, truncated_suffix) if truncate_length is not None else self.message
-        data = {"n": self.ordinal}
+        rt = {"n": self.ordinal}
         if self.source is not None:
-            data["src"] = self.source
+            rt["src"] = self.source
         if self.is_error:
-            data["err"] = True
-        data["msg"] = message
-        if self.fields is not None:
-            data["f"] = self.fields
-        if self.formatted is not None:
-            data["fmt"] = self.formatted
+            rt["err"] = True
+        data = {"_rt": rt, "_msg": message}
+        if self.timestamp is not None:
+            data["_ts"] = self.timestamp
+        if self.level is not None:
+            data["_lvl"] = self.level
+        if self.logger is not None:
+            data["_logger"] = self.logger
+        if self.fields:
+            data.update(self.fields)
         return data
 
 
@@ -149,9 +167,10 @@ class OutputLineFactory:
         self.default_source = default_source
         self._counter = count(1)
 
-    def __call__(self, message, is_error=False, source=None, fields=None, formatted=None) -> OutputLine:
+    def __call__(self, message, is_error=False, source=None,
+                 timestamp=None, level=None, logger=None, fields=None) -> OutputLine:
         ordinal = next(self._counter)
-        return OutputLine(message, ordinal, is_error, source or self.default_source, fields, formatted)
+        return OutputLine(message, ordinal, is_error, source or self.default_source, timestamp, level, logger, fields)
 
     def __getstate__(self):
         return {'default_source': self.default_source, 'counter_value': next(self._counter)}
