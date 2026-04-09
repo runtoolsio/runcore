@@ -74,13 +74,13 @@ class EventReceiver(DatagramSocketServer):
         try:
             req_body_json = json.loads(req_body)
         except JSONDecodeError:
-            log.warning(f"event=[invalid_json_event_received] length=[{len(req_body)}]")
+            log.warning("Invalid JSON event received length=%s", len(req_body))
             return
 
         try:
             event_type, instance_meta = _read_metadata(req_body_json)
         except ValueError as e:
-            log.warning(e)
+            log.warning("Event deserialization error detail=%s", e)
             return
 
         # Check if this event type should be handled by this receiver
@@ -94,7 +94,7 @@ class EventReceiver(DatagramSocketServer):
             try:
                 handler(event_type, instance_meta, req_body_json.get("event"))
             except Exception:
-                log.exception("event=[event_handler_failed] event_type=[%s] instance=[%s]", event_type, instance_meta)
+                log.exception("Event handler failed event_type=%s instance=%s", event_type, instance_meta)
 
 
 class InstanceEventReceiver(InstanceObservableNotifications):
@@ -112,4 +112,4 @@ class InstanceEventReceiver(InstanceObservableNotifications):
         elif event_type == InstanceStatusEvent.EVENT_TYPE:
             self.status_notification.observer_proxy.instance_status_update(InstanceStatusEvent.deserialize(event))
         else:
-            log.warning(f"[unknown_event_type] event_type=[{event_type}] instance=[{instance_metadata}]")
+            log.warning("Unknown event type type=%s instance=%s", event_type, instance_metadata)

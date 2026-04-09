@@ -385,7 +385,7 @@ class SQLite(EnvironmentDatabase):
         c.execute('CREATE INDEX runs_exec_time_idx ON runs (exec_time)')
         c.execute('CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
         c.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')
-        log.debug('event=[schema_created]')
+        log.debug("Schema created")
         self._conn.commit()
         c.close()
 
@@ -516,7 +516,7 @@ class SQLite(EnvironmentDatabase):
         statement += " ORDER BY " + order_by_clause
         statement += " LIMIT ? OFFSET ?"
 
-        log.debug("event=[executing_batch_query] statement=[%s] batch_size=[%d] offset=[%d]",
+        log.debug("Executing batch query statement=%s batch_size=%d offset=%d",
                   statement, batch_size, batch_offset)
 
         cursor = self._conn.cursor()
@@ -658,7 +658,7 @@ class SQLite(EnvironmentDatabase):
         for run in job_runs:
             cursor = self._conn.execute(update_sql, to_tuple(run))
             if cursor.rowcount == 0:
-                log.warning("event=[store_no_init_row] instance_id=[%s] No init row found; run not stored",
+                log.warning("No init row found instance_id=%s",
                             run.metadata.instance_id)
         self._conn.commit()
 

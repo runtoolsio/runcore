@@ -136,7 +136,7 @@ class DatagramSocketServer(abc.ABC):
         self._serve()
 
     def _serve(self):
-        log.debug('event=[server_started]')
+        log.debug("Server started")
         server = self._server  # This prevents None access error when the server is closed
         while not self._stopped:
             try:
@@ -151,7 +151,7 @@ class DatagramSocketServer(abc.ABC):
             try:
                 req_body = _resolve_datagram(datagram)
             except (FileNotFoundError, ValueError, zlib.error, UnicodeDecodeError) as e:
-                log.warning("event=[datagram_decode_failed] error=[%s]", e)
+                log.warning("Datagram decode failed error=%s", e)
                 continue
 
             if self._allow_ping and req_body == 'ping':
@@ -167,11 +167,11 @@ class DatagramSocketServer(abc.ABC):
                         server.sendto(encoded, client_address)
                     except OSError as e:
                         if e.errno == 90:
-                            log.error(f"event=[server_response_payload_too_large] length=[{len(encoded)}]")
+                            log.error("Response payload too large length=%s", len(encoded))
                         raise e
                 else:
-                    log.warning('event=[missing_client_address]')
-        log.debug('event=[server_stopped]')
+                    log.warning("Missing client address")
+        log.debug("Server stopped")
 
     @abc.abstractmethod
     def handle(self, req_body):
@@ -301,10 +301,10 @@ class DatagramSocketClient:
                         resp_datagram = self._client.recv(RECV_BUFFER_LENGTH)
                         res = SocketRequestResult(server_address, _decode_datagram(resp_datagram))
                 except (socket.timeout, TimeoutError) as e:
-                    log.warning('event=[socket_timeout] socket=[{}]'.format(server_socket))
+                    log.warning("Socket timeout socket=%s", server_socket)
                     res = SocketRequestResult(server_address, None, e)
                 except ConnectionRefusedError:
-                    log.debug('event=[stale_socket] socket=[{}]'.format(server_socket))
+                    log.debug("Stale socket socket=%s", server_socket)
                     skip = True  # Ignore this one and continue with another one
                     break
                 except OSError as e:
@@ -427,7 +427,7 @@ class StreamSocketServer(abc.ABC):
         self._serve()
 
     def _serve(self):
-        log.debug('event=[stream_server_started]')
+        log.debug("Stream server started")
         server = self._server
         while not self._stopped:
             try:
@@ -437,7 +437,7 @@ class StreamSocketServer(abc.ABC):
                     break
                 raise
             Thread(target=self._handle_connection, args=(conn,), daemon=True).start()
-        log.debug('event=[stream_server_stopped]')
+        log.debug("Stream server stopped")
 
     def _handle_connection(self, conn: socket.socket):
         try:
@@ -450,7 +450,7 @@ class StreamSocketServer(abc.ABC):
                 if resp_body:
                     _send_message(conn, resp_body)
         except (ConnectionError, OSError) as e:
-            log.debug(f'event=[connection_error] error=[{e}]')
+            log.debug("Connection error error=%s", e)
 
     @abc.abstractmethod
     def handle(self, req_body) -> Optional[str]:
@@ -533,10 +533,10 @@ class StreamSocketClient:
                     finally:
                         conn.close()
                 except (socket.timeout, TimeoutError) as e:
-                    log.warning(f'event=[socket_timeout] socket=[{server_socket}]')
+                    log.warning("Socket timeout socket=%s", server_socket)
                     res = SocketRequestResult(server_address, None, e)
                 except (ConnectionRefusedError, FileNotFoundError) as e:
-                    log.debug(f'event=[stale_socket] socket=[{server_socket}]')
+                    log.debug("Stale socket socket=%s", server_socket)
                     skip = True
                     break
                 except OSError as e:

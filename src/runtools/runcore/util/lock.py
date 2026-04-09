@@ -54,8 +54,8 @@ class FileLock:
 
         self._start_time = time.time()
         self._file_lock.acquire()
-        log.debug(
-            f'event=[file_lock_acquired] file=[{self.lock_file}] wait=[{(time.time() - self._start_time) * 1000 :.2f} ms]')
+        wait_time_ms = (time.time() - self._start_time) * 1000
+        log.debug("Lock acquired file=%s wait_ms=%.2f", self.lock_file, wait_time_ms)
 
     def release(self):
         """
@@ -71,7 +71,7 @@ class FileLock:
         self._file_lock = None
 
         lock_time_ms = (time.time() - self._start_time) * 1000
-        log.debug(f'event=[lock_released] file=[{self.lock_file}] locked=[{lock_time_ms:.2f} ms]')
+        log.debug("Lock released file=%s locked_ms=%.2f", self.lock_file, lock_time_ms)
 
     def __enter__(self):
         self.acquire()
