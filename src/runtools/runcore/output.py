@@ -78,7 +78,7 @@ class Output(ABC):
         pass
 
 
-_RESERVED_KEYS = frozenset({"_rt", "_msg", "_ts", "_lvl", "_logger"})
+_RESERVED_KEYS = frozenset({"_rt", "_msg", "_ts", "_lvl", "_logger", "_thread"})
 
 
 @dataclass(frozen=True)
@@ -97,6 +97,7 @@ class OutputLine:
     timestamp: Optional[str] = None
     level: Optional[str] = None
     logger: Optional[str] = None
+    thread: Optional[str] = None
     fields: Optional[Dict[str, any]] = None
 
     @property
@@ -138,6 +139,7 @@ class OutputLine:
             timestamp=data.get("_ts"),
             level=data.get("_lvl"),
             logger=data.get("_logger"),
+            thread=data.get("_thread"),
             is_error=rt.get("err", False),
             source=rt.get("src"),
             fields=fields or None,
@@ -157,6 +159,8 @@ class OutputLine:
             data["_lvl"] = self.level
         if self.logger is not None:
             data["_logger"] = self.logger
+        if self.thread is not None:
+            data["_thread"] = self.thread
         if self.fields:
             data.update(self.fields)
         return data
@@ -168,9 +172,9 @@ class OutputLineFactory:
         self._counter = count(1)
 
     def __call__(self, message, is_error=False, source=None,
-                 timestamp=None, level=None, logger=None, fields=None) -> OutputLine:
+                 timestamp=None, level=None, logger=None, thread=None, fields=None) -> OutputLine:
         ordinal = next(self._counter)
-        return OutputLine(message, ordinal, is_error, source or self.default_source, timestamp, level, logger, fields)
+        return OutputLine(message, ordinal, is_error, source or self.default_source, timestamp, level, logger, thread, fields)
 
     def __getstate__(self):
         return {'default_source': self.default_source, 'counter_value': next(self._counter)}
