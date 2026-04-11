@@ -56,14 +56,14 @@ class Plugin(Feature):
                 try:
                     plugin_cls = ep.load()
                 except Exception as e:
-                    log.warning("Plugin load failed name=%s detail=%s", name, e)
+                    log.warning("Plugin load failed plugin=%s", name, extra={"plugin": name, "detail": str(e)})
                     return None
-                log.debug("Plugin loaded from entry point name=%s class=%s", name, plugin_cls)
+                log.debug("Plugin loaded from entry point", extra={"plugin": name, "class": str(plugin_cls)})
                 return plugin_cls
 
         # Fallback to subclass registration
         if name in cls._name2subclass:
-            log.debug("Plugin loaded from registry name=%s", name)
+            log.debug("Plugin loaded from registry", extra={"plugin": name})
             return cls._name2subclass[name]
 
         return None
@@ -90,18 +90,18 @@ class Plugin(Feature):
         for name, config in ((n, c) for n, c in plugin_configs.items() if n not in initialized):
             plugin_cls = cls._resolve_class(name)
             if plugin_cls is None:
-                log.warning("Plugin not found name=%s", name)
+                log.warning("Plugin not found plugin=%s", name, extra={"plugin": name})
                 continue
             try:
                 plugin = plugin_cls(config)
                 initialized[name] = plugin
-                log.debug("Plugin created name=%s plugin=%s", name, plugin)
+                log.debug("Plugin created", extra={"plugin": name, "instance": str(plugin)})
                 if cached:
                     cls._name2plugin[name] = plugin
             except PluginDisabledError as e:
-                log.warning("Plugin disabled name=%s detail=%s", name, e)
+                log.warning("Plugin disabled plugin=%s", name, extra={"plugin": name, "detail": str(e)})
             except Exception as e:
-                log.warning("Plugin instantiation failed name=%s detail=%s", name, e)
+                log.warning("Plugin instantiation failed plugin=%s", name, extra={"plugin": name, "detail": str(e)})
 
         return initialized
 
@@ -120,7 +120,7 @@ class Plugin(Feature):
             try:
                 plugin.on_close()
             except Exception as e:
-                log.warning("Plugin close failed name=%s detail=%s", name, e)
+                log.warning("Plugin close failed", extra={"plugin": name, "detail": str(e)})
 
     def on_close(self):
         """Releases resources held by the plugin. Called when the environment node closes."""

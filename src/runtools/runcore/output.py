@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 from enum import Enum, auto
 from pathlib import Path
-from typing import List, Optional, Dict, Iterable, Literal
+from typing import Any, List, Optional, Dict, Iterable, Literal
 from urllib.parse import urlparse, unquote
 from urllib.request import pathname2url
 
@@ -98,7 +98,7 @@ class OutputLine:
     level: Optional[str] = None
     logger: Optional[str] = None
     thread: Optional[str] = None
-    fields: Optional[Dict[str, any]] = None
+    fields: Optional[Dict[str, Any]] = None
 
     @property
     def has_tracking(self) -> bool:
@@ -111,14 +111,14 @@ class OutputLine:
         return not self.message.strip() and self.has_tracking
 
     @property
-    def tracking_fields(self) -> Optional[Dict[str, any]]:
+    def tracking_fields(self) -> Optional[Dict[str, Any]]:
         """Return only the rt_ tracking fields, or None if there are none."""
         if not self.fields:
             return None
         tracking = {k: v for k, v in self.fields.items() if k.startswith('rt_')}
         return tracking or None
 
-    def with_fields(self, fields: Optional[Dict[str, any]]) -> 'OutputLine':
+    def with_fields(self, fields: Optional[Dict[str, Any]]) -> 'OutputLine':
         """Return a copy with replaced fields."""
         return replace(self, fields=fields)
 
@@ -300,7 +300,7 @@ class MultiSourceOutputReader:
             try:
                 lines = backend.read_output(instance_id, sources, max_lines)
             except OutputReadError as e:
-                log.warning("Backend read failed, trying next: %s", e)
+                log.warning("Backend read failed, trying next", extra={"detail": str(e)})
                 last_error = e
                 continue
             if lines:
@@ -502,7 +502,7 @@ def _read_jsonl_indexed_tail(jsonl_path: Path, sources: set[str],
         lines.reverse()
         return lines
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
-        log.warning("Indexed tail read failed for %s, falling back to full scan", jsonl_path, exc_info=True)
+        log.warning("Indexed tail read failed, falling back to full scan", extra={"path": str(jsonl_path)}, exc_info=True)
         all_filtered = _read_jsonl_filtered(jsonl_path, sources)
         return all_filtered[-max_lines:]
 
@@ -573,7 +573,7 @@ def _read_jsonl_indexed(jsonl_path: Path, sources: set[str]) -> List['OutputLine
                         lines.append(OutputLine.deserialize(json.loads(raw_line)))
         return lines
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
-        log.warning("Indexed read failed for %s, falling back to full scan", jsonl_path, exc_info=True)
+        log.warning("Indexed read failed, falling back to full scan", extra={"path": str(jsonl_path)}, exc_info=True)
         return _read_jsonl_filtered(jsonl_path, sources)
 
 

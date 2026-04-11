@@ -516,8 +516,7 @@ class SQLite(EnvironmentDatabase):
         statement += " ORDER BY " + order_by_clause
         statement += " LIMIT ? OFFSET ?"
 
-        log.debug("Executing batch query statement=%s batch_size=%d offset=%d",
-                  statement, batch_size, batch_offset)
+        log.debug("Executing batch query", extra={"statement": statement, "batch_size": batch_size, "offset": batch_offset})
 
         cursor = self._conn.cursor()
         cursor.row_factory = sqlite3.Row
@@ -658,8 +657,8 @@ class SQLite(EnvironmentDatabase):
         for run in job_runs:
             cursor = self._conn.execute(update_sql, to_tuple(run))
             if cursor.rowcount == 0:
-                log.warning("No init row found instance_id=%s",
-                            run.metadata.instance_id)
+                log.warning("No init row found instance=%s", run.metadata.instance_id,
+                            extra={"instance": str(run.metadata.instance_id)})
         self._conn.commit()
 
     @override

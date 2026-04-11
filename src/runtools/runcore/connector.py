@@ -251,16 +251,16 @@ def clean_stale_component_dirs(env_dir: Path) -> List[Path]:
                 fd.close()
                 continue
             except OSError:
-                log.warning("Unexpected error probing lock entry=%s", entry, exc_info=True)
+                log.warning("Unexpected error probing lock", extra={"entry": str(entry)}, exc_info=True)
                 fd.close()
                 continue
             # Lock acquired — owner is dead
             fd.close()
             shutil.rmtree(entry, ignore_errors=True)
             removed.append(entry)
-            log.debug("Removed stale component dir=%s", entry)
+            log.debug("Removed stale component dir", extra={"dir": str(entry)})
         except OSError as e:
-            log.debug("Skipping stale check entry=%s reason=%s", entry, e)
+            log.debug("Skipping stale check", extra={"entry": str(entry), "reason": str(e)})
 
     return removed
 
@@ -575,7 +575,8 @@ class LocalConnector(EnvironmentConnector):
 
         for result in run_results:
             if result.error:
-                log.warning("Instance call error op=collect_active_runs server=%s", result.server_address,
+                log.warning("Instance call error op=collect_active_runs",
+                            extra={"op": "collect_active_runs", "server": str(result.server_address)},
                             exc_info=result.error)
                 continue
             active_runs.extend(result.retval)
@@ -589,7 +590,8 @@ class LocalConnector(EnvironmentConnector):
 
         for result in run_results:
             if result.error:
-                log.warning("Instance call error op=get_instances server=%s", result.server_address,
+                log.warning("Instance call error op=get_instances",
+                            extra={"op": "get_instances", "server": str(result.server_address)},
                             exc_info=result.error)
                 continue
 

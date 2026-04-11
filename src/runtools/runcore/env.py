@@ -267,7 +267,7 @@ def create_environment(entry: EnvironmentEntry, config: EnvironmentConfig):
         entry_data["location"] = entry.location
     registry[entry.id] = entry_data
     _save_registry(registry)
-    log.debug("Environment created env=%s", entry.id)
+    log.debug("Environment created", extra={"env": entry.id})
 
 
 def delete_environment(env_id: str, *, delete_db: bool = True):
@@ -296,7 +296,7 @@ def delete_environment(env_id: str, *, delete_db: bool = True):
         load_database_module(entry.driver).delete(entry)
 
     _save_registry(registry)
-    log.debug("Environment deleted env=%s", env_id)
+    log.debug("Environment deleted", extra={"env": env_id})
 
 
 # --- Errors ---
