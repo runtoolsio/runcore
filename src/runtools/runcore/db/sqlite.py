@@ -572,8 +572,9 @@ class SQLite(EnvironmentDatabase):
             where_clause += " AND h.ended IS NOT NULL"
         else:
             where_clause = " WHERE h.ended IS NOT NULL"
-        fault_statuses = TerminationStatus.get_statuses(Outcome.FAULT)
-        fault_placeholders = ', '.join(str(s.value) for s in fault_statuses)
+        def outcome_placeholders(outcome):
+            return ', '.join(str(s.value) for s in TerminationStatus.get_statuses(outcome))
+
         sql = f'''
             WITH filtered AS (
                 SELECT rowid, * FROM runs h
@@ -594,7 +595,11 @@ class SQLite(EnvironmentDatabase):
                 max(f.exec_time) AS "slowest_time",
                 lh.exec_time AS "last_time",
                 lh.termination_status AS "last_term_status",
-                COUNT(CASE WHEN f.termination_status IN ({fault_placeholders}) THEN 1 END) AS failed,
+                COUNT(CASE WHEN f.termination_status IN ({outcome_placeholders(Outcome.SUCCESS)}) THEN 1 END) AS succeeded,
+                COUNT(CASE WHEN f.termination_status IN ({outcome_placeholders(Outcome.FAULT)}) THEN 1 END) AS failed,
+                COUNT(CASE WHEN f.termination_status IN ({outcome_placeholders(Outcome.ABORTED)}) THEN 1 END) AS aborted,
+                COUNT(CASE WHEN f.termination_status IN ({outcome_placeholders(Outcome.REJECTED)}) THEN 1 END) AS rejected,
+                COUNT(CASE WHEN f.termination_status IN ({outcome_placeholders(Outcome.IGNORED)}) THEN 1 END) AS ignored,
                 lh.warnings AS "last_warnings"
             FROM filtered f
             JOIN last_per_job lp ON f.job_id = lp.job_id
@@ -619,7 +624,11 @@ class SQLite(EnvironmentDatabase):
                     TerminationStatus.from_code(r['last_term_status'])
                     if r['last_term_status'] is not None else TerminationStatus.UNKNOWN
                 ),
+                success_count=r['succeeded'] or 0,
                 failed_count=r['failed'] or 0,
+                aborted_count=r['aborted'] or 0,
+                rejected_count=r['rejected'] or 0,
+                ignored_count=r['ignored'] or 0,
                 warning_count=r['last_warnings'] or 0,
             )
 

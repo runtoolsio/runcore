@@ -152,7 +152,11 @@ class JobStats:
         slowest_time (timedelta): Longest execution time among all instances in the interval.
         last_time (timedelta): Execution time of the most recent instance in the interval.
         termination_status (TerminationStatus): State of the last executed instance in the interval.
-        failed_count (int): Number of instances that failed during the time interval.
+        success_count (int): Instances with Outcome.SUCCESS (COMPLETED, SKIPPED).
+        failed_count (int): Instances with Outcome.FAULT (FAILED, ERROR, UNKNOWN).
+        aborted_count (int): Instances with Outcome.ABORTED (CANCELLED, STOPPED, INTERRUPTED, SIGNAL).
+        rejected_count (int): Instances with Outcome.REJECTED (TIMEOUT, OVERLAP, UNSATISFIED, DENIED, DUPLICATE).
+        ignored_count (int): Instances with Outcome.IGNORED (SUPPRESSED).
         warning_count (int): Number of instances with at least one warning during the time interval.
     """
     job_id: str
@@ -164,7 +168,11 @@ class JobStats:
     slowest_time: Optional[timedelta] = None
     last_time: Optional[timedelta] = None
     termination_status: Optional[TerminationStatus] = None
+    success_count: int = 0
     failed_count: int = 0
+    aborted_count: int = 0
+    rejected_count: int = 0
+    ignored_count: int = 0
     warning_count: int = 0
 
 
