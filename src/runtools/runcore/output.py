@@ -78,7 +78,10 @@ class Output(ABC):
         pass
 
 
-_RESERVED_KEYS = frozenset({"_rt", "_msg", "_ts", "_lvl", "_logger", "_thread"})
+# Top-level keys reserved for canonical OutputLine fields. User-supplied fields
+# that collide with these have undefined behavior (last write wins). The `_rt`
+# namespace holds runtools-internal metadata (ordinal, source/phase, error flag).
+_RESERVED_KEYS = frozenset({"_rt", "msg", "ts", "lvl", "logger", "thread"})
 
 
 @dataclass(frozen=True)
@@ -134,12 +137,12 @@ class OutputLine:
         rt = data.get("_rt", {})
         fields = {k: v for k, v in data.items() if k not in _RESERVED_KEYS}
         return cls(
-            message=data["_msg"],
+            message=data["msg"],
             ordinal=rt.get("n", 0),
-            timestamp=data.get("_ts"),
-            level=data.get("_lvl"),
-            logger=data.get("_logger"),
-            thread=data.get("_thread"),
+            timestamp=data.get("ts"),
+            level=data.get("lvl"),
+            logger=data.get("logger"),
+            thread=data.get("thread"),
             is_error=rt.get("err", False),
             source=rt.get("src"),
             fields=fields or None,
@@ -152,15 +155,15 @@ class OutputLine:
             rt["src"] = self.source
         if self.is_error:
             rt["err"] = True
-        data = {"_rt": rt, "_msg": message}
+        data = {"msg": message, "_rt": rt}
         if self.timestamp is not None:
-            data["_ts"] = self.timestamp
+            data["ts"] = self.timestamp
         if self.level is not None:
-            data["_lvl"] = self.level
+            data["lvl"] = self.level
         if self.logger is not None:
-            data["_logger"] = self.logger
+            data["logger"] = self.logger
         if self.thread is not None:
-            data["_thread"] = self.thread
+            data["thread"] = self.thread
         if self.fields:
             data.update(self.fields)
         return data
