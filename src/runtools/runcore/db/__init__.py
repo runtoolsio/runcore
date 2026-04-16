@@ -31,11 +31,9 @@ See Also:
 """
 
 import importlib
-import pkgutil
 from abc import ABC, abstractmethod
 from typing import Any, Iterator
 
-from runtools import runcore
 from runtools.runcore.err import RuntoolsException
 from runtools.runcore.job import InstanceLifecycleObserver, InstanceLifecycleEvent, InstanceID, JobRun
 from runtools.runcore.matching import SortOption
@@ -50,9 +48,9 @@ _db_modules = {}
 def load_database_module(db_type):
     """Load a database backend module by type name.
 
-    Searches for a submodule named `db_type` within the ``runtools.runcore.db`` package
-    and returns it. The module is expected to provide a ``create()`` factory function
-    that returns an :class:`EnvironmentDatabase` instance.
+    Imports ``runtools.runcore.db.<db_type>`` directly. The module is expected to
+    expose four module-level functions: ``create()``, ``create_environment()``,
+    ``exists()``, and ``delete()``.
 
     Args:
         db_type: Database type identifier (e.g., "sqlite").
@@ -63,17 +61,18 @@ def load_database_module(db_type):
     Raises:
         DatabaseNotFoundError: If no matching module is found.
     """
-    db_module = _db_modules.get(db_type)
-    if db_module:
-        return db_module
-
-    for finder, name, is_pkg in pkgutil.iter_modules(runcore.db.__path__, runcore.db.__name__ + "."):
-        if name == runcore.db.__name__ + "." + db_type:
-            module = importlib.import_module(name)
-            _db_modules[db_type] = module
-            return module
-
-    raise DatabaseNotFoundError(runcore.db.__name__ + "." + db_type)
+    module = _db_modules.get(db_type)
+    if module:
+        return module
+    module_name = f"runtools.runcore.db.{db_type}"
+    try:
+        module = importlib.import_module(module_name)
+    except ModuleNotFoundError as e:
+        if e.name == module_name:
+            raise DatabaseNotFoundError(db_type)
+        raise
+    _db_modules[db_type] = module
+    return module
 
 
 class DatabaseNotFoundError(RuntoolsException):
