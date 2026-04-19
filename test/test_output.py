@@ -3,8 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from runtools.runcore.output import (
-    SourceIndex, SourceIndexBuilder, OutputLine, read_jsonl_file,
+from runtools.runcore.output import OutputLine
+from runtools.runcore.output.file import (
+    SourceIndex, SourceIndexBuilder, read_jsonl_file,
     _read_jsonl_indexed, _read_jsonl_filtered,
     _read_jsonl_tail, _read_jsonl_indexed_tail,
 )
