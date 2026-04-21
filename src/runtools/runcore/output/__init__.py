@@ -26,6 +26,7 @@ import importlib
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from enum import Enum, auto
 from pathlib import Path
 from typing import Any, List, Optional, Dict, Iterable
@@ -101,6 +102,37 @@ class Output(ABC):
         pass
 
 
+def parse_timestamp(raw: str) -> Optional[datetime]:
+    """Parse a timestamp string into a timezone-aware datetime.
+
+    Accepts common formats liberally:
+        2026-04-21T02:05:31.062Z          ISO 8601 with Z
+        2026-04-21T02:05:31.062+00:00     ISO 8601 with offset
+        2026-04-21T02:05:31.062+05:30     ISO 8601 with non-UTC offset
+        2026-04-21 02:05:31,062           Python logging (space + comma millis)
+        2026-04-21T02:05:31               No fractional seconds
+        2026-04-21 02:05:31               Space separator, no millis
+
+    Returns None if the string cannot be parsed.
+    """
+    s = raw.strip().replace(',', '.')
+    if ' ' in s[:11] and 'T' not in s[:11]:
+        s = s.replace(' ', 'T', 1)
+    try:
+        if s.endswith('Z'):
+            return datetime.fromisoformat(s[:-1]).replace(tzinfo=timezone.utc)
+        dt = datetime.fromisoformat(s)
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except (ValueError, IndexError):
+        return None
+
+
+def format_timestamp(dt: datetime) -> str:
+    """Format a datetime to canonical ISO 8601 UTC string for storage."""
+    ts = dt.astimezone(timezone.utc).isoformat(timespec='milliseconds')
+    return ts[:-6] + 'Z' if ts.endswith('+00:00') else ts
+
+
 # Top-level keys reserved for canonical OutputLine fields. User-supplied fields
 # that collide with these have undefined behavior (last write wins). The `_rt`
 # namespace holds runtools-internal metadata (ordinal, source/phase, error flag).
@@ -120,7 +152,7 @@ class OutputLine:
     ordinal: int
     is_error: bool = False
     source: Optional[str] = None
-    timestamp: Optional[str] = None
+    timestamp: Optional[datetime] = None
     level: Optional[str] = None
     logger: Optional[str] = None
     thread: Optional[str] = None
@@ -159,10 +191,11 @@ class OutputLine:
     def deserialize(cls, data: dict) -> 'OutputLine':
         rt = data.get("_rt", {})
         fields = {k: v for k, v in data.items() if k not in _RESERVED_KEYS}
+        raw_ts = data.get("ts")
         return cls(
             message=data["msg"],
             ordinal=rt.get("n", 0),
-            timestamp=data.get("ts"),
+            timestamp=parse_timestamp(raw_ts) if raw_ts else None,
             level=data.get("lvl"),
             logger=data.get("logger"),
             thread=data.get("thread"),
@@ -180,7 +213,7 @@ class OutputLine:
             rt["err"] = True
         data = {"msg": message, "_rt": rt}
         if self.timestamp is not None:
-            data["ts"] = self.timestamp
+            data["ts"] = format_timestamp(self.timestamp)
         if self.level is not None:
             data["lvl"] = self.level
         if self.logger is not None:
@@ -198,8 +231,11 @@ class OutputLineFactory:
         self._counter = count(1)
 
     def __call__(self, message, is_error=False, source=None,
-                 timestamp=None, level=None, logger=None, thread=None, fields=None) -> OutputLine:
+                 timestamp: str | datetime | None = None,
+                 level=None, logger=None, thread=None, fields=None) -> OutputLine:
         ordinal = next(self._counter)
+        if isinstance(timestamp, str):
+            timestamp = parse_timestamp(timestamp)
         return OutputLine(message, ordinal, is_error, source or self.default_source, timestamp, level, logger, thread, fields)
 
     def __getstate__(self):
