@@ -128,7 +128,12 @@ def parse_timestamp(raw: str) -> Optional[datetime]:
 
 
 def format_timestamp(dt: datetime) -> str:
-    """Format a datetime to canonical ISO 8601 UTC string for storage."""
+    """Format a datetime to canonical ISO 8601 UTC string for storage.
+
+    Naive datetimes are treated as UTC to avoid silent local-time shifts.
+    """
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
     ts = dt.astimezone(timezone.utc).isoformat(timespec='milliseconds')
     return ts[:-6] + 'Z' if ts.endswith('+00:00') else ts
 
@@ -236,6 +241,8 @@ class OutputLineFactory:
         ordinal = next(self._counter)
         if isinstance(timestamp, str):
             timestamp = parse_timestamp(timestamp)
+        elif isinstance(timestamp, datetime) and timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
         return OutputLine(message, ordinal, is_error, source or self.default_source, timestamp, level, logger, thread, fields)
 
     def __getstate__(self):
