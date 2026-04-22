@@ -4,6 +4,7 @@ Read-side module contract:
     create_backend(env_id, config) -> FileOutputBackend
 """
 
+import gzip
 import json
 import logging
 import os
@@ -18,16 +19,25 @@ from runtools.runcore.output import OutputBackend, OutputLine, OutputReadError, 
 log = logging.getLogger(__name__)
 
 
+def _gz_path(jsonl_path: Path) -> Path:
+    return jsonl_path.with_suffix(jsonl_path.suffix + '.gz')
+
+
 class FileOutputStorageConfig(BaseModel):
     """File backend config — validated internally from the generic OutputStorageConfig extras."""
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     dir: Optional[Path] = Field(default=None, description="Base output directory; XDG default if None")
+    compress: bool = Field(default=True, description="Gzip compress output files after run ends")
 
 
-def _resolve_base_dir(env_id: str, config: OutputStorageConfig, *, create: bool = False) -> Path:
-    """Validate file-specific config and resolve the base directory."""
-    file_cfg = FileOutputStorageConfig.model_validate(config.model_extra or {})
+def _parse_file_config(config: OutputStorageConfig) -> FileOutputStorageConfig:
+    """Validate and extract file-specific config from generic storage config extras."""
+    return FileOutputStorageConfig.model_validate(config.model_extra or {})
+
+
+def _resolve_base_dir(env_id: str, file_cfg: FileOutputStorageConfig, *, create: bool = False) -> Path:
+    """Resolve the base directory from validated file config."""
     return Path(file_cfg.dir).expanduser() if file_cfg.dir else paths.output_dir(env_id, create=create)
 
 
@@ -48,8 +58,15 @@ class SourceIndex:
         return Path(str(jsonl_path) + ".idx")
 
     @classmethod
-    def load(cls, jsonl_path: Path) -> 'SourceIndex | None':
-        """Load and validate a source index. Returns None if missing, corrupt, or stale."""
+    def load(cls, jsonl_path: Path, *, expected_size: int | None = None) -> 'SourceIndex | None':
+        """Load and validate a source index. Returns None if missing, corrupt, or stale.
+
+        Args:
+            jsonl_path: Path to the original .jsonl file (index is at .jsonl.idx).
+            expected_size: If given, validate against this size instead of stat-ing jsonl_path.
+                Used for compressed files where the .jsonl is deleted but the decompressed
+                content size is known.
+        """
         try:
             with open(cls.path_for(jsonl_path), encoding="utf-8") as f:
                 data = json.load(f)
@@ -57,14 +74,18 @@ class SourceIndex:
             return None
         if data.get("version") != cls.VERSION:
             return None
-        try:
-            if jsonl_path.stat().st_size != data.get("jsonl_size"):
-                return None
-        except OSError:
-            return None
         jsonl_size = data.get("jsonl_size")
         if not isinstance(jsonl_size, int):
             return None
+        if expected_size is not None:
+            if jsonl_size != expected_size:
+                return None
+        else:
+            try:
+                if jsonl_path.stat().st_size != jsonl_size:
+                    return None
+            except OSError:
+                return None
         return cls(data.get("sources", {}), jsonl_size)
 
     def save(self, jsonl_path: Path):
@@ -122,7 +143,12 @@ class SourceIndexBuilder:
 
 
 class FileOutputBackend(OutputBackend):
-    """File-backed output backend. Reads JSONL files from ``{base_dir}/{job_id}/{run_id}__{ordinal}.jsonl``."""
+    """File-backed output backend. Reads JSONL files from ``{base_dir}/{job_id}/{run_id}__{ordinal}.jsonl``.
+
+    Supports both plain ``.jsonl`` and compressed ``.jsonl.gz`` files. Compressed files are
+    decompressed fully into memory; the source index (if present) uses byte slicing on the
+    decompressed content.
+    """
 
     type = "file"
 
@@ -130,12 +156,25 @@ class FileOutputBackend(OutputBackend):
         self._base_dir = base_dir
 
     def _output_path(self, instance_id) -> Path:
+        """Return the base .jsonl path. Use _resolve_path() to find the actual file."""
         return self._base_dir / instance_id.job_id / f"{instance_id.run_id}__{instance_id.ordinal}.jsonl"
+
+    def _resolve_path(self, instance_id) -> Path:
+        """Find the actual output file — plain .jsonl or compressed .jsonl.gz."""
+        path = self._output_path(instance_id)
+        if path.exists():
+            return path
+        gz_path = _gz_path(path)
+        if gz_path.exists():
+            return gz_path
+        return path  # return .jsonl so FileNotFoundError has the expected name
 
     def read_output(self, instance_id, sources: set[str] | None = None,
                     max_lines: int = 0) -> List[OutputLine]:
-        path = self._output_path(instance_id)
+        path = self._resolve_path(instance_id)
         try:
+            if _is_compressed(path):
+                return _read_compressed(path, self._output_path(instance_id), sources, max_lines)
             if max_lines > 0:
                 if sources is not None:
                     return _read_jsonl_indexed_tail(path, sources, max_lines)
@@ -152,6 +191,7 @@ class FileOutputBackend(OutputBackend):
         for iid in instance_ids:
             path = self._output_path(iid)
             path.unlink(missing_ok=True)
+            _gz_path(path).unlink(missing_ok=True)
             SourceIndex.path_for(path).unlink(missing_ok=True)
             try:
                 path.parent.rmdir()
@@ -161,7 +201,8 @@ class FileOutputBackend(OutputBackend):
 
 def create_backend(env_id: str, config: OutputStorageConfig) -> FileOutputBackend:
     """Module-level factory (read side) — part of the output backend module contract."""
-    return FileOutputBackend(_resolve_base_dir(env_id, config))
+    file_cfg = _parse_file_config(config)
+    return FileOutputBackend(_resolve_base_dir(env_id, file_cfg))
 
 
 # ---------------------------------------------------------------------------
@@ -170,14 +211,8 @@ def create_backend(env_id: str, config: OutputStorageConfig) -> FileOutputBacken
 
 def read_jsonl_file(file_path: str) -> List[OutputLine]:
     """Read output lines from a JSON Lines file."""
-    lines = []
-    with open(file_path, encoding="utf-8") as f:
-        for raw_line in f:
-            raw_line = raw_line.strip()
-            if raw_line:
-                lines.append(OutputLine.deserialize(json.loads(raw_line)))
-    lines.sort(key=lambda ol: ol.ordinal)
-    return lines
+    with open(file_path, "rb") as f:
+        return _parse_all(f.read())
 
 
 def _read_jsonl_tail(path: Path, max_lines: int) -> List[OutputLine]:
@@ -295,4 +330,66 @@ def _read_jsonl_filtered(path: Path, sources: set[str]) -> List[OutputLine]:
                 ol = OutputLine.deserialize(json.loads(raw_line))
                 if ol.source in sources:
                     lines.append(ol)
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# Compressed (.jsonl.gz) read helpers
+# ---------------------------------------------------------------------------
+
+def _is_compressed(path: Path) -> bool:
+    return path.suffix == '.gz'
+
+
+def _read_compressed(gz_path: Path, jsonl_path: Path, sources: set[str] | None,
+                     max_lines: int) -> List[OutputLine]:
+    """Read a compressed output file: decompress to memory, then use index/filter/tail as needed."""
+    with gzip.open(gz_path, 'rb') as f:
+        data = f.read()
+
+    if sources is not None:
+        index = SourceIndex.load(jsonl_path, expected_size=len(data))
+        if index is not None:
+            lines = _parse_spans(data, index.spans_for(sources))
+        else:
+            lines = _parse_all_filtered(data, sources)
+    else:
+        lines = _parse_all(data)
+
+    if max_lines > 0:
+        lines = lines[-max_lines:]
+    return lines
+
+
+def _parse_all(data: bytes) -> List[OutputLine]:
+    """Parse all lines from decompressed bytes."""
+    lines = []
+    for raw_line in data.split(b'\n'):
+        if raw_line := raw_line.strip():
+            lines.append(OutputLine.deserialize(json.loads(raw_line)))
+    lines.sort(key=lambda ol: ol.ordinal)
+    return lines
+
+
+def _parse_spans(data: bytes, spans: list[list[int]]) -> List[OutputLine]:
+    """Parse lines from specific byte spans (index-driven) in decompressed bytes."""
+    lines = []
+    for offset, length in spans:
+        chunk = data[offset:offset + length].decode('utf-8')
+        for raw_line in chunk.splitlines():
+            if raw_line:
+                lines.append(OutputLine.deserialize(json.loads(raw_line)))
+    lines.sort(key=lambda ol: ol.ordinal)
+    return lines
+
+
+def _parse_all_filtered(data: bytes, sources: set[str]) -> List[OutputLine]:
+    """Parse all lines from decompressed bytes, filtering by source."""
+    lines = []
+    for raw_line in data.split(b'\n'):
+        if raw_line := raw_line.strip():
+            ol = OutputLine.deserialize(json.loads(raw_line))
+            if ol.source in sources:
+                lines.append(ol)
+    lines.sort(key=lambda ol: ol.ordinal)
     return lines
