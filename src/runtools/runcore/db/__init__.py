@@ -9,8 +9,6 @@ Key Components:
     EnvironmentDatabase: ABC combining ConfigStorage and RunStorage over a single backing store.
     ConfigStorage: Protocol for environment configuration (config table).
     RunStorage: Protocol for job run history (runs table).
-    PersistingObserver: Lifecycle observer that auto-stores job runs on completion.
-
 Factory Functions:
     load_database_module: Dynamically loads a database backend module (e.g., sqlite).
 
@@ -35,12 +33,9 @@ from abc import ABC, abstractmethod
 from typing import Any, Iterator
 
 from runtools.runcore.err import RuntoolsException
-from runtools.runcore.job import InstanceLifecycleObserver, InstanceLifecycleEvent, InstanceID, JobRun
+from runtools.runcore.job import InstanceID, JobRun
 from runtools.runcore.matching import SortOption
 from runtools.runcore.retention import RetentionPolicy
-from runtools.runcore.run import Stage
-
-PERSISTING_OBSERVER_PRIORITY = 10  # High priority (low number) to ensure persistence before event dispatch
 
 _db_modules = {}
 
@@ -174,23 +169,3 @@ class EnvironmentDatabase(ConfigStorage, RunStorage, ABC):
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
-
-
-class PersistingObserver(InstanceLifecycleObserver):
-    """Lifecycle observer that automatically stores job runs when they complete.
-
-    Important:
-        Register this observer with high priority (low number) to ensure runs are stored before
-        other observers are notified. This prevents race conditions where another observer checks
-        the database for a run that hasn't been stored yet.
-    """
-
-    def __init__(self, run_storage: RunStorage):
-        """Args:
-            run_storage: The RunStorage to store job runs to.
-        """
-        self._run_storage = run_storage
-
-    def instance_lifecycle_update(self, event: InstanceLifecycleEvent):
-        if event.new_stage == Stage.ENDED:
-            self._run_storage.store_runs(event.job_run)
