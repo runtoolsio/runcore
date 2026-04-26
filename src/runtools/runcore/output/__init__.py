@@ -112,11 +112,15 @@ def parse_timestamp(raw: str) -> Optional[datetime]:
         2026-04-21 02:05:31,062           Python logging (space + comma millis)
         2026-04-21T02:05:31               No fractional seconds
         2026-04-21 02:05:31               Space separator, no millis
+        03:34:49.026                      Time-only (today's date assumed)
 
     Returns None if the string cannot be parsed.
     """
     s = raw.strip().replace(',', '.')
-    if ' ' in s[:11] and 'T' not in s[:11]:
+    # Time-only: prepend today's date
+    if len(s) <= 12 and s[0].isdigit() and ':' in s[:3] and '-' not in s:
+        s = datetime.now(timezone.utc).strftime('%Y-%m-%d') + 'T' + s
+    elif ' ' in s[:11] and 'T' not in s[:11]:
         s = s.replace(' ', 'T', 1)
     try:
         if s.endswith('Z'):
