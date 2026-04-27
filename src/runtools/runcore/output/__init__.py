@@ -102,8 +102,8 @@ class Output(ABC):
         pass
 
 
-def parse_timestamp(raw: str) -> Optional[datetime]:
-    """Parse a timestamp string into a timezone-aware datetime.
+def parse_timestamp(raw) -> Optional[datetime]:
+    """Parse a timestamp into a timezone-aware datetime.
 
     Accepts common formats liberally:
         2026-04-21T02:05:31.062Z          ISO 8601 with Z
@@ -113,10 +113,28 @@ def parse_timestamp(raw: str) -> Optional[datetime]:
         2026-04-21T02:05:31               No fractional seconds
         2026-04-21 02:05:31               Space separator, no millis
         03:34:49.026                      Time-only (today's date assumed)
+        1777196905123                     Epoch milliseconds (numeric or string)
 
-    Returns None if the string cannot be parsed.
+    Returns None if the value cannot be parsed.
     """
-    s = raw.strip().replace(',', '.')
+    if isinstance(raw, (int, float)):
+        try:
+            epoch_s = raw / 1000 if raw > 1e12 else raw
+            return datetime.fromtimestamp(epoch_s, tz=timezone.utc)
+        except (OSError, ValueError, OverflowError):
+            return None
+
+    s = str(raw).strip()
+
+    # Numeric string: epoch millis or seconds
+    if s.isdigit() and len(s) >= 10:
+        try:
+            epoch_s = int(s) / 1000 if len(s) >= 13 else int(s)
+            return datetime.fromtimestamp(epoch_s, tz=timezone.utc)
+        except (OSError, ValueError, OverflowError):
+            return None
+
+    s = s.replace(',', '.')
     # Time-only: prepend today's date
     if len(s) <= 12 and s[0].isdigit() and ':' in s[:3] and '-' not in s:
         s = datetime.now(timezone.utc).strftime('%Y-%m-%d') + 'T' + s
