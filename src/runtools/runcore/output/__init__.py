@@ -163,7 +163,10 @@ def format_timestamp(dt: datetime) -> str:
 # Top-level keys reserved for canonical OutputLine fields. User-supplied fields
 # that collide with these have undefined behavior (last write wins). The `_rt`
 # namespace holds runtools-internal metadata (ordinal, source/phase, error flag).
-_RESERVED_KEYS = frozenset({"_rt", "msg", "ts", "lvl", "logger", "thread"})
+_RESERVED_KEYS = frozenset({
+    "_rt", "message", "timestamp", "level", "logger", "thread",
+    "msg", "ts", "lvl",  # short aliases accepted on read
+})
 
 
 @dataclass(frozen=True)
@@ -218,12 +221,12 @@ class OutputLine:
     def deserialize(cls, data: dict) -> 'OutputLine':
         rt = data.get("_rt", {})
         fields = {k: v for k, v in data.items() if k not in _RESERVED_KEYS}
-        raw_ts = data.get("ts")
+        raw_ts = data.get("timestamp") or data.get("ts")
         return cls(
-            message=data["msg"],
+            message=data.get("message") or data.get("msg", ""),
             ordinal=rt.get("n", 0),
             timestamp=parse_timestamp(raw_ts) if raw_ts else None,
-            level=data.get("lvl"),
+            level=data.get("level") or data.get("lvl"),
             logger=data.get("logger"),
             thread=data.get("thread"),
             is_error=rt.get("err", False),
@@ -238,11 +241,11 @@ class OutputLine:
             rt["src"] = self.source
         if self.is_error:
             rt["err"] = True
-        data = {"msg": message, "_rt": rt}
+        data = {"message": message, "_rt": rt}
         if self.timestamp is not None:
-            data["ts"] = format_timestamp(self.timestamp)
+            data["timestamp"] = format_timestamp(self.timestamp)
         if self.level is not None:
-            data["lvl"] = self.level
+            data["level"] = self.level
         if self.logger is not None:
             data["logger"] = self.logger
         if self.thread is not None:
