@@ -14,7 +14,7 @@ from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from runtools.runcore import paths
-from runtools.runcore.output import OutputBackend, OutputLine, OutputReadError, OutputStorageConfig
+from runtools.runcore.output import OutputBackend, OutputLine, OutputReadError, OutputStorageConfig, parse_jsonl_bytes
 
 log = logging.getLogger(__name__)
 
@@ -212,7 +212,7 @@ def create_backend(env_id: str, config: OutputStorageConfig) -> FileOutputBacken
 def read_jsonl_file(file_path: str) -> List[OutputLine]:
     """Read output lines from a JSON Lines file."""
     with open(file_path, "rb") as f:
-        return _parse_all(f.read())
+        return parse_jsonl_bytes(f.read())
 
 
 def _read_jsonl_tail(path: Path, max_lines: int) -> List[OutputLine]:
@@ -352,22 +352,12 @@ def _read_compressed(gz_path: Path, jsonl_path: Path, sources: set[str] | None,
         if index is not None:
             lines = _parse_spans(data, index.spans_for(sources))
         else:
-            lines = _parse_all_filtered(data, sources)
+            lines = parse_jsonl_bytes(data, sources)
     else:
-        lines = _parse_all(data)
+        lines = parse_jsonl_bytes(data)
 
     if max_lines > 0:
         lines = lines[-max_lines:]
-    return lines
-
-
-def _parse_all(data: bytes) -> List[OutputLine]:
-    """Parse all lines from decompressed bytes."""
-    lines = []
-    for raw_line in data.split(b'\n'):
-        if raw_line := raw_line.strip():
-            lines.append(OutputLine.deserialize(json.loads(raw_line)))
-    lines.sort(key=lambda ol: ol.ordinal)
     return lines
 
 
@@ -379,17 +369,5 @@ def _parse_spans(data: bytes, spans: list[list[int]]) -> List[OutputLine]:
         for raw_line in chunk.splitlines():
             if raw_line:
                 lines.append(OutputLine.deserialize(json.loads(raw_line)))
-    lines.sort(key=lambda ol: ol.ordinal)
-    return lines
-
-
-def _parse_all_filtered(data: bytes, sources: set[str]) -> List[OutputLine]:
-    """Parse all lines from decompressed bytes, filtering by source."""
-    lines = []
-    for raw_line in data.split(b'\n'):
-        if raw_line := raw_line.strip():
-            ol = OutputLine.deserialize(json.loads(raw_line))
-            if ol.source in sources:
-                lines.append(ol)
     lines.sort(key=lambda ol: ol.ordinal)
     return lines

@@ -30,6 +30,7 @@ See Also:
 
 import importlib
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Any, Iterator
 
 from runtools.runcore.err import RuntoolsException
@@ -111,14 +112,27 @@ class RunStorage(ABC):
 
     @abstractmethod
     def init_run(self, job_id: str, run_id: str, user_params=None, *,
+                 created_at: datetime,
                  auto_increment: bool = False, max_retries: int = 5) -> InstanceID:
         """Insert a partial record at instance creation time.
 
-        Semantics:
-            - auto_increment=False: insert with ordinal 1. If the (job_id, run_id, 1) key
-              already exists, raise DuplicateInstanceError.
-            - auto_increment=True: allocate the next free ordinal for (job_id, run_id),
-              insert, and return the concrete InstanceID.
+        Args:
+            job_id: Job identifier.
+            run_id: Run identifier within the logical run.
+            user_params: Optional user-defined parameters serialized into the row.
+            created_at: Canonical creation timestamp. Keyword-only so it can't be
+                confused with ``user_params``. Caller is the source of truth —
+                typically ``root_phase.created_at`` from which ``lifecycle.created_at``
+                also derives. Stored in the runs table and meant to be reused for any
+                co-recorded timestamp (e.g., S3 object metadata for retention ordering).
+            auto_increment: If False, insert with ordinal 1 and raise
+                DuplicateInstanceError on (job_id, run_id, 1) collision. If True,
+                allocate the next free ordinal for (job_id, run_id) and insert.
+            max_retries: Max ordinal allocation retries when auto_increment=True
+                under concurrent inserts.
+
+        Returns:
+            The fully-qualified InstanceID (job_id, run_id, ordinal) of the inserted row.
         """
 
     @abstractmethod

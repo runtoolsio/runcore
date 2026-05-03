@@ -23,6 +23,7 @@ See Also:
 """
 
 import importlib
+import json
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
@@ -59,6 +60,11 @@ class OutputLocation:
     def for_file(path: Path) -> 'OutputLocation':
         """Create an OutputLocation from a file path."""
         return OutputLocation(uri="file://" + pathname2url(str(path)))
+
+    @staticmethod
+    def for_s3(bucket: str, key: str) -> 'OutputLocation':
+        """Create an OutputLocation for an S3 object."""
+        return OutputLocation(uri=f"s3://{bucket}/{key.lstrip('/')}")
 
     @property
     def scheme(self) -> str:
@@ -435,3 +441,23 @@ def create_backends(env_id: str, storage_configs: Iterable[OutputStorageConfig])
         module = load_output_module(cfg.type)
         backends.append(module.create_backend(env_id, cfg))
     return backends
+
+
+# ---------------------------------------------------------------------------
+# Shared JSONL parsing (used by file and s3 backends)
+# ---------------------------------------------------------------------------
+
+def parse_jsonl_bytes(data: bytes, sources: Optional[set[str]] = None) -> List[OutputLine]:
+    """Parse JSONL bytes into OutputLines, optionally filtering by source.
+
+    Lines are sorted by ordinal so output ordering is stable regardless of how
+    the bytes were assembled (concatenated chunks, indexed spans, etc.).
+    """
+    lines: List[OutputLine] = []
+    for raw_line in data.split(b'\n'):
+        if raw_line := raw_line.strip():
+            ol = OutputLine.deserialize(json.loads(raw_line))
+            if sources is None or ol.source in sources:
+                lines.append(ol)
+    lines.sort(key=lambda ol: ol.ordinal)
+    return lines

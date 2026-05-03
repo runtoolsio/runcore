@@ -21,7 +21,6 @@ from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.run import TerminationStatus, Outcome, PhaseRun, Fault, Stage
 from runtools.runcore.status import Status
 from runtools.runcore.util import MatchingStrategy, format_dt_sql, parse_dt_sql
-from runtools.runcore.util.dt import utc_now
 
 log = logging.getLogger(__name__)
 
@@ -391,14 +390,16 @@ class SQLite(EnvironmentDatabase):
 
     @override
     @ensure_open
-    def init_run(self, job_id, run_id, user_params=None, *, auto_increment=False, max_retries=5):
+    def init_run(self, job_id, run_id, user_params=None, *,
+                 created_at, auto_increment=False, max_retries=5):
         """See `RunStorage.init_run`."""
         params_json = json.dumps(dict(user_params)) if user_params else None
+        created_str = format_dt_sql(created_at)
         if not auto_increment:
             try:
                 self._conn.execute(
                     "INSERT INTO runs (job_id, run_id, ordinal, user_params, created) VALUES (?, ?, ?, ?, ?)",
-                    (job_id, run_id, 1, params_json, format_dt_sql(utc_now())))
+                    (job_id, run_id, 1, params_json, created_str))
                 self._conn.commit()
                 return InstanceID(job_id, run_id, 1)
             except sqlite3.IntegrityError:
@@ -412,7 +413,7 @@ class SQLite(EnvironmentDatabase):
             try:
                 self._conn.execute(
                     "INSERT INTO runs (job_id, run_id, ordinal, user_params, created) VALUES (?, ?, ?, ?, ?)",
-                    (job_id, run_id, ordinal, params_json, format_dt_sql(utc_now())))
+                    (job_id, run_id, ordinal, params_json, created_str))
                 self._conn.commit()
                 return InstanceID(job_id, run_id, ordinal)
             except sqlite3.IntegrityError:

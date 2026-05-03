@@ -11,7 +11,7 @@ from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.run import TerminationStatus, Outcome
 from runtools.runcore.test.job import fake_job_run
 from runtools.runcore.util import MatchingStrategy
-from runtools.runcore.util.dt import TimeRange, DateTimeRange
+from runtools.runcore.util.dt import TimeRange, DateTimeRange, utc_now
 
 parse = JobRunCriteria.parse
 
@@ -20,7 +20,8 @@ def _init_and_store(db, *job_runs):
     """Initialize and store job runs (two-phase persistence)."""
     for run in job_runs:
         iid = run.metadata.instance_id
-        db.init_run(iid.job_id, iid.run_id, run.metadata.user_params)
+        db.init_run(iid.job_id, iid.run_id, run.metadata.user_params,
+                    created_at=run.lifecycle.created_at)
     db.store_runs(*job_runs)
 
 @pytest.fixture
@@ -230,7 +231,7 @@ def test_total_run_time(sut):
 
 def test_init_and_store(sut):
     run = fake_job_run('j1', 'r1')
-    sut.init_run('j1', 'r1', {'name': 'value'})
+    sut.init_run('j1', 'r1', {'name': 'value'}, created_at=utc_now())
     sut.store_runs(run)
 
     jobs = sut.read_runs()
@@ -239,14 +240,14 @@ def test_init_and_store(sut):
 
 
 def test_init_duplicate_raises(sut):
-    sut.init_run('j1', 'r1')
+    sut.init_run('j1', 'r1', created_at=utc_now())
 
     with pytest.raises(DuplicateInstanceError):
-        sut.init_run('j1', 'r1')
+        sut.init_run('j1', 'r1', created_at=utc_now())
 
 
 def test_init_only_not_in_history(sut):
-    sut.init_run('j1', 'r1')
+    sut.init_run('j1', 'r1', created_at=utc_now())
 
     assert sut.read_runs() == []
     assert sut.read_run_stats() == []
@@ -262,7 +263,7 @@ def test_store_without_init(sut):
 def test_last_with_init_only_row(sut):
     """last=True returns the latest completed run even when a newer init-only row exists."""
     _init_and_store(sut, fake_job_run('j1', 'r1', offset_min=1))
-    sut.init_run('j1', 'r2')  # newer init-only row
+    sut.init_run('j1', 'r2', created_at=utc_now())  # newer init-only row
 
     jobs = sut.read_runs(last=True)
     assert len(jobs) == 1
@@ -273,25 +274,25 @@ def test_last_with_init_only_row(sut):
 
 def test_different_ordinals_are_not_duplicates(sut):
     """Same logical run with different ordinals should coexist."""
-    sut.init_run('j1', 'r1')
-    sut.init_run('j1', 'r1', auto_increment=True)
+    sut.init_run('j1', 'r1', created_at=utc_now())
+    sut.init_run('j1', 'r1', created_at=utc_now(), auto_increment=True)
 
     # Both init rows exist (not yet completed, so not in history)
     assert sut.read_runs() == []
 
 
 def test_same_ordinal_is_duplicate(sut):
-    sut.init_run('j1', 'r1')
+    sut.init_run('j1', 'r1', created_at=utc_now())
 
     with pytest.raises(DuplicateInstanceError):
-        sut.init_run('j1', 'r1')
+        sut.init_run('j1', 'r1', created_at=utc_now())
 
 
 def test_ordinal_round_trips_through_store(sut):
     """Auto-incremented ordinals survive the init → store → read cycle."""
-    sut.init_run('j1', 'r1')  # ordinal 1
-    sut.init_run('j1', 'r1', auto_increment=True)  # ordinal 2
-    actual_id = sut.init_run('j1', 'r1', auto_increment=True)  # ordinal 3
+    sut.init_run('j1', 'r1', created_at=utc_now())  # ordinal 1
+    sut.init_run('j1', 'r1', created_at=utc_now(), auto_increment=True)  # ordinal 2
+    actual_id = sut.init_run('j1', 'r1', created_at=utc_now(), auto_increment=True)  # ordinal 3
     assert actual_id.ordinal == 3
 
     run = fake_job_run('j1', 'r1', ordinal=3)
@@ -307,31 +308,31 @@ def test_ordinal_round_trips_through_store(sut):
 
 def test_auto_increment_no_conflict(sut):
     """auto_increment with no existing row inserts ordinal 1."""
-    actual = sut.init_run('j1', 'r1', auto_increment=True)
+    actual = sut.init_run('j1', 'r1', created_at=utc_now(), auto_increment=True)
     assert actual == InstanceID('j1', 'r1', 1)
 
 
 def test_auto_increment_on_conflict(sut):
     """auto_increment assigns next ordinal when duplicate exists."""
-    sut.init_run('j1', 'r1')
-    actual = sut.init_run('j1', 'r1', auto_increment=True)
+    sut.init_run('j1', 'r1', created_at=utc_now())
+    actual = sut.init_run('j1', 'r1', created_at=utc_now(), auto_increment=True)
     assert actual.ordinal == 2
     assert actual == InstanceID('j1', 'r1', 2)
 
 
 def test_auto_increment_multiple(sut):
     """Repeated auto_increment produces sequential ordinals."""
-    sut.init_run('j1', 'r1')
-    second = sut.init_run('j1', 'r1', auto_increment=True)
+    sut.init_run('j1', 'r1', created_at=utc_now())
+    second = sut.init_run('j1', 'r1', created_at=utc_now(), auto_increment=True)
     assert second.ordinal == 2
-    third = sut.init_run('j1', 'r1', auto_increment=True)
+    third = sut.init_run('j1', 'r1', created_at=utc_now(), auto_increment=True)
     assert third.ordinal == 3
 
 
 def test_auto_increment_different_runs(sut):
     """auto_increment is scoped to (job_id, run_id)."""
-    sut.init_run('j1', 'r1')
-    actual = sut.init_run('j1', 'r2', auto_increment=True)
+    sut.init_run('j1', 'r1', created_at=utc_now())
+    actual = sut.init_run('j1', 'r2', created_at=utc_now(), auto_increment=True)
     assert actual == InstanceID('j1', 'r2', 1)  # No conflict, ordinal 1
 
 
