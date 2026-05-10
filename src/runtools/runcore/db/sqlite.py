@@ -24,7 +24,7 @@ from runtools.runcore.util import MatchingStrategy, format_dt_sql, parse_dt_sql
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 1
 DEFAULT_BATCH_SIZE = 100
 
 
@@ -341,6 +341,9 @@ class SQLite(EnvironmentDatabase):
             if self._conn is not None:
                 raise InvalidStateError("Database connection already opened")
             self._conn = self._connection_factory()
+            # Required for `ON DELETE CASCADE` on run_tags. SQLite has FKs off by
+            # default and the pragma is per-connection, so set it on every open.
+            self._conn.execute('PRAGMA foreign_keys = ON')
         self._init_schema()
 
     def is_open(self):
@@ -358,30 +361,48 @@ class SQLite(EnvironmentDatabase):
             return
 
         # Fresh schema
-        c.execute('''CREATE TABLE runs
-                     (job_id text,
-                     run_id text,
-                     ordinal integer NOT NULL DEFAULT 1,
-                     user_params text,
-                     metadata text,
-                     created timestamp,
-                     started timestamp,
-                     ended timestamp,
-                     exec_time real,
-                     root_phase text,
-                     output_locations text,
-                     termination_status int,
-                     faults text,
-                     status text,
-                     warnings int,
-                     misc text,
-                     UNIQUE(job_id, run_id, ordinal))
+        c.execute('''CREATE TABLE runs (
+                     job_id TEXT NOT NULL,
+                     run_id TEXT NOT NULL,
+                     ordinal INTEGER NOT NULL DEFAULT 1,
+                     user_params TEXT CHECK (user_params IS NULL OR json_valid(user_params)),
+                     metadata TEXT CHECK (metadata IS NULL OR json_valid(metadata)),
+                     created TIMESTAMP NOT NULL,
+                     started TIMESTAMP,
+                     ended TIMESTAMP,
+                     exec_time REAL,
+                     root_phase TEXT CHECK (root_phase IS NULL OR json_valid(root_phase)),
+                     output_locations TEXT CHECK (output_locations IS NULL OR json_valid(output_locations)),
+                     termination_status INT,
+                     faults TEXT CHECK (faults IS NULL OR json_valid(faults)),
+                     status TEXT CHECK (status IS NULL OR json_valid(status)),
+                     warnings INT,
+                     misc TEXT CHECK (misc IS NULL OR json_valid(misc)),
+                     PRIMARY KEY (job_id, run_id, ordinal)
+                     )
                      ''')
-        c.execute('CREATE INDEX runs_job_id_idx ON runs (job_id)')
-        c.execute('CREATE INDEX runs_run_id_idx ON runs (run_id)')
+        # No standalone runs_job_id_idx — the PRIMARY KEY (job_id, run_id, ordinal)
+        # already provides a left-prefix index on job_id.
         c.execute('CREATE INDEX runs_ended_idx ON runs (ended)')
         c.execute('CREATE INDEX runs_created_idx ON runs (created)')
         c.execute('CREATE INDEX runs_exec_time_idx ON runs (exec_time)')
+        # Speeds up the dashboard's "last completed run per job" query — partial
+        # so the index ignores not-yet-ended rows.
+        c.execute('CREATE INDEX runs_job_ended_idx '
+                  'ON runs (job_id, ended DESC) WHERE ended IS NOT NULL')
+
+        c.execute('''CREATE TABLE run_tags (
+                     job_id TEXT NOT NULL,
+                     run_id TEXT NOT NULL,
+                     ordinal INTEGER NOT NULL,
+                     tag TEXT NOT NULL,
+                     PRIMARY KEY (job_id, run_id, ordinal, tag),
+                     FOREIGN KEY (job_id, run_id, ordinal)
+                         REFERENCES runs (job_id, run_id, ordinal) ON DELETE CASCADE
+                     )
+                     ''')
+        c.execute('CREATE INDEX run_tags_tag_idx ON run_tags (tag)')
+
         c.execute('CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
         c.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')
         log.debug("Schema created")
