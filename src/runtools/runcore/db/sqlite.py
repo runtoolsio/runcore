@@ -395,7 +395,7 @@ class SQLite(EnvironmentDatabase):
                      job_id TEXT NOT NULL,
                      run_id TEXT NOT NULL,
                      ordinal INTEGER NOT NULL,
-                     tag TEXT NOT NULL,
+                     tag TEXT NOT NULL CHECK (length(tag) BETWEEN 1 AND 64),
                      PRIMARY KEY (job_id, run_id, ordinal, tag),
                      FOREIGN KEY (job_id, run_id, ordinal)
                          REFERENCES runs (job_id, run_id, ordinal) ON DELETE CASCADE

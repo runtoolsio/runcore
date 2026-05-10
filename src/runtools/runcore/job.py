@@ -8,11 +8,12 @@ to perform the same task.
 """
 import abc
 import datetime
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import timedelta
 from enum import Enum
-from typing import Dict, Any, List, Optional, Tuple, ClassVar, Set, Callable, Protocol, override
+from typing import Dict, Any, Iterable, List, Optional, Tuple, ClassVar, Set, Callable, Protocol, override
 
 from runtools.runcore import util
 from runtools.runcore.err import RuntoolsException
@@ -360,6 +361,55 @@ class DuplicateStrategy(Enum):
         self.stop_reason = stop_reason
 
 
+_TAG_MAX_LEN = 64
+_TAG_PATTERN = re.compile(r'^[a-z0-9](?:[a-z0-9_./\-]*[a-z0-9])?$')
+
+
+def normalize_tag(raw: str) -> str:
+    """Normalize a single tag: strip surrounding whitespace, drop one optional
+    leading ``#`` (so ``#assistant`` and ``assistant`` round-trip identically),
+    lowercase. Idempotent — safe to apply to already-stored tags on read.
+
+    Raises:
+        ValueError: If ``raw`` is not a string. The pattern check in
+            :func:`validate_tag` catches everything else.
+    """
+    if not isinstance(raw, str):
+        raise ValueError(f"Tag must be a string, got {type(raw).__name__}: {raw!r}")
+    s = raw.strip()
+    if s.startswith('#'):
+        s = s[1:].strip()
+    return s.lower()
+
+
+def validate_tag(tag: str) -> None:
+    """Validate a normalized tag. Raises ValueError on failure.
+
+    Pattern: ASCII slug, must start AND end with alphanumeric. Allowed inner
+    characters: ``a-z 0-9 _ . / -``. Length 1–64. Designed to be safe in URLs,
+    shells, and log lines without escaping.
+    """
+    if not tag:
+        raise ValueError("Tag must not be empty")
+    if len(tag) > _TAG_MAX_LEN:
+        raise ValueError(f"Tag too long ({len(tag)} > {_TAG_MAX_LEN}): {tag!r}")
+    if not _TAG_PATTERN.fullmatch(tag):
+        raise ValueError(f"Invalid tag {tag!r}; must match {_TAG_PATTERN.pattern}")
+
+
+def normalize_tags(raw: Iterable[str]) -> Tuple[str, ...]:
+    """Normalize, validate, dedupe (preserving first-occurrence order), freeze."""
+    seen: Set[str] = set()
+    result: List[str] = []
+    for raw_tag in raw:
+        tag = normalize_tag(raw_tag)
+        validate_tag(tag)
+        if tag not in seen:
+            seen.add(tag)
+            result.append(tag)
+    return tuple(result)
+
+
 @dataclass(frozen=True)
 class JobInstanceMetadata:
     """Descriptive information about a specific job instance.
@@ -367,10 +417,18 @@ class JobInstanceMetadata:
     Attributes:
         instance_id (InstanceID): Unique identifier for the job instance.
         user_params (Dict[str, Any]): User-defined parameters (do not affect functionality).
+        features (Tuple[str, ...]): Active feature/plugin names attached to the run.
+        tags (Tuple[str, ...]): User-set labels for grouping/filtering. Normalized
+            and deduped at construction; immutable for the run's lifetime.
     """
     instance_id: InstanceID
     user_params: Dict[str, Any] = field(default_factory=dict, compare=False, hash=False)
     features: Tuple[str, ...] = ()
+    tags: Tuple[str, ...] = ()
+
+    def __post_init__(self):
+        if self.tags:
+            object.__setattr__(self, 'tags', normalize_tags(self.tags))
 
     @property
     def job_id(self) -> str:
@@ -395,6 +453,8 @@ class JobInstanceMetadata:
             dto["user_params"] = self.user_params
         if self.features:
             dto["features"] = list(self.features)
+        if self.tags:
+            dto["tags"] = list(self.tags)
         return dto
 
     @classmethod
@@ -403,6 +463,7 @@ class JobInstanceMetadata:
             instance_id=InstanceID(as_dict['job_id'], as_dict['run_id'], as_dict.get('ordinal', 1)),
             user_params=as_dict.get('user_params', {}),
             features=tuple(as_dict.get('features', ())),
+            tags=tuple(as_dict.get('tags', ())),
         )
 
     def __eq__(self, other):
