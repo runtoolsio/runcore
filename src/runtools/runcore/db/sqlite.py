@@ -14,7 +14,8 @@ from typing import List, Iterator, override
 from runtools.runcore import paths
 from runtools.runcore.db import EnvironmentDatabase, IncompatibleSchemaError
 from runtools.runcore.err import InvalidStateError
-from runtools.runcore.job import (JobStats, JobRun, JobInstanceMetadata, InstanceID, DuplicateInstanceError)
+from runtools.runcore.job import (JobStats, JobRun, JobInstanceMetadata, InstanceID, DuplicateInstanceError,
+                                  normalize_tags)
 from runtools.runcore.matching import LifecycleCriterion, SortOption
 from runtools.runcore.output import OutputLocation
 from runtools.runcore.retention import RetentionPolicy
@@ -306,11 +307,21 @@ def _build_where_clause(run_match, alias=''):
 
 
 def _to_job_run(r) -> JobRun:
-    """Convert a sqlite3.Row from the history table into a JobRun."""
-    meta_json = json.loads(r['metadata']) if r['metadata'] else None
-    metadata = JobInstanceMetadata.deserialize(meta_json) if meta_json else JobInstanceMetadata(
+    """Convert a sqlite3.Row from the history table into a JobRun.
+
+    Reconstructs ``JobInstanceMetadata`` from dedicated columns plus an
+    optional ``tags`` synthetic column (a ``json_group_array(tag)`` over
+    run_tags). Rows without a ``tags`` column read back as having no tags —
+    callers that need tag fidelity must include the subselect in their query.
+    """
+    tags_raw = r['tags'] if 'tags' in r.keys() else None
+    tags = tuple(json.loads(tags_raw)) if tags_raw else ()
+    features = tuple(json.loads(r['features'])) if r['features'] else ()
+    metadata = JobInstanceMetadata(
         InstanceID(r['job_id'], r['run_id'], r['ordinal']),
         json.loads(r['user_params']) if r['user_params'] else {},
+        features=features,
+        tags=tags,
     )
     root_phase = PhaseRun.deserialize(json.loads(r['root_phase']))
     output_locations = (
@@ -366,7 +377,7 @@ class SQLite(EnvironmentDatabase):
                      run_id TEXT NOT NULL,
                      ordinal INTEGER NOT NULL DEFAULT 1,
                      user_params TEXT CHECK (user_params IS NULL OR json_valid(user_params)),
-                     metadata TEXT CHECK (metadata IS NULL OR json_valid(metadata)),
+                     features TEXT CHECK (features IS NULL OR json_valid(features)),
                      created TIMESTAMP NOT NULL,
                      started TIMESTAMP,
                      ended TIMESTAMP,
@@ -412,19 +423,23 @@ class SQLite(EnvironmentDatabase):
     @override
     @ensure_open
     def init_run(self, job_id, run_id, user_params=None, *,
-                 created_at, auto_increment=False, max_retries=5):
+                 created_at, tags=(), auto_increment=False, max_retries=5):
         """See `RunStorage.init_run`."""
         params_json = json.dumps(dict(user_params)) if user_params else None
         created_str = format_dt_sql(created_at)
+        # Normalize once up-front. Idempotent — safe even if caller pre-normalized.
+        normalized_tags = normalize_tags(tags) if tags else ()
+
         if not auto_increment:
             try:
                 self._conn.execute(
                     "INSERT INTO runs (job_id, run_id, ordinal, user_params, created) VALUES (?, ?, ?, ?, ?)",
                     (job_id, run_id, 1, params_json, created_str))
-                self._conn.commit()
-                return InstanceID(job_id, run_id, 1)
             except sqlite3.IntegrityError:
                 raise DuplicateInstanceError(InstanceID(job_id, run_id, 1))
+            self._insert_tags(job_id, run_id, 1, normalized_tags)
+            self._conn.commit()
+            return InstanceID(job_id, run_id, 1)
 
         cursor = self._conn.execute(
             "SELECT MAX(ordinal) FROM runs WHERE job_id = ? AND run_id = ?",
@@ -435,12 +450,21 @@ class SQLite(EnvironmentDatabase):
                 self._conn.execute(
                     "INSERT INTO runs (job_id, run_id, ordinal, user_params, created) VALUES (?, ?, ?, ?, ?)",
                     (job_id, run_id, ordinal, params_json, created_str))
-                self._conn.commit()
-                return InstanceID(job_id, run_id, ordinal)
             except sqlite3.IntegrityError:
                 ordinal += 1
+                continue
+            self._insert_tags(job_id, run_id, ordinal, normalized_tags)
+            self._conn.commit()
+            return InstanceID(job_id, run_id, ordinal)
         raise sqlite3.IntegrityError(
             f"Failed to allocate ordinal for ({job_id}, {run_id}) after {max_retries} retries")
+
+    def _insert_tags(self, job_id, run_id, ordinal, tags):
+        if not tags:
+            return
+        self._conn.executemany(
+            "INSERT INTO run_tags (job_id, run_id, ordinal, tag) VALUES (?, ?, ?, ?)",
+            [(job_id, run_id, ordinal, t) for t in tags])
 
     @override
     def read_runs(self, run_match=None, sort=SortOption.ENDED, *,
@@ -519,7 +543,13 @@ class SQLite(EnvironmentDatabase):
                 case _:
                     raise ValueError(f"Unsupported sort option: {sort}")
 
-        statement = "SELECT * FROM runs h"
+        statement = (
+            "SELECT h.*, "
+            "(SELECT json_group_array(tag) FROM run_tags t "
+            " WHERE t.job_id = h.job_id AND t.run_id = h.run_id AND t.ordinal = h.ordinal) "
+            "AS tags "
+            "FROM runs h"
+        )
         where_clause, where_params = _build_where_clause(run_match, alias='h')
         # Exclude incomplete (init-only) records
         if where_clause:
@@ -659,11 +689,15 @@ class SQLite(EnvironmentDatabase):
     @override
     @ensure_open
     def store_runs(self, *job_runs):
-        """See `RunStorage.store_runs`."""
+        """See `RunStorage.store_runs`.
+
+        Tags are NOT updated here — ``init_run`` is the sole writer of the
+        run_tags junction. Tags are immutable through the run's lifecycle.
+        """
 
         def to_tuple(r: JobRun):
             return (json.dumps(dict(r.metadata.user_params)) if r.metadata.user_params else None,
-                    json.dumps(r.metadata.serialize()),
+                    json.dumps(list(r.metadata.features)) if r.metadata.features else None,
                     format_dt_sql(r.lifecycle.created_at),
                     format_dt_sql(r.lifecycle.started_at) if r.lifecycle.started_at else None,
                     format_dt_sql(r.lifecycle.termination.terminated_at) if r.lifecycle.termination else None,
@@ -681,7 +715,7 @@ class SQLite(EnvironmentDatabase):
                     )
 
         update_sql = (
-            "UPDATE runs SET user_params=?, metadata=?, created=?, started=?, ended=?, exec_time=?, "
+            "UPDATE runs SET user_params=?, features=?, created=?, started=?, ended=?, exec_time=?, "
             "root_phase=?, output_locations=?, termination_status=?, faults=?, status=?, warnings=?, misc=? "
             "WHERE job_id=? AND run_id=? AND ordinal=?"
         )

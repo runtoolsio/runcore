@@ -21,7 +21,8 @@ def _init_and_store(db, *job_runs):
     for run in job_runs:
         iid = run.metadata.instance_id
         db.init_run(iid.job_id, iid.run_id, run.metadata.user_params,
-                    created_at=run.lifecycle.created_at)
+                    created_at=run.lifecycle.created_at,
+                    tags=run.metadata.tags)
     db.store_runs(*job_runs)
 
 @pytest.fixture
@@ -334,6 +335,52 @@ def test_auto_increment_different_runs(sut):
     sut.init_run('j1', 'r1', created_at=utc_now())
     actual = sut.init_run('j1', 'r2', created_at=utc_now(), auto_increment=True)
     assert actual == InstanceID('j1', 'r2', 1)  # No conflict, ordinal 1
+
+
+# --- Tag persistence tests ---
+
+def _run_with_tags(job_id, run_id, tags):
+    """Build a fake JobRun whose metadata carries the given tags."""
+    from dataclasses import replace
+    run = fake_job_run(job_id, run_id)
+    return replace(run, metadata=replace(run.metadata, tags=tuple(tags)))
+
+
+def test_tags_round_trip_through_init_and_read(sut):
+    run = _run_with_tags('j1', 'r1', ('assistant', 'env/prod'))
+    _init_and_store(sut, run)
+
+    [restored] = sut.read_runs()
+    assert restored.metadata.tags == ('assistant', 'env/prod')
+
+
+def test_tags_round_trip_with_no_tags(sut):
+    """A run without tags reads back with empty tags tuple, not None."""
+    _init_and_store(sut, fake_job_run('j1', 'r1'))
+    [restored] = sut.read_runs()
+    assert restored.metadata.tags == ()
+
+
+def test_init_run_normalizes_tags(sut):
+    """init_run accepts raw user input and normalizes (lowercase, strip #, dedupe)."""
+    sut.init_run('j1', 'r1', created_at=utc_now(),
+                 tags=('#Assistant', 'ENV/prod', 'assistant'))
+    sut.store_runs(fake_job_run('j1', 'r1'))
+
+    [restored] = sut.read_runs()
+    assert restored.metadata.tags == ('assistant', 'env/prod')
+
+
+def test_tags_deleted_with_run_via_cascade(sut):
+    """run_tags rows are removed when their parent run is removed (FK CASCADE).
+    Pinned because SQLite has FKs disabled by default — the PRAGMA must be set.
+    """
+    run = _run_with_tags('j1', 'r1', ('a', 'b'))
+    _init_and_store(sut, run)
+    assert sut._conn.execute("SELECT COUNT(*) FROM run_tags").fetchone()[0] == 2
+
+    sut.remove_runs(JobRunCriteria.parse('j1@r1'))
+    assert sut._conn.execute("SELECT COUNT(*) FROM run_tags").fetchone()[0] == 0
 
 
 # --- Duplicate run in read_runs tests ---

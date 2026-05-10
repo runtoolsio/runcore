@@ -31,7 +31,7 @@ See Also:
 import importlib
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator
 
 from runtools.runcore.err import RuntoolsException
 from runtools.runcore.job import InstanceID, JobRun
@@ -113,6 +113,7 @@ class RunStorage(ABC):
     @abstractmethod
     def init_run(self, job_id: str, run_id: str, user_params=None, *,
                  created_at: datetime,
+                 tags: Iterable[str] = (),
                  auto_increment: bool = False, max_retries: int = 5) -> InstanceID:
         """Insert a partial record at instance creation time.
 
@@ -125,6 +126,9 @@ class RunStorage(ABC):
                 typically ``root_phase.created_at`` from which ``lifecycle.created_at``
                 also derives. Stored in the runs table and meant to be reused for any
                 co-recorded timestamp (e.g., S3 object metadata for retention ordering).
+            tags: Optional user-set labels for grouping/filtering. Normalized
+                (trimmed/lowercased/dedup'd) by the implementation; written into
+                the tags junction table in the same transaction as the run row.
             auto_increment: If False, insert with ordinal 1 and raise
                 DuplicateInstanceError on (job_id, run_id, 1) collision. If True,
                 allocate the next free ordinal for (job_id, run_id) and insert.
