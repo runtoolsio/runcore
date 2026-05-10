@@ -398,7 +398,17 @@ def validate_tag(tag: str) -> None:
 
 
 def normalize_tags(raw: Iterable[str]) -> Tuple[str, ...]:
-    """Normalize, validate, dedupe (preserving first-occurrence order), freeze."""
+    """Normalize, validate, dedupe (preserving first-occurrence order), freeze.
+
+    Rejects a single string up-front: a bare ``str`` is iterable as characters,
+    which would silently turn ``"#assistant"`` into a per-character validation
+    error rather than the intended single-tag input.
+    """
+    if isinstance(raw, str):
+        raise ValueError(
+            f"normalize_tags expects an iterable of strings, got a single str: {raw!r}. "
+            "Wrap in a list/tuple, e.g. (\"assistant\",)."
+        )
     seen: Set[str] = set()
     result: List[str] = []
     for raw_tag in raw:

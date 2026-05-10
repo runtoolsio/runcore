@@ -103,6 +103,14 @@ def test_normalize_tags_empty_iterable():
     assert normalize_tags([]) == ()
 
 
+def test_normalize_tags_rejects_bare_string():
+    """A bare str is iterable as characters — reject up-front with a clear error
+    so callers don't get a confusing per-character validation failure.
+    """
+    with pytest.raises(ValueError, match="expects an iterable of strings"):
+        normalize_tags("#assistant")
+
+
 # --- JobInstanceMetadata integration ---
 
 def test_metadata_normalizes_tags_on_construction():
