@@ -17,9 +17,9 @@ from datetime import datetime
 from enum import Enum
 from types import MappingProxyType
 from collections.abc import Mapping
-from typing import Any, Self, TypeVar, Generic, Iterable
+from typing import Any, Self, Tuple, TypeVar, Generic, Iterable
 
-from runtools.runcore.job import JobInstanceMetadata, JobRun, InstanceID
+from runtools.runcore.job import JobInstanceMetadata, JobRun, InstanceID, normalize_tags
 from runtools.runcore.run import Outcome, TerminationInfo, \
     PhaseRun, TerminationStatus, RunLifecycle, Stage
 from runtools.runcore.util import MatchingStrategy, DateTimeRange, TimeRange
@@ -53,6 +53,10 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         exclude (InstanceID | None): Concrete execution to exclude from results.
         match_any_field (bool): If True, matches if any provided field matches. If False, all must match.
         strategy (MatchingStrategy): The strategy to use for matching. Default is ``EXACT``.
+        tags_all (Tuple[str, ...]): Every tag must be present on the run (AND).
+            Normalized at construction.
+        tags_any (Tuple[str, ...]): At least one tag must be present (OR).
+            Normalized at construction. Combined with ``tags_all`` via AND.
     """
     job_id: str = ''
     run_id: str = ''
@@ -60,6 +64,16 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
     exclude: InstanceID | None = None
     match_any_field: bool = False
     strategy: MatchingStrategy = MatchingStrategy.EXACT
+    tags_all: Tuple[str, ...] = ()
+    tags_any: Tuple[str, ...] = ()
+
+    def __post_init__(self):
+        # Normalize tag inputs so callers can pass raw user strings; idempotent
+        # for already-normalized values (e.g., round-tripped from the DB).
+        if self.tags_all:
+            object.__setattr__(self, 'tags_all', normalize_tags(self.tags_all))
+        if self.tags_any:
+            object.__setattr__(self, 'tags_any', normalize_tags(self.tags_any))
 
     @classmethod
     def all_match(cls) -> MetadataCriterion:
@@ -188,6 +202,12 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
             return False
         if self.ordinal is not None and metadata.ordinal != self.ordinal:
             return False
+        if self.tags_all or self.tags_any:
+            run_tags = set(metadata.tags)
+            if self.tags_all and not set(self.tags_all).issubset(run_tags):
+                return False
+            if self.tags_any and run_tags.isdisjoint(self.tags_any):
+                return False
         return True
 
     def serialize(self) -> dict[str, Any]:
@@ -202,6 +222,10 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
             d['ordinal'] = self.ordinal
         if self.exclude is not None:
             d['exclude'] = self.exclude.serialize()
+        if self.tags_all:
+            d['tags_all'] = list(self.tags_all)
+        if self.tags_any:
+            d['tags_any'] = list(self.tags_any)
         return d
 
     @classmethod
@@ -228,6 +252,8 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
             exclude=InstanceID.deserialize(exclude_data) if exclude_data else None,
             match_any_field=match_any,
             strategy=MatchingStrategy[as_dict.get('strategy', 'exact').upper()],
+            tags_all=tuple(as_dict.get('tags_all', ())),
+            tags_any=tuple(as_dict.get('tags_any', ())),
         )
 
     def __str__(self) -> str:

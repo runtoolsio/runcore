@@ -371,6 +371,74 @@ def test_init_run_normalizes_tags(sut):
     assert restored.metadata.tags == ('assistant', 'env/prod')
 
 
+def test_tags_filter_all(sut):
+    _init_and_store(sut, _run_with_tags('j', 'r1', ('a', 'b')))
+    _init_and_store(sut, _run_with_tags('j', 'r2', ('a',)))
+    _init_and_store(sut, _run_with_tags('j', 'r3', ('b', 'c')))
+
+    from runtools.runcore.matching import MetadataCriterion
+    crit = JobRunCriteria(metadata_criteria=(MetadataCriterion(tags_all=('a', 'b')),))
+    runs = sut.read_runs(crit)
+    assert {r.run_id for r in runs} == {'r1'}
+
+
+def test_tags_filter_any(sut):
+    _init_and_store(sut, _run_with_tags('j', 'r1', ('a',)))
+    _init_and_store(sut, _run_with_tags('j', 'r2', ('b',)))
+    _init_and_store(sut, _run_with_tags('j', 'r3', ('c',)))
+
+    from runtools.runcore.matching import MetadataCriterion
+    crit = JobRunCriteria(metadata_criteria=(MetadataCriterion(tags_any=('a', 'b')),))
+    runs = sut.read_runs(crit)
+    assert {r.run_id for r in runs} == {'r1', 'r2'}
+
+
+def test_tags_filter_combines_with_job_id(sut):
+    """job_id AND tags_all — within one criterion both must match."""
+    _init_and_store(sut, _run_with_tags('alpha', 'r1', ('prod',)))
+    _init_and_store(sut, _run_with_tags('beta', 'r2', ('prod',)))
+    _init_and_store(sut, _run_with_tags('alpha', 'r3', ('dev',)))
+
+    from runtools.runcore.matching import MetadataCriterion
+    crit = JobRunCriteria(metadata_criteria=(
+        MetadataCriterion(job_id='alpha', tags_all=('prod',)),
+    ))
+    runs = sut.read_runs(crit)
+    assert {(r.job_id, r.run_id) for r in runs} == {('alpha', 'r1')}
+
+
+def test_tags_filter_all_and_any_together(sut):
+    """tags_all=(prod) AND tags_any=(east, west) — both rules apply."""
+    _init_and_store(sut, _run_with_tags('j', 'r1', ('prod', 'east')))
+    _init_and_store(sut, _run_with_tags('j', 'r2', ('prod', 'west', 'extra')))
+    _init_and_store(sut, _run_with_tags('j', 'r3', ('prod',)))        # tags_any not satisfied
+    _init_and_store(sut, _run_with_tags('j', 'r4', ('east', 'west')))  # tags_all not satisfied
+
+    from runtools.runcore.matching import MetadataCriterion
+    crit = JobRunCriteria(metadata_criteria=(
+        MetadataCriterion(tags_all=('prod',), tags_any=('east', 'west')),
+    ))
+    runs = sut.read_runs(crit)
+    assert {r.run_id for r in runs} == {'r1', 'r2'}
+
+
+def test_remove_runs_by_tag_only_removes_matching(sut):
+    """remove_runs is called via _build_where_clause with no alias. Tag predicates
+    must still correlate to the outer runs row — not turn into a global
+    'any run has this tag' check that deletes everything.
+    """
+    _init_and_store(sut, _run_with_tags('jA', 'rA', ('x',)))
+    _init_and_store(sut, _run_with_tags('jB', 'rB', ('y',)))
+
+    from runtools.runcore.matching import MetadataCriterion
+    crit = JobRunCriteria(metadata_criteria=(MetadataCriterion(tags_all=('x',)),))
+    removed = sut.remove_runs(crit)
+
+    assert [(r.job_id, r.run_id) for r in removed] == [('jA', 'rA')]
+    remaining = {r.run_id for r in sut.read_runs()}
+    assert remaining == {'rB'}
+
+
 def test_tags_deleted_with_run_via_cascade(sut):
     """run_tags rows are removed when their parent run is removed (FK CASCADE).
     Pinned because SQLite has FKs disabled by default — the PRAGMA must be set.

@@ -123,69 +123,110 @@ def _build_where_clause(run_match, alias=''):
 
     if alias and not alias.endswith('.'):
         alias = alias + "."
+    # Inside correlated subqueries (tag predicates), bare column names like
+    # `job_id` would bind to the INNER table (run_tags), not the outer runs row.
+    # Use an explicit outer-table reference instead.
+    outer_ref = alias if alias else 'runs.'
 
     conditions = []
     params = []
+
+    def _id_match_fragment(field: str, pattern: str, strategy: MatchingStrategy):
+        match strategy:
+            case MatchingStrategy.PARTIAL:
+                return f'{alias}{field} GLOB ?', f'*{pattern}*'
+            case MatchingStrategy.FN_MATCH:
+                return f'{alias}{field} GLOB ?', pattern
+            case MatchingStrategy.EXACT:
+                return f'{alias}{field} = ?', pattern
+            case _:
+                return None, None
+
+    def _metadata_clause(c) -> tuple[str | None, list]:
+        """Build one criterion's WHERE fragment. Returns (sql, params).
+
+        - ``"1=0"``  — criterion can never match; caller short-circuits the whole query.
+        - ``None``   — criterion is unconstrained (match all).
+        - otherwise — a single parenthesized AND-joined predicate.
+        """
+        if c.strategy == MatchingStrategy.ALWAYS_FALSE:
+            return "1=0", []
+
+        parts: list[str] = []
+        params: list = []
+
+        # id matching (job_id / run_id) — skipped under ALWAYS_TRUE
+        if c.strategy != MatchingStrategy.ALWAYS_TRUE:
+            id_parts: list[str] = []
+            id_params: list = []
+            if c.job_id:
+                frag, val = _id_match_fragment('job_id', c.job_id, c.strategy)
+                if frag is not None:
+                    id_parts.append(frag)
+                    id_params.append(val)
+            if c.run_id:
+                frag, val = _id_match_fragment('run_id', c.run_id, c.strategy)
+                if frag is not None:
+                    id_parts.append(frag)
+                    id_params.append(val)
+            if id_parts:
+                join_op = ' OR ' if c.match_any_field else ' AND '
+                parts.append('(' + join_op.join(id_parts) + ')')
+                params.extend(id_params)
+
+        if c.ordinal is not None:
+            parts.append(f'{alias}ordinal = ?')
+            params.append(c.ordinal)
+
+        if c.tags_all:
+            placeholders = ','.join(['?'] * len(c.tags_all))
+            parts.append(
+                f"(SELECT COUNT(*) FROM run_tags t "
+                f"WHERE t.job_id={outer_ref}job_id AND t.run_id={outer_ref}run_id "
+                f"AND t.ordinal={outer_ref}ordinal AND t.tag IN ({placeholders})) = ?"
+            )
+            params.extend(c.tags_all)
+            params.append(len(c.tags_all))
+        if c.tags_any:
+            placeholders = ','.join(['?'] * len(c.tags_any))
+            parts.append(
+                f"EXISTS (SELECT 1 FROM run_tags t "
+                f"WHERE t.job_id={outer_ref}job_id AND t.run_id={outer_ref}run_id "
+                f"AND t.ordinal={outer_ref}ordinal AND t.tag IN ({placeholders}))"
+            )
+            params.extend(c.tags_any)
+
+        if not parts:
+            return None, []
+        return '(' + ' AND '.join(parts) + ')', params
 
     metadata_conditions = []
     metadata_params = []
     exclude_conditions = []
     exclude_params = []
+    match_all_seen = False
     for c in run_match.metadata_criteria:
         if c.exclude is not None:
             excl = c.exclude
             exclude_conditions.append(
                 f"NOT ({alias}job_id = ? AND {alias}run_id = ? AND {alias}ordinal = ?)")
             exclude_params.extend([excl.job_id, excl.run_id, excl.ordinal])
-        if c.strategy == MatchingStrategy.ALWAYS_TRUE:
-            if c.ordinal is not None:
-                conditions.append(f'{alias}ordinal = ?')
-                params.append(c.ordinal)
-            break
-        if c.strategy == MatchingStrategy.ALWAYS_FALSE:
-            return " WHERE 1=0", []  # Early return as nothing can match
 
-        id_conditions = []
-        id_params = []
-        if c.job_id:
-            match c.strategy:
-                case MatchingStrategy.PARTIAL:
-                    id_conditions.append(f'{alias}job_id GLOB ?')
-                    id_params.append(f'*{c.job_id}*')
-                case MatchingStrategy.FN_MATCH:
-                    id_conditions.append(f'{alias}job_id GLOB ?')
-                    id_params.append(c.job_id)
-                case MatchingStrategy.EXACT:
-                    id_conditions.append(f'{alias}job_id = ?')
-                    id_params.append(c.job_id)
-                case _:
-                    continue
+        clause, clause_params = _metadata_clause(c)
+        if clause == "1=0":
+            return " WHERE 1=0", []
+        if clause is None:
+            # Unconstrained criterion — OR'd with anything = match-all.
+            # Discard accumulated metadata predicates; excludes still apply.
+            match_all_seen = True
+            continue
+        if not match_all_seen:
+            metadata_conditions.append(clause)
+            metadata_params.extend(clause_params)
 
-        if c.run_id:
-            match c.strategy:
-                case MatchingStrategy.PARTIAL:
-                    id_conditions.append(f'{alias}run_id GLOB ?')
-                    id_params.append(f'*{c.run_id}*')
-                case MatchingStrategy.FN_MATCH:
-                    id_conditions.append(f'{alias}run_id GLOB ?')
-                    id_params.append(c.run_id)
-                case MatchingStrategy.EXACT:
-                    id_conditions.append(f'{alias}run_id = ?')
-                    id_params.append(c.run_id)
-                case _:
-                    continue
-
-        if id_conditions:
-            join_op = ' OR ' if c.match_any_field else ' AND '
-            combined = '(' + join_op.join(id_conditions) + ')'
-            if c.ordinal is not None:
-                combined = f"({combined} AND {alias}ordinal = ?)"
-                id_params.append(c.ordinal)
-            metadata_conditions.append(combined)
-            metadata_params.extend(id_params)
-        elif c.ordinal is not None:
-            metadata_conditions.append(f'{alias}ordinal = ?')
-            metadata_params.append(c.ordinal)
+    if match_all_seen:
+        metadata_conditions = []
+        metadata_params = []
 
     if metadata_conditions:
         conditions.append('(' + ' OR '.join(metadata_conditions) + ')')
