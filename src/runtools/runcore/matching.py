@@ -12,7 +12,7 @@ Use ``criteria()`` or ``JobRunCriteria.builder()`` to incrementally compose crit
 from __future__ import annotations
 
 from abc import abstractmethod, ABC
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import Enum
 from types import MappingProxyType
@@ -132,7 +132,7 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
                 ordinal = int(ordinal_str) if ordinal_str else None
             else:
                 run_id, ordinal = rest, None
-            return cls(job_id, run_id, ordinal=ordinal, match_any_field=False, strategy=strategy)
+            return cls(job_id, run_id, ordinal=ordinal, strategy=strategy)
 
         # Handle plain text (match against job_id or run_id)
         return cls(pattern, pattern, match_any_field=True, strategy=strategy)
@@ -239,18 +239,13 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         Returns:
             The deserialized criterion
         """
-        # Handle backward compatibility with match_any_id
-        match_any = as_dict.get('match_any_field')
-        if match_any is None:
-            match_any = as_dict.get('match_any_id', False)
-
         exclude_data = as_dict.get('exclude')
         return cls(
             job_id=as_dict.get('job_id', ''),
             run_id=as_dict.get('run_id', ''),
             ordinal=as_dict.get('ordinal'),
             exclude=InstanceID.deserialize(exclude_data) if exclude_data else None,
-            match_any_field=match_any,
+            match_any_field=as_dict.get('match_any_field', False),
             strategy=MatchingStrategy[as_dict.get('strategy', 'exact').upper()],
             tags_all=tuple(as_dict.get('tags_all', ())),
             tags_any=tuple(as_dict.get('tags_any', ())),
@@ -782,6 +777,8 @@ class JobRunCriteriaBuilder:
         self._metadata: list[MetadataCriterion] = []
         self._lifecycle: list[LifecycleCriterion] = []
         self._phase: list[PhaseCriterion] = []
+        self._tags_all: list[str] = []
+        self._tags_any: list[str] = []
 
     # -- Typed core methods --
 
@@ -831,6 +828,26 @@ class JobRunCriteriaBuilder:
     def all_except(self, instance_id: InstanceID) -> Self:
         """Append a metadata criterion matching everything except a specific instance."""
         self._metadata.append(MetadataCriterion.all_except(instance_id))
+        return self
+
+    def tag_all(self, *tags: str) -> Self:
+        """Require all given tags on the run (AND).
+
+        Accumulates across calls and is folded into every metadata criterion at
+        ``build()`` time. Combines with existing pattern criteria as an AND
+        constraint (each pattern AND these tags). If no metadata criteria are
+        otherwise added, an implicit match-all criterion carries the tags.
+        """
+        self._tags_all.extend(tags)
+        return self
+
+    def tag_any(self, *tags: str) -> Self:
+        """Require at least one of the given tags on the run (OR).
+
+        Same folding semantics as :meth:`tag_all`; combines as an additional AND
+        constraint with ``tags_all`` when both are set.
+        """
+        self._tags_any.extend(tags)
         return self
 
     # -- Convenience: lifecycle --
@@ -923,9 +940,29 @@ class JobRunCriteriaBuilder:
     def build(self) -> JobRunCriteria:
         """Construct the frozen ``JobRunCriteria``."""
         return JobRunCriteria(
-            metadata_criteria=tuple(self._metadata),
+            metadata_criteria=self._apply_tags_to_metadata(self._metadata),
             lifecycle_criteria=tuple(self._lifecycle),
             phase_criteria=tuple(self._phase),
+        )
+
+    def _apply_tags_to_metadata(self, metadata):
+        """Fold accumulated tag filters into each metadata criterion.
+
+        No tags → metadata is passed through unchanged. Tags + no metadata →
+        a single ``all_match()`` criterion carries them (ALWAYS_TRUE skips id
+        matching but still applies tag predicates in the SQL builder).
+        """
+        if not self._tags_all and not self._tags_any:
+            return tuple(metadata)
+
+        base = metadata or [MetadataCriterion.all_match()]
+        return tuple(
+            replace(
+                c,
+                tags_all=(*c.tags_all, *self._tags_all),
+                tags_any=(*c.tags_any, *self._tags_any),
+            )
+            for c in base
         )
 
 

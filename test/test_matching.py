@@ -65,6 +65,46 @@ def test_metadata_criterion_no_tags_serialize_omits_keys():
     assert 'tags_any' not in d
 
 
+def test_builder_tag_all_folds_into_existing_pattern():
+    """tag_all attaches to each pattern criterion as an AND constraint."""
+    built = criteria().pattern('alpha').tag_all('prod').build()
+    assert len(built.metadata_criteria) == 1
+    c = built.metadata_criteria[0]
+    assert c.job_id == 'alpha'
+    assert c.tags_all == ('prod',)
+
+
+def test_builder_tag_all_without_pattern_creates_match_all_with_tag():
+    """No patterns + tag filter → implicit match-all criterion carries the tags."""
+    from runtools.runcore.util import MatchingStrategy
+    built = criteria().tag_all('prod').build()
+    assert len(built.metadata_criteria) == 1
+    c = built.metadata_criteria[0]
+    assert c.strategy == MatchingStrategy.ALWAYS_TRUE
+    assert c.tags_all == ('prod',)
+
+
+def test_builder_tag_all_and_tag_any_compose():
+    built = criteria().tag_all('prod').tag_any('east', 'west').build()
+    c = built.metadata_criteria[0]
+    assert c.tags_all == ('prod',)
+    assert c.tags_any == ('east', 'west')
+
+
+def test_builder_tag_folds_into_every_pattern_criterion():
+    """When multiple patterns yield multiple criteria, each gets the tag filter."""
+    built = criteria().pattern('a').pattern('b').tag_all('prod').build()
+    assert len(built.metadata_criteria) == 2
+    for c in built.metadata_criteria:
+        assert c.tags_all == ('prod',)
+
+
+def test_builder_repeated_tag_all_accumulates():
+    built = criteria().tag_all('a').tag_all('b', 'c').build()
+    c = built.metadata_criteria[0]
+    assert c.tags_all == ('a', 'b', 'c')
+
+
 def test_interval_utc_conversion():
     c = criteria().created(*DateTimeRange.parse_to_utc(from_val='2023-11-10T09:00+02:00', to_val=None)).build()
     assert c.lifecycle_criteria[-1].created.since.hour == 7

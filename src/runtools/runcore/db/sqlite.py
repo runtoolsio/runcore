@@ -145,13 +145,9 @@ def _build_where_clause(run_match, alias=''):
     def _metadata_clause(c) -> tuple[str | None, list]:
         """Build one criterion's WHERE fragment. Returns (sql, params).
 
-        - ``"1=0"``  — criterion can never match; caller short-circuits the whole query.
         - ``None``   — criterion is unconstrained (match all).
         - otherwise — a single parenthesized AND-joined predicate.
         """
-        if c.strategy == MatchingStrategy.ALWAYS_FALSE:
-            return "1=0", []
-
         parts: list[str] = []
         params: list = []
 
@@ -213,8 +209,6 @@ def _build_where_clause(run_match, alias=''):
             exclude_params.extend([excl.job_id, excl.run_id, excl.ordinal])
 
         clause, clause_params = _metadata_clause(c)
-        if clause == "1=0":
-            return " WHERE 1=0", []
         if clause is None:
             # Unconstrained criterion — OR'd with anything = match-all.
             # Discard accumulated metadata predicates; excludes still apply.

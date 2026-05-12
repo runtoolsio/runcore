@@ -54,10 +54,6 @@ def _always_true(*_):
     return True
 
 
-def _always_false(*_):
-    return False
-
-
 class MatchingStrategy(Enum):
     """
     Define functions for string match testing where the first parameter is the tested string and the second parameter
@@ -67,7 +63,6 @@ class MatchingStrategy(Enum):
     FN_MATCH = (fnmatch,)
     PARTIAL = (partial_match,)
     ALWAYS_TRUE = (_always_true,)
-    ALWAYS_FALSE = (_always_false,)
 
     def __call__(self, *args, **kwargs):
         return self.value[0](*args, **kwargs)
