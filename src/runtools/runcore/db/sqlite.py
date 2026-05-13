@@ -423,7 +423,6 @@ class SQLite(EnvironmentDatabase):
                      faults TEXT CHECK (faults IS NULL OR json_valid(faults)),
                      status TEXT CHECK (status IS NULL OR json_valid(status)),
                      warnings INT,
-                     misc TEXT CHECK (misc IS NULL OR json_valid(misc)),
                      PRIMARY KEY (job_id, run_id, ordinal)
                      )
                      ''')
@@ -743,7 +742,6 @@ class SQLite(EnvironmentDatabase):
                     json.dumps([f.serialize() for f in r.faults]) if r.faults else None,
                     json.dumps(r.status.serialize()) if r.status else None,
                     len(r.status.warnings) if r.status else None,
-                    None,  # misc
                     r.metadata.job_id,
                     r.metadata.run_id,
                     r.metadata.ordinal,
@@ -751,7 +749,7 @@ class SQLite(EnvironmentDatabase):
 
         update_sql = (
             "UPDATE runs SET user_params=?, features=?, created=?, started=?, ended=?, exec_time=?, "
-            "root_phase=?, output_locations=?, termination_status=?, faults=?, status=?, warnings=?, misc=? "
+            "root_phase=?, output_locations=?, termination_status=?, faults=?, status=?, warnings=? "
             "WHERE job_id=? AND run_id=? AND ordinal=?"
         )
         for run in job_runs:
