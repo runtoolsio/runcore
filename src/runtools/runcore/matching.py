@@ -19,7 +19,7 @@ from types import MappingProxyType
 from collections.abc import Mapping
 from typing import Any, Self, Tuple, TypeVar, Generic, Iterable
 
-from runtools.runcore.job import JobInstanceMetadata, JobRun, InstanceID, normalize_tags
+from runtools.runcore.job import JobInstanceMetadata, JobRun, InstanceID, normalize_tag
 from runtools.runcore.run import Outcome, TerminationInfo, \
     PhaseRun, TerminationStatus, RunLifecycle, Stage
 from runtools.runcore.util import MatchingStrategy, DateTimeRange, TimeRange
@@ -52,11 +52,12 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         ordinal (int | None): Exact ordinal to match. ``None`` means any ordinal.
         exclude (InstanceID | None): Concrete execution to exclude from results.
         match_any_field (bool): If True, matches if any provided field matches. If False, all must match.
-        strategy (MatchingStrategy): The strategy to use for matching. Default is ``EXACT``.
-        tags_all (Tuple[str, ...]): Every tag must be present on the run (AND).
-            Normalized at construction.
-        tags_any (Tuple[str, ...]): At least one tag must be present (OR).
-            Normalized at construction. Combined with ``tags_all`` via AND.
+        strategy (MatchingStrategy): The strategy applied to ``job_id``, ``run_id`` and each ``tags``
+            entry. Default is ``EXACT``.
+        tags (Tuple[str, ...]): Tag patterns — every entry must find at least one matching run-tag
+            under ``strategy`` (AND across the tuple). Normalized at construction. For OR semantics
+            across distinct tags, compose multiple criteria. When ``match_any_field=True``, tags
+            also participate as a third axis in the OR-group with job_id/run_id.
     """
     job_id: str = ''
     run_id: str = ''
@@ -64,16 +65,22 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
     exclude: InstanceID | None = None
     match_any_field: bool = False
     strategy: MatchingStrategy = MatchingStrategy.EXACT
-    tags_all: Tuple[str, ...] = ()
-    tags_any: Tuple[str, ...] = ()
+    tags: Tuple[str, ...] = ()
 
     def __post_init__(self):
-        # Normalize tag inputs so callers can pass raw user strings; idempotent
-        # for already-normalized values (e.g., round-tripped from the DB).
-        if self.tags_all:
-            object.__setattr__(self, 'tags_all', normalize_tags(self.tags_all))
-        if self.tags_any:
-            object.__setattr__(self, 'tags_any', normalize_tags(self.tags_any))
+        if self.tags:
+            seen: set[str] = set()
+            normalized: list[str] = []
+            for t in self.tags:
+                t = normalize_tag(t)
+                if t and t not in seen:
+                    seen.add(t)
+                    normalized.append(t)
+            object.__setattr__(self, 'tags', tuple(normalized))
+            # ALWAYS_TRUE applied to a tag filter would match anything — switch to EXACT
+            # so tag filtering means what the user expects.
+            if self.strategy == MatchingStrategy.ALWAYS_TRUE:
+                object.__setattr__(self, 'strategy', MatchingStrategy.EXACT)
 
     @classmethod
     def all_match(cls) -> MetadataCriterion:
@@ -114,9 +121,14 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         - "job_id@run_id" - Match specific job ID and run ID combination
         - Any other text - Match against job_id and run_id with match_any_field=True
 
+        Bare-token patterns produce an identity-only criterion. To also search the
+        tag axis (the convenience semantic for CLI search-style input), compose
+        with an additional tag-only criterion — see ``JobRunCriteria.parse`` /
+        ``JobRunCriteriaBuilder.patterns_or_all`` and their ``include_tag`` flag.
+
         Args:
             pattern: The pattern to parse. Can be empty, a job/run combo with '@', or plain text.
-            strategy: The strategy to use for matching. Default is `MatchingStrategy.EXACT`
+            strategy: The strategy to use for matching. Default is `MatchingStrategy.EXACT`.
 
         Returns:
             A new criteria object configured according to the pattern format.
@@ -134,7 +146,7 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
                 run_id, ordinal = rest, None
             return cls(job_id, run_id, ordinal=ordinal, strategy=strategy)
 
-        # Handle plain text (match against job_id or run_id)
+        # Identity-only OR across job_id / run_id. Tag-axis search is composed separately.
         return cls(pattern, pattern, match_any_field=True, strategy=strategy)
 
     @classmethod
@@ -193,21 +205,31 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
         job_id_match = self._matches_id(metadata.job_id, self.job_id)
         run_id_match = self._matches_id(metadata.run_id, self.run_id)
 
+        # match_any_field is an OR over identity axes (job_id, run_id) only.
+        # Tags are always an AND filter — never part of the OR group. The bare-token
+        # search (which historically also matched against tags) is composed at the
+        # JobRunCriteria level as two OR'd criteria: id-only + tag-only.
         if self.match_any_field:
-            id_match = (not self.job_id or job_id_match) or (not self.run_id or run_id_match)
+            candidates = []
+            if self.job_id:
+                candidates.append(job_id_match)
+            if self.run_id:
+                candidates.append(run_id_match)
+            if candidates and not any(candidates):
+                return False
         else:
-            id_match = (not self.job_id or job_id_match) and (not self.run_id or run_id_match)
+            if self.job_id and not job_id_match:
+                return False
+            if self.run_id and not run_id_match:
+                return False
 
-        if not id_match:
-            return False
         if self.ordinal is not None and metadata.ordinal != self.ordinal:
             return False
-        if self.tags_all or self.tags_any:
-            run_tags = set(metadata.tags)
-            if self.tags_all and not set(self.tags_all).issubset(run_tags):
-                return False
-            if self.tags_any and run_tags.isdisjoint(self.tags_any):
-                return False
+
+        if self.tags:
+            for pat in self.tags:
+                if not any(self.strategy(rt, pat) for rt in metadata.tags):
+                    return False
         return True
 
     def serialize(self) -> dict[str, Any]:
@@ -222,10 +244,8 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
             d['ordinal'] = self.ordinal
         if self.exclude is not None:
             d['exclude'] = self.exclude.serialize()
-        if self.tags_all:
-            d['tags_all'] = list(self.tags_all)
-        if self.tags_any:
-            d['tags_any'] = list(self.tags_any)
+        if self.tags:
+            d['tags'] = list(self.tags)
         return d
 
     @classmethod
@@ -247,8 +267,7 @@ class MetadataCriterion(MatchCriteria[JobInstanceMetadata]):
             exclude=InstanceID.deserialize(exclude_data) if exclude_data else None,
             match_any_field=as_dict.get('match_any_field', False),
             strategy=MatchingStrategy[as_dict.get('strategy', 'exact').upper()],
-            tags_all=tuple(as_dict.get('tags_all', ())),
-            tags_any=tuple(as_dict.get('tags_any', ())),
+            tags=tuple(as_dict.get('tags', ())),
         )
 
     def __str__(self) -> str:
@@ -680,12 +699,27 @@ class JobRunCriteria(MatchCriteria[JobRun]):
         }
 
     @classmethod
-    def parse(cls, pattern: str, strategy: MatchingStrategy = MatchingStrategy.EXACT) -> JobRunCriteria:
-        return cls(metadata_criteria=(MetadataCriterion.parse(pattern, strategy),))
+    def parse(cls, pattern: str, strategy: MatchingStrategy = MatchingStrategy.EXACT,
+              *, include_tag: bool = True) -> JobRunCriteria:
+        """Build a JobRunCriteria from a single pattern.
+
+        Bare tokens (no ``@``) compose two OR'd criteria when ``include_tag=True``:
+        id-only and tag-only. See ``JobRunCriteriaBuilder.pattern``.
+        """
+        crits: list[MetadataCriterion] = [MetadataCriterion.parse(pattern, strategy)]
+        if include_tag and pattern and '@' not in pattern:
+            crits.append(MetadataCriterion(tags=(pattern,), strategy=strategy))
+        return cls(metadata_criteria=tuple(crits))
 
     @classmethod
-    def parse_all(cls, patterns: Iterable[str], strategy: MatchingStrategy = MatchingStrategy.EXACT) -> JobRunCriteria:
-        return cls(metadata_criteria=tuple(MetadataCriterion.parse(p, strategy) for p in patterns))
+    def parse_all(cls, patterns: Iterable[str], strategy: MatchingStrategy = MatchingStrategy.EXACT,
+                  *, include_tag: bool = True) -> JobRunCriteria:
+        crits: list[MetadataCriterion] = []
+        for p in patterns:
+            crits.append(MetadataCriterion.parse(p, strategy))
+            if include_tag and p and '@' not in p:
+                crits.append(MetadataCriterion(tags=(p,), strategy=strategy))
+        return cls(metadata_criteria=tuple(crits))
 
     @classmethod
     def parse_strict(cls, id_string) -> JobRunCriteria:
@@ -777,8 +811,7 @@ class JobRunCriteriaBuilder:
         self._metadata: list[MetadataCriterion] = []
         self._lifecycle: list[LifecycleCriterion] = []
         self._phase: list[PhaseCriterion] = []
-        self._tags_all: list[str] = []
-        self._tags_any: list[str] = []
+        self._tags: list[str] = []
 
     # -- Typed core methods --
 
@@ -799,17 +832,31 @@ class JobRunCriteriaBuilder:
 
     # -- Convenience: metadata --
 
-    def pattern(self, text: str, strategy: MatchingStrategy = MatchingStrategy.EXACT) -> Self:
-        """Append a metadata criterion parsed from a pattern string."""
+    def pattern(self, text: str, strategy: MatchingStrategy = MatchingStrategy.EXACT,
+                *, include_tag: bool = True) -> Self:
+        """Append a metadata criterion parsed from a pattern string.
+
+        When ``include_tag=True`` (default) and the pattern is a bare token
+        (no ``@``), also appends a tag-only criterion so the search OR's over
+        job_id / run_id / tags. Pass ``False`` to keep positional patterns
+        identity-only — useful when an explicit tag filter is being applied
+        separately.
+        """
         self._metadata.append(MetadataCriterion.parse(text, strategy))
+        if include_tag and text and '@' not in text:
+            self._metadata.append(MetadataCriterion(tags=(text,), strategy=strategy))
         return self
 
     def patterns_or_all(self, patterns: Iterable[str] | None,
-                        strategy: MatchingStrategy = MatchingStrategy.EXACT) -> Self:
-        """Append a metadata criterion for each pattern, or match-all if patterns is empty/None."""
+                        strategy: MatchingStrategy = MatchingStrategy.EXACT,
+                        *, include_tag: bool = True) -> Self:
+        """Append a metadata criterion for each pattern, or match-all if patterns is empty/None.
+
+        See ``pattern`` for ``include_tag`` semantics (bare-token tag-axis search).
+        """
         added = False
         for p in (patterns or ()):
-            self._metadata.append(MetadataCriterion.parse(p, strategy))
+            self.pattern(p, strategy, include_tag=include_tag)
             added = True
         if not added:
             self._metadata.append(MetadataCriterion.all_match())
@@ -830,24 +877,20 @@ class JobRunCriteriaBuilder:
         self._metadata.append(MetadataCriterion.all_except(instance_id))
         return self
 
-    def tag_all(self, *tags: str) -> Self:
-        """Require all given tags on the run (AND).
+    def tags(self, *tags: str) -> Self:
+        """Require all given tags on the run (AND across the tuple).
 
         Accumulates across calls and is folded into every metadata criterion at
         ``build()`` time. Combines with existing pattern criteria as an AND
         constraint (each pattern AND these tags). If no metadata criteria are
-        otherwise added, an implicit match-all criterion carries the tags.
-        """
-        self._tags_all.extend(tags)
-        return self
+        otherwise added, an implicit criterion carries the tags with EXACT
+        strategy.
 
-    def tag_any(self, *tags: str) -> Self:
-        """Require at least one of the given tags on the run (OR).
-
-        Same folding semantics as :meth:`tag_all`; combines as an additional AND
-        constraint with ``tags_all`` when both are set.
+        The match mode for each tag follows the carrying criterion's
+        ``strategy`` (EXACT/PARTIAL/FN_MATCH). For OR semantics across distinct
+        tags, compose multiple criteria via :meth:`metadata` instead.
         """
-        self._tags_any.extend(tags)
+        self._tags.extend(tags)
         return self
 
     # -- Convenience: lifecycle --
@@ -952,16 +995,12 @@ class JobRunCriteriaBuilder:
         a single ``all_match()`` criterion carries them (ALWAYS_TRUE skips id
         matching but still applies tag predicates in the SQL builder).
         """
-        if not self._tags_all and not self._tags_any:
+        if not self._tags:
             return tuple(metadata)
 
         base = metadata or [MetadataCriterion.all_match()]
         return tuple(
-            replace(
-                c,
-                tags_all=(*c.tags_all, *self._tags_all),
-                tags_any=(*c.tags_any, *self._tags_any),
-            )
+            replace(c, tags=(*c.tags, *self._tags))
             for c in base
         )
 

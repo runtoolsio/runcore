@@ -142,6 +142,21 @@ def _build_where_clause(run_match, alias=''):
             case _:
                 return None, None
 
+    def _tag_match_fragment(pattern: str, strategy: MatchingStrategy):
+        """EXISTS clause: ``any run-tag matches pattern under strategy``."""
+        prefix = (f"EXISTS (SELECT 1 FROM run_tags t "
+                  f"WHERE t.job_id={outer_ref}job_id AND t.run_id={outer_ref}run_id "
+                  f"AND t.ordinal={outer_ref}ordinal AND ")
+        match strategy:
+            case MatchingStrategy.EXACT:
+                return prefix + "t.tag = ?)", pattern
+            case MatchingStrategy.PARTIAL:
+                return prefix + "t.tag GLOB ?)", f'*{pattern}*'
+            case MatchingStrategy.FN_MATCH:
+                return prefix + "t.tag GLOB ?)", pattern
+            case _:
+                return None, None
+
     def _metadata_clause(c) -> tuple[str | None, list]:
         """Build one criterion's WHERE fragment. Returns (sql, params).
 
@@ -151,7 +166,6 @@ def _build_where_clause(run_match, alias=''):
         parts: list[str] = []
         params: list = []
 
-        # id matching (job_id / run_id) — skipped under ALWAYS_TRUE
         if c.strategy != MatchingStrategy.ALWAYS_TRUE:
             id_parts: list[str] = []
             id_params: list = []
@@ -170,27 +184,18 @@ def _build_where_clause(run_match, alias=''):
                 parts.append('(' + join_op.join(id_parts) + ')')
                 params.extend(id_params)
 
+            # Tags are always an AND filter (each pattern must find a matching run-tag).
+            # The bare-token tag-axis search is composed as a separate OR'd criterion
+            # at the JobRunCriteria level — not via tags participating in this OR group.
+            for pat in c.tags:
+                frag, val = _tag_match_fragment(pat, c.strategy)
+                if frag is not None:
+                    parts.append(frag)
+                    params.append(val)
+
         if c.ordinal is not None:
             parts.append(f'{alias}ordinal = ?')
             params.append(c.ordinal)
-
-        if c.tags_all:
-            placeholders = ','.join(['?'] * len(c.tags_all))
-            parts.append(
-                f"(SELECT COUNT(*) FROM run_tags t "
-                f"WHERE t.job_id={outer_ref}job_id AND t.run_id={outer_ref}run_id "
-                f"AND t.ordinal={outer_ref}ordinal AND t.tag IN ({placeholders})) = ?"
-            )
-            params.extend(c.tags_all)
-            params.append(len(c.tags_all))
-        if c.tags_any:
-            placeholders = ','.join(['?'] * len(c.tags_any))
-            parts.append(
-                f"EXISTS (SELECT 1 FROM run_tags t "
-                f"WHERE t.job_id={outer_ref}job_id AND t.run_id={outer_ref}run_id "
-                f"AND t.ordinal={outer_ref}ordinal AND t.tag IN ({placeholders}))"
-            )
-            params.extend(c.tags_any)
 
         if not parts:
             return None, []

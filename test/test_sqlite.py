@@ -377,49 +377,75 @@ def test_tags_filter_all(sut):
     _init_and_store(sut, _run_with_tags('j', 'r3', ('b', 'c')))
 
     from runtools.runcore.matching import MetadataCriterion
-    crit = JobRunCriteria(metadata_criteria=(MetadataCriterion(tags_all=('a', 'b')),))
+    crit = JobRunCriteria(metadata_criteria=(MetadataCriterion(tags=('a', 'b')),))
     runs = sut.read_runs(crit)
     assert {r.run_id for r in runs} == {'r1'}
 
 
-def test_tags_filter_any(sut):
+def test_tags_filter_or_via_composed_criteria(sut):
+    """OR semantics across tags: two criteria, ORed via metadata_criteria group."""
     _init_and_store(sut, _run_with_tags('j', 'r1', ('a',)))
     _init_and_store(sut, _run_with_tags('j', 'r2', ('b',)))
     _init_and_store(sut, _run_with_tags('j', 'r3', ('c',)))
 
     from runtools.runcore.matching import MetadataCriterion
-    crit = JobRunCriteria(metadata_criteria=(MetadataCriterion(tags_any=('a', 'b')),))
+    crit = JobRunCriteria(metadata_criteria=(
+        MetadataCriterion(tags=('a',)),
+        MetadataCriterion(tags=('b',)),
+    ))
     runs = sut.read_runs(crit)
     assert {r.run_id for r in runs} == {'r1', 'r2'}
 
 
 def test_tags_filter_combines_with_job_id(sut):
-    """job_id AND tags_all — within one criterion both must match."""
+    """job_id AND tags — within one criterion both must match."""
     _init_and_store(sut, _run_with_tags('alpha', 'r1', ('prod',)))
     _init_and_store(sut, _run_with_tags('beta', 'r2', ('prod',)))
     _init_and_store(sut, _run_with_tags('alpha', 'r3', ('dev',)))
 
     from runtools.runcore.matching import MetadataCriterion
     crit = JobRunCriteria(metadata_criteria=(
-        MetadataCriterion(job_id='alpha', tags_all=('prod',)),
+        MetadataCriterion(job_id='alpha', tags=('prod',)),
     ))
     runs = sut.read_runs(crit)
     assert {(r.job_id, r.run_id) for r in runs} == {('alpha', 'r1')}
 
 
-def test_tags_filter_all_and_any_together(sut):
-    """tags_all=(prod) AND tags_any=(east, west) — both rules apply."""
-    _init_and_store(sut, _run_with_tags('j', 'r1', ('prod', 'east')))
-    _init_and_store(sut, _run_with_tags('j', 'r2', ('prod', 'west', 'extra')))
-    _init_and_store(sut, _run_with_tags('j', 'r3', ('prod',)))        # tags_any not satisfied
-    _init_and_store(sut, _run_with_tags('j', 'r4', ('east', 'west')))  # tags_all not satisfied
+def test_bare_token_substring_search_via_parse(sut):
+    """Bare-token search (parse): PARTIAL strategy + match_any_field — substring across job/run/tag."""
+    _init_and_store(sut, _run_with_tags('jobA', 'r1', ('production',)))      # tag match
+    _init_and_store(sut, _run_with_tags('shop', 'r2', ('other',)))            # job_id match
+    _init_and_store(sut, _run_with_tags('jobB', 'shopper', ('other',)))       # run_id match
+    _init_and_store(sut, _run_with_tags('jobC', 'r3', ('staging',)))          # no match
 
-    from runtools.runcore.matching import MetadataCriterion
-    crit = JobRunCriteria(metadata_criteria=(
-        MetadataCriterion(tags_all=('prod',), tags_any=('east', 'west')),
-    ))
+    from runtools.runcore.matching import MatchingStrategy
+    crit = JobRunCriteria.parse('shop', MatchingStrategy.PARTIAL)
     runs = sut.read_runs(crit)
-    assert {r.run_id for r in runs} == {'r1', 'r2'}
+    assert {r.run_id for r in runs} == {'r2', 'shopper'}
+
+    crit = JobRunCriteria.parse('prod', MatchingStrategy.PARTIAL)
+    runs = sut.read_runs(crit)
+    assert {r.run_id for r in runs} == {'r1'}  # only the production-tagged run
+
+
+def test_positional_with_tag_excludes_id_match_without_tag(sut):
+    """`taro h import -t prod` semantics: (job_id OR run_id contains 'import') AND tag=prod.
+
+    A run with job_id matching but missing the tag must NOT come back —
+    the explicit -t flag is a strict AND filter, not part of the OR group.
+    """
+    from runtools.runcore.matching import MatchingStrategy
+    _init_and_store(sut, _run_with_tags('import_catalog', 'r1', ('dev',)))   # id match, no prod tag
+    _init_and_store(sut, _run_with_tags('import_catalog', 'r2', ('prod',)))  # id + tag match
+    _init_and_store(sut, _run_with_tags('sync', '123', ('import', 'prod')))  # no id match, tags only
+    _init_and_store(sut, _run_with_tags('other', 'r4', ('prod',)))           # tag match, no id match
+
+    crit = (criteria()
+            .patterns_or_all(['import'], MatchingStrategy.PARTIAL, include_tag=False)
+            .tags('prod')
+            .build())
+    runs = sut.read_runs(crit)
+    assert {(r.job_id, r.run_id) for r in runs} == {('import_catalog', 'r2')}
 
 
 def test_remove_runs_by_tag_only_removes_matching(sut):
@@ -431,7 +457,7 @@ def test_remove_runs_by_tag_only_removes_matching(sut):
     _init_and_store(sut, _run_with_tags('jB', 'rB', ('y',)))
 
     from runtools.runcore.matching import MetadataCriterion
-    crit = JobRunCriteria(metadata_criteria=(MetadataCriterion(tags_all=('x',)),))
+    crit = JobRunCriteria(metadata_criteria=(MetadataCriterion(tags=('x',)),))
     removed = sut.remove_runs(crit)
 
     assert [(r.job_id, r.run_id) for r in removed] == [('jA', 'rA')]
