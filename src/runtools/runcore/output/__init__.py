@@ -174,6 +174,10 @@ _RESERVED_KEYS = frozenset({
     "msg", "ts", "lvl",  # short aliases accepted on read
 })
 
+# Prefix marking runtools status-tracking fields. These drive the Status model and are
+# consumed (stripped/dropped) before storage — they never reach stored output.
+TRACKING_PREFIX = "runtools.track."
+
 
 @dataclass(frozen=True)
 class OutputLine:
@@ -196,8 +200,8 @@ class OutputLine:
 
     @property
     def has_tracking(self) -> bool:
-        """Whether this line contains any rt_ tracking fields."""
-        return bool(self.fields and any(k.startswith('rt_') for k in self.fields))
+        """Whether this line contains any runtools.track.* tracking fields."""
+        return bool(self.fields and any(k.startswith(TRACKING_PREFIX) for k in self.fields))
 
     @property
     def is_tracking_only(self) -> bool:
@@ -206,10 +210,10 @@ class OutputLine:
 
     @property
     def tracking_fields(self) -> Optional[Dict[str, Any]]:
-        """Return only the rt_ tracking fields, or None if there are none."""
+        """Return only the runtools.track.* tracking fields, or None if there are none."""
         if not self.fields:
             return None
-        tracking = {k: v for k, v in self.fields.items() if k.startswith('rt_')}
+        tracking = {k: v for k, v in self.fields.items() if k.startswith(TRACKING_PREFIX)}
         return tracking or None
 
     def with_fields(self, fields: Optional[Dict[str, Any]]) -> 'OutputLine':
@@ -217,10 +221,10 @@ class OutputLine:
         return replace(self, fields=fields)
 
     def without_tracking_fields(self) -> 'OutputLine':
-        """Return a copy with rt_ tracking fields stripped from fields."""
+        """Return a copy with runtools.track.* tracking fields stripped from fields."""
         if not self.fields:
             return self
-        clean = {k: v for k, v in self.fields.items() if not k.startswith('rt_')}
+        clean = {k: v for k, v in self.fields.items() if not k.startswith(TRACKING_PREFIX)}
         return replace(self, fields=clean or None) if len(clean) != len(self.fields) else self
 
     @classmethod
