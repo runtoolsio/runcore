@@ -15,6 +15,7 @@ def format_number(value: float) -> str:
 
 @dataclass(frozen=True)
 class Event:
+    """Point-in-time marker (current activity, warnings)."""
     message: str
     timestamp: datetime
     source: Optional[str] = None
@@ -33,6 +34,36 @@ class Event:
             'timestamp': self.timestamp.isoformat(),
             'source': self.source,
         }
+
+
+@dataclass(frozen=True)
+class Result:
+    """
+    Job-level lifecycle terminator. Carries an outcome flag (``failed``) in addition to a human-readable message.
+    """
+    message: str
+    timestamp: datetime
+    source: Optional[str] = None
+    failed: bool = False
+
+    @classmethod
+    def deserialize(cls, data: dict) -> 'Result':
+        return cls(
+            message=data['message'],
+            timestamp=datetime.fromisoformat(data['timestamp']),
+            source=data.get('source'),
+            failed=data.get('failed', False),
+        )
+
+    def serialize(self) -> dict:
+        d = {
+            'message': self.message,
+            'timestamp': self.timestamp.isoformat(),
+            'source': self.source,
+        }
+        if self.failed:
+            d['failed'] = True
+        return d
 
 
 @dataclass(frozen=True)
@@ -162,7 +193,7 @@ class Status:
     last_event: Optional[Event]
     operations: List[Operation]
     warnings: List[Event]
-    result: Optional[Event]
+    result: Optional[Result]
 
     @classmethod
     def deserialize(cls, data: dict) -> 'Status':
@@ -170,7 +201,7 @@ class Status:
             last_event=Event.deserialize(data['last_event']) if data.get('last_event') else None,
             operations=[Operation.deserialize(op) for op in data.get('operations', ())],
             warnings=[Event.deserialize(w) for w in data.get('warnings', ())],
-            result=Event.deserialize(data['result']) if data.get('result') else None,
+            result=Result.deserialize(data['result']) if data.get('result') else None,
         )
 
     def serialize(self) -> dict:
