@@ -338,20 +338,6 @@ def lock_dir(create: bool) -> Path:
     return path
 
 
-def lock_path(lock_name: str, create: bool) -> Path:
-    """
-    1. Root user: /run/lock/runtools/{lock-name}
-    2. Non-root user: /tmp/runtools_${USER}/{lock-name}
-
-    :param lock_name: socket file name
-    :param create: create path directories if not exist
-    :return: path of a file to be used as a lock
-    :raises FileNotFoundError: when path cannot be created (only if create == True)
-    """
-
-    return lock_dir(create) / lock_name
-
-
 def get_data_dir(*, create: bool = False) -> Path:
     """
     Determines the appropriate data directory for persistent application data based on user privileges.

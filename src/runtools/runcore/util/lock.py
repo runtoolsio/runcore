@@ -81,9 +81,9 @@ class FileLock:
         self.release()
 
 
-def default_file_lock_factory(*, timeout=10, max_check_time=0.05):
-    def factory(lock_file):
-        return FileLock(lock_file, timeout=timeout, max_check_time=max_check_time)
+def default_file_lock_factory(lock_dir, *, timeout=10, max_check_time=0.05):
+    def factory(lock_id):
+        return FileLock(lock_dir / f"{lock_id}.lock", timeout=timeout, max_check_time=max_check_time)
 
     return factory
 
