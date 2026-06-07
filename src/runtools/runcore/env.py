@@ -5,7 +5,7 @@ from typing import Optional, Literal, Annotated, Union, Dict, Set, Iterable, Lis
 
 from pydantic import BaseModel, ConfigDict, Field, Discriminator, TypeAdapter
 
-from runtools.runcore import paths, util
+from runtools.runcore import paths
 from runtools.runcore.db import load_database_module
 from runtools.runcore.err import RuntoolsException
 from runtools.runcore.output import OutputConfig
@@ -18,26 +18,34 @@ BUILTIN_LOCAL = 'local'
 _SQLITE_DRIVER = 'sqlite'
 
 
-class EnvironmentType(StrEnum):
+class TransportType(StrEnum):
     IN_PROCESS = 'in_process'
-    LOCAL = 'local'
+    UNIX_SOCKET = 'unix_socket'
 
 
-class EnvironmentConfig(BaseModel):
+class InProcessTransportConfig(BaseModel):
+    """No transport boundary — node and clients live in the same process."""
     model_config = ConfigDict(frozen=True)
 
-    type: str
-    id: str = Field(description="Environment identifier")
-    plugins: Dict[str, dict] = Field(default_factory=dict, description="Plugin name to config mapping")
+    type: Literal["in_process"] = TransportType.IN_PROCESS
 
 
-class LayoutConfig(BaseModel):
+class UnixSocketTransportConfig(BaseModel):
+    """Process boundary over Unix domain sockets."""
     model_config = ConfigDict(frozen=True)
 
+    type: Literal["unix_socket"] = TransportType.UNIX_SOCKET
     root_dir: Optional[Path] = Field(
         default=None,
-        description="Root directory for local environments; uses default if None"
+        description="Transport root: holds component dirs, socket files, and liveness lock files. "
+                    "Uses default if None."
     )
+
+
+TransportConfig = Annotated[
+    Union[InProcessTransportConfig, UnixSocketTransportConfig],
+    Discriminator("type")
+]
 
 
 class RetentionConfig(BaseModel):
@@ -50,36 +58,29 @@ class RetentionConfig(BaseModel):
         return RetentionPolicy(max_runs_per_job=self.max_runs_per_job, max_runs_per_env=self.max_runs_per_env)
 
 
-class LocalEnvironmentConfig(EnvironmentConfig):
-    type: Literal["local"] = EnvironmentType.LOCAL
+class EnvironmentConfig(BaseModel):
+    """Runtime configuration of a named environment.
+
+    Transport selects process topology, communication mechanism, and coordination primitives.
+    Persistence is not part of this config — the DB must be opened (via EnvironmentEntry)
+    before this config can be loaded from it.
+    """
+    model_config = ConfigDict(frozen=True)
+
     id: str = Field(description="Environment identifier")
-    layout: LayoutConfig = Field(
-        default_factory=LayoutConfig,
-        description="Layout configuration for local environment resources"
-    )
-    output: OutputConfig = Field(
-        default_factory=OutputConfig,
-        description="Output configuration",
-    )
-    retention: RetentionConfig = Field(
-        default_factory=RetentionConfig,
-        description="Retention configuration for finished runs",
-    )
+    transport: TransportConfig = Field(description="Transport selecting topology and coordination")
+    output: OutputConfig = Field(default_factory=OutputConfig, description="Output configuration")
+    retention: RetentionConfig = Field(default_factory=RetentionConfig,
+                                       description="Retention configuration for finished runs")
+    plugins: Dict[str, dict] = Field(default_factory=dict, description="Plugin name to config mapping")
+
+    @classmethod
+    def default_local(cls, env_id: str) -> "EnvironmentConfig":
+        """Out-of-the-box preset: unix_socket transport, default output and retention."""
+        return cls(id=env_id, transport=UnixSocketTransportConfig())
 
 
-class InProcessEnvironmentConfig(EnvironmentConfig):
-    """Configuration for in-process environments used primarily in testing."""
-    type: Literal["in_process"] = EnvironmentType.IN_PROCESS
-    id: str = Field(default_factory=lambda: "in_process_" + util.unique_timestamp_hex(),
-                    description="Environment identifier")
-
-
-EnvironmentConfigUnion = Annotated[
-    Union[LocalEnvironmentConfig, InProcessEnvironmentConfig],
-    Discriminator("type")
-]
-
-_env_config_adapter = TypeAdapter(EnvironmentConfigUnion)
+_env_config_adapter = TypeAdapter(EnvironmentConfig)
 
 
 # --- Environment entry ---
@@ -210,7 +211,7 @@ def ensure_environment(entry: EnvironmentEntry):
         return
     driver = load_database_module(entry.driver)
     if not driver.exists(entry):
-        driver.create_environment(entry, LocalEnvironmentConfig(id=entry.id))
+        driver.create_environment(entry, EnvironmentConfig.default_local(entry.id))
 
 
 def _open_environment(entry: EnvironmentEntry):

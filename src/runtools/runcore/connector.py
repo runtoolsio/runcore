@@ -29,7 +29,7 @@ import fcntl
 from runtools.runcore import paths, util, output
 from runtools.runcore.client import LocalInstanceClient
 from runtools.runcore.db import EnvironmentDatabase
-from runtools.runcore.env import LocalEnvironmentConfig, EnvironmentConfigUnion, EnvironmentEntry, \
+from runtools.runcore.env import EnvironmentConfig, UnixSocketTransportConfig, EnvironmentEntry, \
     _open_environment, resolve_env_ref, ensure_environment
 from runtools.runcore.err import run_isolated_collect_exceptions
 from runtools.runcore.job import InstanceNotifications, JobInstance, InstanceLifecycleObserver, InstanceLifecycleEvent, \
@@ -156,7 +156,7 @@ class StandardLocalConnectorLayout(LocalConnectorLayout):
 
     @classmethod
     def from_config(cls, env_config, component_prefix: str = "connector_"):
-        return cls.create(env_config.id, env_config.layout.root_dir, component_prefix)
+        return cls.create(env_config.id, env_config.transport.root_dir, component_prefix)
 
     @property
     def env_dir(self) -> Path:
@@ -480,14 +480,15 @@ class EnvironmentConnector(ABC):
         pass
 
 
-def _create(env_db: EnvironmentDatabase, env_config: EnvironmentConfigUnion) -> EnvironmentConnector:
+def _create(env_db: EnvironmentDatabase, env_config: EnvironmentConfig) -> EnvironmentConnector:
     """Internal: create a connector from an environment database and configuration."""
-    if isinstance(env_config, LocalEnvironmentConfig):
+    if isinstance(env_config.transport, UnixSocketTransportConfig):
         output_backends = output.create_backends(env_config.id, env_config.output.storages)
         layout = StandardLocalConnectorLayout.from_config(env_config)
         return _local(env_config.id, env_db, layout, output_backends)
 
-    raise AssertionError(f"Unsupported environment type: {env_config.type}. This is a programming error.")
+    raise AssertionError(
+        f"Unsupported transport: {type(env_config.transport).__name__}. This is a programming error.")
 
 
 def _local(env_id, env_db, connector_layout, output_backends=()) -> EnvironmentConnector:
