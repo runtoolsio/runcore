@@ -154,10 +154,6 @@ class StandardLocalConnectorLayout(LocalConnectorLayout):
         """
         return cls(*ensure_component_dir(env_id, component_prefix, root_dir))
 
-    @classmethod
-    def from_config(cls, env_config, component_prefix: str = "connector_"):
-        return cls.create(env_config.id, env_config.transport.root_dir, component_prefix)
-
     @property
     def env_dir(self) -> Path:
         return self._env_dir
@@ -484,14 +480,14 @@ def _create(env_db: EnvironmentDatabase, env_config: EnvironmentConfig) -> Envir
     """Internal: create a connector from an environment database and configuration."""
     if isinstance(env_config.transport, UnixSocketTransportConfig):
         output_backends = output.create_backends(env_config.id, env_config.output.storages)
-        layout = StandardLocalConnectorLayout.from_config(env_config)
-        return _local(env_config.id, env_db, layout, output_backends)
+        layout = StandardLocalConnectorLayout.create(env_config.id, env_config.transport.root_dir)
+        return _unix_socket(env_config.id, env_db, layout, output_backends)
 
     raise AssertionError(
         f"Unsupported transport: {type(env_config.transport).__name__}. This is a programming error.")
 
 
-def _local(env_id, env_db, connector_layout, output_backends=()) -> EnvironmentConnector:
+def _unix_socket(env_id, env_db, connector_layout, output_backends=()) -> EnvironmentConnector:
     clean_stale_component_dirs(connector_layout.env_dir)
     client = LocalInstanceClient(connector_layout.server_sockets_provider)
     event_receiver = EventReceiver(connector_layout.listener_events_socket_path)
