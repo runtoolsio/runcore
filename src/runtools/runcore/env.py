@@ -3,7 +3,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Optional, Literal, Annotated, Union, Dict, Set, Iterable, List
 
-from pydantic import BaseModel, ConfigDict, Field, Discriminator, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, Discriminator
 
 from runtools.runcore import paths
 from runtools.runcore.db import load_database_module
@@ -78,9 +78,6 @@ class EnvironmentConfig(BaseModel):
     def default_local(cls, env_id: str) -> "EnvironmentConfig":
         """Out-of-the-box preset: unix_socket transport, default output and retention."""
         return cls(id=env_id, transport=UnixSocketTransportConfig())
-
-
-_env_config_adapter = TypeAdapter(EnvironmentConfig)
 
 
 # --- Environment entry ---
@@ -224,7 +221,7 @@ def _open_environment(entry: EnvironmentEntry):
     env_db.open()
     try:
         config_dict = env_db.load_config(entry.id)
-        config = _env_config_adapter.validate_python(config_dict)
+        config = EnvironmentConfig.model_validate(config_dict)
     except BaseException:
         env_db.close()
         raise
@@ -235,7 +232,7 @@ def load_env_config(entry: EnvironmentEntry) -> EnvironmentConfig:
     """Load environment config from DB. Returns defaults for missing keys."""
     with _create_env_db(entry) as db:
         config_dict = db.load_config(entry.id)
-        return _env_config_adapter.validate_python(config_dict)
+        return EnvironmentConfig.model_validate(config_dict)
 
 
 def save_env_config(entry: EnvironmentEntry, config: EnvironmentConfig):
