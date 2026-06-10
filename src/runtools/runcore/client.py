@@ -1,40 +1,24 @@
 """
-Client for communicating with job instances in a local environment via Unix domain sockets.
+RPC client primitives for invoking methods on environment nodes.
 
-Uses JSON-RPC 2.0 protocol over stream sockets to send commands to running job instances:
-- Query active job runs
-- Stop running instances
-- Get output logs
-- Execute phase-specific operations
+This module defines transport-agnostic pieces:
+- ``InstanceCallError`` and its subclasses — surface RPC failures
+- ``InstanceCallResult`` — one server's outcome from a broadcast
+- helpers that map a raw JSON-RPC response to a return value or raise the right error
 
-Example usage:
-    with LocalInstanceClient(socket_provider) as client:
-        # Get all active runs
-        results = client.collect_active_runs()
-
-        # Stop a specific instance
-        client.stop_instance(server_addr, instance_id)
-
-        # Get output lines
-        output_lines = client.get_output_tail(server_addr, instance_id, max_lines=100)
-
-The client handles JSON-RPC protocol details and error handling while providing
-a simple API for common job instance operations. It supports both single-target
-and broadcast operations across multiple instance servers.
+Transport-specific RPC clients (e.g. ``UnixSocketNodeClient``) live under
+``runtools.runcore.transport.<transport>`` and consume these primitives.
 """
 
 import json
 from dataclasses import dataclass
 from json import JSONDecodeError
-from typing import List, Any, Optional, TypeVar, Generic, Callable, Iterable
+from typing import List, Any, Optional, TypeVar, Generic, Callable
 
-from runtools.runcore.matching import JobRunCriteria
 from runtools.runcore.err import RuntoolsException
-from runtools.runcore.job import JobRun, InstanceID
-from runtools.runcore.run import StopReason
-from runtools.runcore.output import OutputLine
+from runtools.runcore.job import JobRun
 from runtools.runcore.util.json import JsonRpcResponse, JsonRpcParseError, ErrorType, ErrorCode
-from runtools.runcore.util.socket import StreamSocketClient, SocketRequestResult
+from runtools.runcore.util.socket import SocketRequestResult
 
 T = TypeVar('T')
 
@@ -197,197 +181,3 @@ def _job_runs_retval_mapper(retval: Any) -> List[JobRun]:
         List of JobRun objects
     """
     return [JobRun.deserialize(job_run) for job_run in retval]
-
-
-class LocalInstanceClient(StreamSocketClient):
-    """Client for communicating with job instances in a local environment.
-
-    Uses JSON-RPC 2.0 over Unix domain sockets to query and control job instances
-    running on the same machine. Supports both single-target operations and
-    broadcasting to multiple instance servers.
-
-    The client implements context manager protocol for proper resource cleanup.
-    """
-
-    def __init__(self, server_sockets_provider):
-        """Initialize the client with server socket provider."""
-        super().__init__(server_sockets_provider)
-        self._request_id = 0
-
-    def __enter__(self):
-        """Context manager entry."""
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit ensuring client is closed."""
-        self.close()
-
-    def _next_request_id(self) -> int:
-        """Generate next sequential request ID."""
-        self._request_id += 1
-        return self._request_id
-
-    def call_method(
-            self,
-            server_address: str,
-            method: str,
-            *params: Any,
-            retval_mapper: Callable[[Any], R] = _no_retval_mapper) -> R:
-        """Call a method on a specific server.
-
-        Args:
-            server_address: Address of target server
-            method: Method name to call
-            params: Method parameters
-            retval_mapper: Optional function to transform return value
-
-        Returns:
-            Method return value (transformed by mapper if provided)
-
-        Raises:
-            InstanceCallServerError: For server-side errors
-            InstanceCallClientError: For client-side errors
-            TargetNotFoundError: When target doesn't exist
-            PhaseNotFoundError: When phase doesn't exist
-        """
-        request_results = self._send_requests(method, *params, server_addresses=[server_address])
-        if not request_results:
-            raise TargetNotFoundError(server_address)
-
-        json_rpc_res = _parse_retval_or_raise_error(request_results[0])
-        return retval_mapper(json_rpc_res)
-
-    def broadcast_method(self, method: str, *params: Any, retval_mapper: Callable[[Any], R] = _no_retval_mapper) \
-            -> List[InstanceCallResult[R]]:
-        """Send a method call to all available servers.
-
-        Args:
-            method: Method name to call
-            params: Method parameters
-            retval_mapper: Optional function to transform return values
-
-        Returns:
-            List of InstanceCallResult containing responses from each server
-        """
-        request_results: List[SocketRequestResult] = self._send_requests(method, *params)
-        return [_convert_result(req_res, retval_mapper) for req_res in request_results]
-
-    def _send_requests(
-            self,
-            method: str,
-            *params: Any,
-            server_addresses: Iterable[str] = ()) -> List[SocketRequestResult]:
-        """Send JSON-RPC requests to specified servers.
-
-        Args:
-            method: Method name
-            params: Method parameters
-            server_addresses: Optional list of target servers
-
-        Returns:
-            List of SocketRequestResult with responses
-        """
-        request = {
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-            "id": self._next_request_id()
-        }
-        return self.communicate(json.dumps(request), server_addresses)
-
-    def collect_active_runs(self, run_match) -> List[InstanceCallResult[List[JobRun]]]:
-        """Retrieves information about all active job instances from all available servers.
-
-        Args:
-            run_match: Filter criteria for matching specific instances
-
-        Returns:
-            List of InstanceCallResult containing JobRun objects for matching instances
-            from each responding server
-        """
-        if not run_match:
-            run_match = JobRunCriteria.all()
-        return self.broadcast_method("get_active_runs", run_match.serialize(), retval_mapper=_job_runs_retval_mapper)
-
-    def get_active_runs(self, server_address: str, run_match) -> List[JobRun]:
-        """Retrieves information about active job instances from a specific server.
-
-        Args:
-            server_address: Address of the target server
-            run_match: Filter criteria for matching specific instances
-
-        Returns:
-            List of JobRun objects for matching instances
-
-        Raises:
-            InstanceCallServerError: For server-side errors
-            InstanceCallClientError: For client-side errors
-            TargetNotFoundError: When target doesn't exist
-        """
-        return self.call_method(
-            server_address, "get_active_runs", run_match.serialize(), retval_mapper=_job_runs_retval_mapper)
-
-    def stop_instance(self, server_address: str, instance_id: InstanceID, stop_reason: StopReason = StopReason.STOPPED
-                      ) -> None:
-        """Stops a specific job instance.
-
-        Args:
-            server_address: Address of the target server
-            instance_id: ID of the instance to stop
-            stop_reason: Reason for stopping the instance
-
-        Raises:
-            ValueError: If instance_id is not provided
-            TargetNotFoundError: If the specified server or the target instance is not found
-        """
-        if not instance_id:
-            raise ValueError('Instance ID is mandatory for the stop operation')
-
-        self.call_method(server_address, "stop_instance", instance_id.serialize(), stop_reason.name)
-
-    def get_output_tail(self, server_address: str, instance_id: InstanceID, max_lines: int = 100) -> List[OutputLine]:
-        """Retrieves recent output lines from a specific job instance.
-
-        Args:
-            server_address: Address of the target server
-            instance_id: ID of the instance to read output from
-            max_lines: Maximum number of lines to retrieve (default: 100)
-
-        Returns:
-            List of OutputLine objects containing the instance output
-
-        Raises:
-            TargetNotFoundError: If the specified server or the target instance is not found
-        """
-
-        def resp_mapper(retval: Any) -> List[OutputLine]:
-            return [OutputLine.deserialize(line) for line in retval]
-
-        return self.call_method(server_address, "get_output_tail", instance_id.serialize(), max_lines,
-                                retval_mapper=resp_mapper)
-
-    def exec_phase_op(self, server_address: str, instance_id: InstanceID, phase_id: str, op_name: str, *op_args) -> Any:
-        """Executes an operation on a specific phase of a job instance.
-
-        Args:
-            server_address: Address of the server hosting the instance
-            instance_id: ID of the target instance
-            phase_id: ID of the phase to operate on
-            op_name: Name of the operation to execute
-            op_args: Optional arguments for the operation
-
-        Returns:
-            Operation-specific return value
-
-        Raises:
-            ValueError: If phase_id or op_name is not provided
-            TargetNotFoundError: If the specified server or the target instance is not found
-            PhaseNotFoundError: If the specified phase is not found
-        """
-        if not phase_id:
-            raise ValueError('Phase ID is required for control operation')
-        if not op_name:
-            raise ValueError('Operation name is required for control operation')
-
-        return self.call_method(
-            server_address, "exec_phase_op", instance_id.serialize(), phase_id, op_name, op_args)

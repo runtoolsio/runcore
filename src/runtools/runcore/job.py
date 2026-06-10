@@ -642,6 +642,33 @@ class JobRun:
         """
         return self.metadata.run_id
 
+    @property
+    def last_updated(self) -> datetime.datetime:
+        """
+        Returns:
+            datetime.datetime: The most recent timestamp across the phase tree and status.
+        """
+        timestamps = [phase.lifecycle.last_transition_at for phase in self.search_phases()]
+        if self.status:
+            if self.status.last_event:
+                timestamps.append(self.status.last_event.timestamp)
+            if self.status.result:
+                timestamps.append(self.status.result.timestamp)
+            timestamps += (warn.timestamp for warn in self.status.warnings)
+            timestamps += (op.updated_at for op in self.status.operations)
+        return max(timestamps)
+
+    def is_newer_than(self, other: 'JobRun') -> bool:
+        """Decide whether this snapshot should replace `other` as the fresher state of the same instance.
+
+        Compares with `>=` because rapid successive updates can share clock resolution
+        and ties must apply (last received wins). Never true when this run would replace
+        an ended state with a non-ended one.
+        """
+        if other.lifecycle.is_ended and not self.lifecycle.is_ended:
+            return False
+        return self.last_updated >= other.last_updated
+
     def search_phases(self, predicate: Optional[Callable[['PhaseRun'], bool]] = None) -> List['PhaseRun']:
         """
         Searches all phases within this job run (including root phase and

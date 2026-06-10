@@ -1,42 +1,41 @@
 """
 Environment connector module providing interfaces for interacting with job environments.
 
-This module defines connector components that enable communication with local job environments
+This module defines connector components that enable communication with job environments
 and access to both live and historical job data. The connectors serve as clients to environment
 nodes, allowing monitoring and control of job instances.
 
 Key components:
 - EnvironmentConnector: Abstract base class defining the connector interface
-- LocalConnector: Implementation for local (same host) environment connections using socket communication
-- LocalConnectorLayout: Filesystem structure definitions for connector components
+- connect(): factory entry point that dispatches by transport variant
+
+The concrete implementation (``_Connector``) is module-private; callers build one through
+``compose()`` (internal framework plumbing) or the public ``connect()``. Concrete transport
+bundles live under ``runtools.runcore.transport``.
 
 The module provides factory methods for quickly creating commonly used connector configurations:
-    with local() as connector:
+    with connect() as conn:
         # Get snapshots of active job instances
-        active_runs = connector.get_active_runs()
+        active_runs = conn.get_active_runs()
 """
 
 import logging
-import shutil
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from pathlib import Path
 from threading import Event, Lock
-from typing import Callable, Optional, Iterable, List, override
+from typing import Iterable, Optional, override
 
-import fcntl
-
-from runtools.runcore import paths, util, output
-from runtools.runcore.client import LocalInstanceClient
+from runtools.runcore import output
 from runtools.runcore.db import EnvironmentDatabase
 from runtools.runcore.env import EnvironmentConfig, UnixSocketTransportConfig, EnvironmentEntry, \
     _open_environment, resolve_env_ref, ensure_environment
 from runtools.runcore.err import run_isolated_collect_exceptions
 from runtools.runcore.job import InstanceNotifications, JobInstance, InstanceLifecycleObserver, InstanceLifecycleEvent, \
     JobRun, InstanceID
-from runtools.runcore.listening import EventReceiver, InstanceEventReceiver
+from runtools.runcore.listening import InstanceEventReceiver
 from runtools.runcore.matching import JobRunCriteria, SortOption
-from runtools.runcore.proxy import JobInstanceProxy
+from runtools.runcore.proxy import UnixSocketJobInstanceProxy
+from runtools.runcore.transport import ConnectorTransport
 
 log = logging.getLogger(__name__)
 
@@ -49,216 +48,6 @@ def wait_for_interrupt(env, *, reraise=True):
     finally:
         if reraise:
             raise KeyboardInterrupt
-
-
-class LocalConnectorLayout(ABC):
-    """
-    Abstract base class defining the filesystem structure for a local environment connector.
-
-    Connector layouts manage the directories and UNIX socket files used for RPC communication
-    between a connector and environment nodes. Implementations must provide:
-
-      - Base directories for environment and connector components.
-      - Socket file names and full paths for event listening.
-      - A provider for locating RPC server socket paths of environment nodes.
-      - A cleanup mechanism for removing created resources when connector is closed.
-    """
-
-    @property
-    @abstractmethod
-    def env_dir(self) -> Path:
-        """
-        Returns:
-            Path: Directory containing the environment components.
-        """
-        pass
-
-    @property
-    @abstractmethod
-    def listener_events_socket_path(self) -> Path:
-        """
-        Returns:
-            Path: Full filesystem path to the events listener socket file.
-        """
-        pass
-
-    @property
-    @abstractmethod
-    def server_sockets_provider(self) -> Callable[[str], Path]:
-        """
-        Returns:
-            Callable[[str], Path]: Provider function that generates paths
-                                   to the RPC server socket files of environment nodes.
-        """
-        pass
-
-    @abstractmethod
-    def cleanup(self) -> None:
-        """
-        Performs cleanup of resources allocated by this layout.
-
-        This typically includes:
-          - Deleting socket files created under `component_dir`.
-          - Removing temporary directories.
-        """
-        pass
-
-
-class StandardLocalConnectorLayout(LocalConnectorLayout):
-    """
-    Standard implementation of a local connector layout.
-
-    Defines the filesystem layout for environment connectors, including where socket files are located
-    and how they're named.
-
-    Example structure:
-    /tmp/runtools/env/{env_id}/                      # Environment directory (env_dir)
-    │
-    └── connector_789xyz/                            # Component directory (component_dir)
-        ├── .lock                                    # Exclusive flock held while alive
-        ├── listener-events.sock                     # Connector's events listener socket
-        └── ...                                      # Other connector-specific sockets
-    """
-
-    def __init__(self, env_dir: Path, component_name: str):
-        """
-        Initializes the connector layout with environment directory and component name.
-
-        Acquires an exclusive flock on a `.lock` file inside the component directory.
-        The lock is held for the lifetime of this layout and released on cleanup.
-
-        Args:
-            env_dir: Directory containing the environment components.
-            component_name: Name of the component subdirectory (created if needed).
-        """
-        self._env_dir = env_dir
-        self._component_dir = paths.ensure_dirs(env_dir / component_name)
-        self._server_socket_name = "server-rpc.sock"
-        self._listener_events_socket_name = "listener-events.sock"
-
-        lock_path = self._component_dir / ".lock"
-        self._lock_fd = lock_path.open("a")
-        fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-
-    @classmethod
-    def create(cls, env_id: str, root_dir: Optional[Path] = None, component_prefix: str = "connector_"):
-        """
-        Creates a layout for a connector with a unique component directory.
-
-        Args:
-            env_id: Identifier for the environment of the connector.
-            root_dir: Root directory containing environments or uses the default one.
-            component_prefix: Prefix for component directories.
-
-        Returns (StandardLocalConnectorLayout): Layout instance for a connector.
-        """
-        return cls(*ensure_component_dir(env_id, component_prefix, root_dir))
-
-    @property
-    def env_dir(self) -> Path:
-        return self._env_dir
-
-    @property
-    def listener_events_socket_path(self) -> Path:
-        """
-        Returns:
-            Path: Full path of domain socket used for receiving all events
-        """
-        return self._component_dir / self._listener_events_socket_name
-
-    @property
-    def server_sockets_provider(self) -> Callable:
-        """
-        Returns:
-            Callable: A provider function that generates paths to the RPC server socket files
-                      of each environment node within the environment directory.
-        """
-        return paths.files_in_subdir_provider(self._env_dir, self._server_socket_name)
-
-    def cleanup(self):
-        """
-        Releases the flock and removes the component directory. Idempotent.
-        """
-        if not self._lock_fd.closed:
-            self._lock_fd.close()
-        shutil.rmtree(self._component_dir, ignore_errors=True)
-
-
-def resolve_env_dir(env_id: str, root_dir: Optional[Path] = None) -> Path:
-    """Resolve the environment directory path for a given environment ID.
-
-    Args:
-        env_id: Environment identifier.
-        root_dir: Optional root directory override. Uses the default runtime dir if None.
-
-    Returns:
-        Path to the environment directory (may not exist yet).
-    """
-    if root_dir:
-        return root_dir / env_id
-    return paths.runtime_env_dir() / env_id
-
-
-def ensure_component_dir(env_id, component_prefix, root_dir=None):
-    """
-    Ensures the environment directory exists and generates a unique component name.
-
-    Args:
-        env_id: Identifier for the target environment.
-        component_prefix: Prefix for the unique component directory name.
-        root_dir: Optional root path for environment directories. Uses default if None.
-
-    Returns:
-        A tuple of (env_dir, component_name). The component directory itself is created
-        by the layout constructor (which also acquires the flock).
-    """
-    env_dir = paths.ensure_dirs(resolve_env_dir(env_id, root_dir))
-    component_name = component_prefix + util.unique_timestamp_hex()
-    return env_dir, component_name
-
-
-def clean_stale_component_dirs(env_dir: Path) -> List[Path]:
-    """Remove component directories whose owner process is dead.
-
-    Each live component holds an exclusive flock on ``{component_dir}/.lock``.
-    If the flock can be acquired (non-blocking), the owner is dead and the directory is removed.
-
-    Args:
-        env_dir: The environment directory containing component subdirectories.
-
-    Returns:
-        List of removed directory paths.
-    """
-    if not env_dir.is_dir():
-        return []
-
-    removed = []
-    for entry in env_dir.iterdir():
-        if not entry.is_dir():
-            continue
-        lock_file = entry / ".lock"
-        if not lock_file.exists():
-            continue
-        try:
-            fd = lock_file.open("r")
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                fd.close()
-                continue
-            except OSError:
-                log.warning("Unexpected error probing lock", extra={"entry": str(entry)}, exc_info=True)
-                fd.close()
-                continue
-            # Lock acquired — owner is dead
-            fd.close()
-            shutil.rmtree(entry, ignore_errors=True)
-            removed.append(entry)
-            log.debug("Removed stale component dir", extra={"dir": str(entry)})
-        except OSError as e:
-            log.debug("Skipping stale check", extra={"entry": str(entry), "reason": str(e)})
-
-    return removed
 
 
 @dataclass
@@ -476,66 +265,21 @@ class EnvironmentConnector(ABC):
         pass
 
 
-def _create(env_db: EnvironmentDatabase, env_config: EnvironmentConfig) -> EnvironmentConnector:
-    """Internal: create a connector from an environment database and configuration."""
-    if isinstance(env_config.transport, UnixSocketTransportConfig):
-        output_backends = output.create_backends(env_config.id, env_config.output.storages)
-        layout = StandardLocalConnectorLayout.create(env_config.id, env_config.transport.root_dir)
-        return _unix_socket(env_config.id, env_db, layout, output_backends)
+class _Connector(EnvironmentConnector):
+    """Generic connector that delegates all transport-specific behavior to a ``ConnectorTransport``.
 
-    raise AssertionError(
-        f"Unsupported transport: {type(env_config.transport).__name__}. This is a programming error.")
-
-
-def _unix_socket(env_id, env_db, connector_layout, output_backends=()) -> EnvironmentConnector:
-    clean_stale_component_dirs(connector_layout.env_dir)
-    client = LocalInstanceClient(connector_layout.server_sockets_provider)
-    event_receiver = EventReceiver(connector_layout.listener_events_socket_path)
-    return LocalConnector(env_id, connector_layout, env_db, client, event_receiver, output_backends)
-
-
-def connect(env_ref: EnvironmentEntry | str | None = None) -> EnvironmentConnector:
-    """Connect to an environment. Opens DB, reads config, creates connector.
-
-    The builtin local environment is auto-provisioned if its backing store doesn't exist yet.
-    Named environments must be created explicitly — connecting to a missing one raises EnvironmentNotFoundError.
-
-    Args:
-        env_ref: Environment entry, env_id string, or None for built-in local.
-    """
-    entry = resolve_env_ref(env_ref)
-    ensure_environment(entry)
-    env_db, config = _open_environment(entry)
-    try:
-        return _create(env_db, config)
-    except BaseException:
-        env_db.close()
-        raise
-
-
-class LocalConnector(EnvironmentConnector):
-    """
-    Concrete implementation of the EnvironmentConnector for interacting with local environments.
-
-    Local environments are those running within the same operating system. LocalConnector uses Unix domain sockets
-    to communicate with environment nodes, enabling management of job instances and collection of their status
-    and history. It handles both live job data via RPC calls and historical job data through persistence.
+    The transport bundle owns its own resources (RPC client, event receiver, layout, etc.) and
+    cleans them up via ``transport.close()``. This class owns the database and output backends
+    and closes them after the transport.
     """
 
-    def __init__(self, env_id, connector_layout, env_db, client, event_receiver, output_backends=()):
-        self._notifications = InstanceEventReceiver()
+    def __init__(self, env_id, env_db, transport: ConnectorTransport, output_backends=()):
         self._env_id = env_id
-        self._layout = connector_layout
         self._db = env_db
-        self._client = client
-        self._event_receiver = event_receiver
+        self._transport = transport
         self._output_backends = tuple(output_backends)
-        self._event_receiver.register_handler(self._notifications)
-
-    @property
-    @override
-    def notifications(self) -> InstanceNotifications:
-        return self._notifications
+        self._notifications = InstanceEventReceiver()
+        self._transport.event_receiver.register_handler(self._notifications)
 
     @property
     def env_id(self):
@@ -543,21 +287,19 @@ class LocalConnector(EnvironmentConnector):
 
     @property
     @override
+    def notifications(self) -> InstanceNotifications:
+        return self._notifications
+
+    @property
+    @override
     def output_backends(self):
         return self._output_backends
 
     def open(self):
-        self._event_receiver.start()
+        self._transport.event_receiver.start()
 
     def get_active_runs(self, run_match=None):
-        """Retrieve active job runs from all available servers.
-
-        Args:
-            run_match: Optional criteria for filtering job runs
-                      (default: None, which matches all runs)
-
-        Returns:
-            List of JobRun objects from all responding servers
+        """Retrieve active job runs from all nodes the transport can reach.
 
         Note:
             Communication errors are logged but not surfaced to callers, which may result
@@ -567,7 +309,7 @@ class LocalConnector(EnvironmentConnector):
               3. Add an optional on_error callback parameter
               4. Add a separate get_active_runs_with_errors() method
         """
-        run_results = self._client.collect_active_runs(run_match)
+        run_results = self._transport.node_client.collect_active_runs(run_match)
         active_runs = []
 
         for result in run_results:
@@ -582,7 +324,7 @@ class LocalConnector(EnvironmentConnector):
 
     def get_instances(self, run_match=None):
         # Same error handling consideration as get_active_runs()
-        run_results = self._client.collect_active_runs(run_match)
+        run_results = self._transport.node_client.collect_active_runs(run_match)
         instances = []
 
         for result in run_results:
@@ -594,8 +336,8 @@ class LocalConnector(EnvironmentConnector):
 
             server_address = result.server_address
             for job_run in result.retval:
-                instances.append(JobInstanceProxy(
-                    self._client, server_address, job_run.instance_id, self._notifications))
+                instances.append(UnixSocketJobInstanceProxy(
+                    job_run, self._notifications, self._transport.node_client, server_address))
 
         return instances
 
@@ -619,10 +361,54 @@ class LocalConnector(EnvironmentConnector):
 
     def close(self):
         run_isolated_collect_exceptions(
-            "Errors during closing local environment",
-            self._event_receiver.close,
-            self._client.close,
+            "Errors during closing environment connector",
+            self._transport.close,
             self._db.close,
             *(b.close for b in self._output_backends),
-            self._layout.cleanup,
         )
+
+
+def compose(env_id, env_db, transport: ConnectorTransport, output_backends) -> EnvironmentConnector:
+    """Internal framework plumbing: construct a concrete connector from a transport bundle.
+
+    Consumed by ``_create()`` (dispatching by transport variant) and by ``EnvironmentNode``
+    implementations that embed a sibling-facing connector. Returns the abstract
+    ``EnvironmentConnector`` so callers depend on the interface, not the concrete class.
+
+    Not part of the public API — :func:`connect` is the supported entry point for callers
+    that just want a connector to an existing environment.
+    """
+    return _Connector(env_id, env_db, transport, output_backends)
+
+
+def _create(env_db: EnvironmentDatabase, env_config: EnvironmentConfig) -> EnvironmentConnector:
+    """Internal: create a connector from an environment database and configuration."""
+    if isinstance(env_config.transport, UnixSocketTransportConfig):
+        from runtools.runcore.transport import unix_socket
+        # Build cheap, in-memory output backends first; transport allocates a component
+        # dir + flock and would leak if output construction failed after transport setup.
+        output_backends = output.create_backends(env_config.id, env_config.output.storages)
+        transport = unix_socket.create_connector_transport(env_config.id, env_config.transport)
+        return compose(env_config.id, env_db, transport, output_backends)
+
+    raise AssertionError(
+        f"Unsupported transport: {type(env_config.transport).__name__}. This is a programming error.")
+
+
+def connect(env_ref: EnvironmentEntry | str | None = None) -> EnvironmentConnector:
+    """Connect to an environment. Opens DB, reads config, creates connector.
+
+    The builtin local environment is auto-provisioned if its backing store doesn't exist yet.
+    Named environments must be created explicitly — connecting to a missing one raises EnvironmentNotFoundError.
+
+    Args:
+        env_ref: Environment entry, env_id string, or None for built-in local.
+    """
+    entry = resolve_env_ref(env_ref)
+    ensure_environment(entry)
+    env_db, config = _open_environment(entry)
+    try:
+        return _create(env_db, config)
+    except BaseException:
+        env_db.close()
+        raise

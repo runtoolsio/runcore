@@ -1,19 +1,118 @@
-from typing import override
+from abc import abstractmethod
+from typing import Callable, override
 
-from runtools.runcore.client import TargetNotFoundError, InstanceCallError
-from runtools.runcore.matching import JobRunCriteria, MetadataCriterion
-from runtools.runcore.err import RuntoolsException
 from runtools.runcore.job import (
     JobRun, JobInstance, InstanceID, InstanceNotifications, InstanceObservableNotifications,
     InstanceLifecycleEvent, InstancePhaseEvent, InstanceStatusEvent,
 )
+from runtools.runcore.matching import MetadataCriterion
 from runtools.runcore.output import Output, Mode
 from runtools.runcore.run import StopReason, Stage
+from runtools.runcore.transport import NodeRpcClient
+
+
+class JobInstanceProxyBase(JobInstance):
+    """Transport-neutral base for proxies to job instances running in another process.
+
+    Covers the state half: initialized from a discovery snapshot and kept fresh by
+    lifecycle/phase/status events from the env-wide notification hub — reads never do
+    I/O. Updates are replacement-only, guarded by :meth:`JobRun.is_newer_than` so
+    replayed or out-of-order events cannot regress state. Unbinds from the hub when
+    the instance ends.
+
+    Transport subclasses implement the command half: ``stop``, ``output`` and
+    ``_exec_phase_op``.
+    """
+
+    def __init__(self, initial: JobRun, notifications: InstanceNotifications):
+        self._job_run = initial  # Replacement-only, never mutated in place => lock-free reads
+        self._source_notifications = notifications
+
+        instance_filter = MetadataCriterion.exact_match(initial.instance_id)
+        self._notifications = InstanceObservableNotifications(instance_filter=instance_filter)
+        self._notifications.bind_to(notifications)
+        self._notifications.add_observer_lifecycle(self._on_lifecycle_update)
+        self._notifications.add_observer_phase(self._on_phase_update)
+        self._notifications.add_observer_status(self._on_status_update)
+
+    def _update_state(self, job_run: JobRun):
+        if job_run.is_newer_than(self._job_run):
+            self._job_run = job_run
+
+    def _on_lifecycle_update(self, event: InstanceLifecycleEvent):
+        self._update_state(event.job_run)
+        if event.new_stage == Stage.ENDED:
+            self._notifications.unbind_from(self._source_notifications)
+
+    def _on_phase_update(self, event: InstancePhaseEvent):
+        self._update_state(event.job_run)
+
+    def _on_status_update(self, event: InstanceStatusEvent):
+        self._update_state(event.job_run)
+
+    @property
+    def metadata(self):
+        return self._job_run.metadata
+
+    def snap(self) -> JobRun:
+        return self._job_run
+
+    def find_phase_control(self, phase_filter):
+        phase = self._job_run.find_first_phase(phase_filter)
+        if not phase:
+            return None
+        return PhaseControlProxy(self._exec_phase_op, phase.phase_id)
+
+    @abstractmethod
+    def _exec_phase_op(self, phase_id: str, op_name: str, *op_args):
+        """Execute an operation on a phase of the remote instance."""
+
+    @property
+    @abstractmethod
+    def output(self) -> Output:
+        pass
+
+    @abstractmethod
+    def stop(self, stop_reason= StopReason.STOPPED):
+        pass
+
+    def run(self):
+        raise NotImplementedError("Remote run is not supported")
+
+    @property
+    def tracking(self):
+        raise NotImplementedError("Remote status tracking not yet supported")
+
+    @property
+    @override
+    def notifications(self) -> InstanceNotifications:
+        return self._notifications
+
+
+class UnixSocketJobInstanceProxy(JobInstanceProxyBase):
+    """Proxy to a job instance reachable over the unix-socket transport."""
+
+    def __init__(self, initial: JobRun, notifications: InstanceNotifications,
+                 client: NodeRpcClient, server_address: str):
+        super().__init__(initial, notifications)
+        self._client = client
+        self._server_address = server_address
+        self._output = _ProxyOutput(client, server_address, initial.instance_id)
+
+    @property
+    def output(self) -> Output:
+        return self._output
+
+    def stop(self, stop_reason=StopReason.STOPPED):
+        self._client.stop_instance(self._server_address, self.id, stop_reason)
+
+    def _exec_phase_op(self, phase_id: str, op_name: str, *op_args):
+        return self._client.exec_phase_op(self._server_address, self.id, phase_id, op_name, *op_args)
 
 
 class _ProxyOutput(Output):
 
-    def __init__(self, client, server_address, instance_id):
+    def __init__(self, client: NodeRpcClient, server_address: str, instance_id: InstanceID):
         self._client = client
         self._server_address = server_address
         self._instance_id = instance_id
@@ -26,95 +125,16 @@ class _ProxyOutput(Output):
         return self._client.get_output_tail(self._server_address, self._instance_id, max_lines)
 
 
-class JobInstanceProxy(JobInstance):
-    """Proxy to a job instance running in another process."""
-
-    def __init__(self, client, server_address, instance_id, connector_notifications: InstanceNotifications):
-        self._client = client
-        self._server_address = server_address
-        self._instance_id = instance_id
-        self._connector_notifications = connector_notifications
-        try:
-            job_runs = client.get_active_runs(server_address, JobRunCriteria.instance_match(instance_id))
-        except TargetNotFoundError:
-            raise ProxyInstanceNotFoundError(server_address, instance_id)
-        except InstanceCallError as e:
-            raise ProxyInstanceUnavailableError(server_address, instance_id) from e
-        if not job_runs:
-            raise ProxyInstanceNotFoundError(server_address, instance_id)
-        self._job_run: JobRun = job_runs[0]
-        self._output = _ProxyOutput(client, server_address, instance_id)
-
-        instance_filter = MetadataCriterion.exact_match(instance_id)
-        self._notifications = InstanceObservableNotifications(instance_filter=instance_filter)
-        self._notifications.bind_to(connector_notifications)
-        self._notifications.add_observer_lifecycle(self._on_lifecycle_update)
-        self._notifications.add_observer_phase(self._on_phase_update)
-        self._notifications.add_observer_status(self._on_status_update)
-
-    def _on_lifecycle_update(self, event: InstanceLifecycleEvent):
-        self._job_run = event.job_run
-        if event.new_stage == Stage.ENDED:
-            self._notifications.unbind_from(self._connector_notifications)
-
-    def _on_phase_update(self, event: InstancePhaseEvent):
-        self._job_run = event.job_run
-
-    def _on_status_update(self, event: InstanceStatusEvent):
-        self._job_run = event.job_run
-
-    @property
-    def metadata(self):
-        return self._job_run.metadata
-
-    def find_phase_control(self, phase_filter):
-        phase = self._job_run.find_first_phase(phase_filter)
-        if not phase:
-            return None
-        return PhaseControlProxy(self._client, self._server_address, self._instance_id, phase.phase_id)
-
-    def snap(self):
-        try:
-            job_runs = self._client.get_active_runs(
-                self._server_address, JobRunCriteria.instance_match(self._instance_id))
-            if job_runs:
-                self._job_run = job_runs[0]
-        except (TargetNotFoundError, InstanceCallError):
-            pass  # Instance ended or unreachable — return last known state
-        return self._job_run
-
-    @property
-    def output(self) -> Output:
-        return self._output
-
-    def run(self):
-        pass
-
-    def stop(self, stop_reason=StopReason.STOPPED):
-        self._client.stop_instance(self._server_address, self._instance_id, stop_reason)
-
-    @property
-    def tracking(self):
-        raise NotImplementedError("Remote status tracking not yet supported")
-
-    @property
-    @override
-    def notifications(self) -> InstanceNotifications:
-        return self._notifications
-
-
 class PhaseControlProxy:
     """Proxy for controlling a phase in another process.
 
-    This class provides a clean interface for executing operations on a phase
-    through the LocalInstanceClient.
+    Delegates operations to the owning instance proxy's transport-specific
+    ``_exec_phase_op``.
     """
 
-    def __init__(self, client, server_address, instance_id, phase_id: str):
+    def __init__(self, exec_phase_op: Callable, phase_id: str):
+        self._exec_phase_op = exec_phase_op
         self._phase_id = phase_id
-        self._client = client
-        self._server_address = server_address
-        self._instance_id = instance_id
 
     def exec_op(self, op_name: str, *op_args):
         """Execute an operation on the phase.
@@ -132,7 +152,7 @@ class PhaseControlProxy:
             InstanceCallServerError: For server-side errors during execution
             InstanceCallClientError: For client-side errors during execution
         """
-        return self._client.exec_phase_op(self._server_address, self._instance_id, self._phase_id, op_name, *op_args)
+        return self._exec_phase_op(self._phase_id, op_name, *op_args)
 
     def __getattr__(self, name):
         """Dynamic method resolution to enable natural operation calling.
@@ -154,35 +174,3 @@ class PhaseControlProxy:
             return self.exec_op(name, *args)
 
         return method_proxy
-
-
-class ProxyInstanceError(RuntoolsException):
-    pass
-
-
-class ProxyInstanceNotFoundError(ProxyInstanceError):
-    """Exception raised when a job instance cannot be found.
-
-    Args:
-        server_address: Address of the server where the instance was expected
-        instance_id: ID of the job instance that could not be found
-    """
-
-    def __init__(self, server_address: str, instance_id: InstanceID):
-        self.server_address = server_address
-        self.instance_id = instance_id
-        super().__init__(f"Job instance '{instance_id}' not found on server '{server_address}'")
-
-
-class ProxyInstanceUnavailableError(ProxyInstanceError):
-    """Exception raised when a job instance cannot be reached due to an error.
-
-    Args:
-        server_address: Address of the server where the instance was expected
-        instance_id: ID of the job instance that could not be reached
-    """
-
-    def __init__(self, server_address: str, instance_id: InstanceID):
-        self.server_address = server_address
-        self.instance_id = instance_id
-        super().__init__(f"Error reaching job instance '{instance_id}' on server '{server_address}'")
