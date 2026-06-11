@@ -11,7 +11,7 @@ in ``runtools.runcore.transport.<transport>`` (e.g. ``unix_socket.UnixSocketConn
 from typing import Any, Callable, List, Protocol, runtime_checkable
 
 from runtools.runcore.job import InstanceID, JobInstanceMetadata, JobRun
-from runtools.runcore.output import OutputLine
+from runtools.runcore.output import Mode, OutputLine
 from runtools.runcore.run import StopReason
 
 NodeEventHandler = Callable[[str, JobInstanceMetadata, dict], None]
@@ -47,7 +47,7 @@ class NodeRpcClient(Protocol):
                       stop_reason: StopReason = StopReason.STOPPED) -> None: ...
 
     def get_output_tail(self, server_address: str, instance_id: InstanceID,
-                        max_lines: int = 100) -> List[OutputLine]: ...
+                        mode: Mode = Mode.TAIL, max_lines: int = 100) -> List[OutputLine]: ...
 
     def exec_phase_op(self, server_address: str, instance_id: InstanceID, phase_id: str,
                       op_name: str, *op_args) -> Any: ...

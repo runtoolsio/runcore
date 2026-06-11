@@ -27,7 +27,7 @@ from runtools.runcore.env import UnixSocketTransportConfig
 from runtools.runcore.err import run_isolated_collect_exceptions
 from runtools.runcore.job import InstanceID, JobInstanceMetadata, JobRun
 from runtools.runcore.matching import JobRunCriteria
-from runtools.runcore.output import OutputLine
+from runtools.runcore.output import Mode, OutputLine
 from runtools.runcore.run import StopReason
 from runtools.runcore.util.socket import DatagramSocketServer, SocketRequestResult, StreamSocketClient
 
@@ -398,12 +398,14 @@ class UnixSocketNodeClient(StreamSocketClient):
 
         self.call_method(server_address, "stop_instance", instance_id.serialize(), stop_reason.name)
 
-    def get_output_tail(self, server_address: str, instance_id: InstanceID, max_lines: int = 100) -> List[OutputLine]:
+    def get_output_tail(self, server_address: str, instance_id: InstanceID,
+                        mode: Mode = Mode.TAIL, max_lines: int = 100) -> List[OutputLine]:
         """Retrieves recent output lines from a specific job instance.
 
         Args:
             server_address: Address of the target server
             instance_id: ID of the instance to read output from
+            mode: Whether to read from the beginning or end of the buffer
             max_lines: Maximum number of lines to retrieve (default: 100)
 
         Returns:
@@ -416,7 +418,7 @@ class UnixSocketNodeClient(StreamSocketClient):
         def resp_mapper(retval: Any) -> List[OutputLine]:
             return [OutputLine.deserialize(line) for line in retval]
 
-        return self.call_method(server_address, "get_output_tail", instance_id.serialize(), max_lines,
+        return self.call_method(server_address, "get_output_tail", instance_id.serialize(), max_lines, mode.name,
                                 retval_mapper=resp_mapper)
 
     def exec_phase_op(self, server_address: str, instance_id: InstanceID, phase_id: str, op_name: str, *op_args) -> Any:

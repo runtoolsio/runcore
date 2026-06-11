@@ -1,12 +1,13 @@
 from abc import abstractmethod
-from typing import Callable, override
+from threading import Lock
+from typing import Callable, List, override
 
 from runtools.runcore.job import (
-    JobRun, JobInstance, InstanceID, InstanceNotifications, InstanceObservableNotifications,
-    InstanceLifecycleEvent, InstancePhaseEvent, InstanceStatusEvent,
+    JobRun, JobInstance, InstanceNotifications, InstanceObservableNotifications,
+    InstanceLifecycleEvent, InstanceOutputEvent, InstancePhaseEvent, InstanceStatusEvent,
 )
 from runtools.runcore.matching import MetadataCriterion
-from runtools.runcore.output import Output, Mode
+from runtools.runcore.output import Mode, Output, OutputLine
 from runtools.runcore.run import StopReason, Stage
 from runtools.runcore.transport import NodeRpcClient
 
@@ -20,13 +21,17 @@ class JobInstanceProxyBase(JobInstance):
     replayed or out-of-order events cannot regress state. Unbinds from the hub when
     the instance ends.
 
-    Transport subclasses implement the command half: ``stop``, ``output`` and
-    ``_exec_phase_op``.
+    Output is event-fed for conventional tail reads; deeper or head reads are fetched
+    from the remote instance on demand (see ``_ProxyOutput``).
+
+    Transport subclasses implement the command half: ``stop``, ``_exec_phase_op`` and
+    ``_fetch_output_tail``.
     """
 
-    def __init__(self, initial: JobRun, notifications: InstanceNotifications):
+    def __init__(self, initial: JobRun, notifications: InstanceNotifications, output_buffer_depth: int = 100):
         self._job_run = initial  # Replacement-only, never mutated in place => lock-free reads
         self._source_notifications = notifications
+        self._output = _ProxyOutput(self._fetch_output_tail, output_buffer_depth)
 
         instance_filter = MetadataCriterion.exact_match(initial.instance_id)
         self._notifications = InstanceObservableNotifications(instance_filter=instance_filter)
@@ -34,6 +39,7 @@ class JobInstanceProxyBase(JobInstance):
         self._notifications.add_observer_lifecycle(self._on_lifecycle_update)
         self._notifications.add_observer_phase(self._on_phase_update)
         self._notifications.add_observer_status(self._on_status_update)
+        self._notifications.add_observer_output(self._on_output_update)
 
     def _update_state(self, job_run: JobRun):
         if job_run.is_newer_than(self._job_run):
@@ -49,6 +55,9 @@ class JobInstanceProxyBase(JobInstance):
 
     def _on_status_update(self, event: InstanceStatusEvent):
         self._update_state(event.job_run)
+
+    def _on_output_update(self, event: InstanceOutputEvent):
+        self._output.add_line(event.output_line)
 
     @property
     def metadata(self):
@@ -67,10 +76,13 @@ class JobInstanceProxyBase(JobInstance):
     def _exec_phase_op(self, phase_id: str, op_name: str, *op_args):
         """Execute an operation on a phase of the remote instance."""
 
-    @property
     @abstractmethod
+    def _fetch_output_tail(self, mode: Mode, max_lines: int) -> List[OutputLine]:
+        """Fetch lines from the remote instance's tail buffer."""
+
+    @property
     def output(self) -> Output:
-        pass
+        return self._output
 
     @abstractmethod
     def stop(self, stop_reason= StopReason.STOPPED):
@@ -97,11 +109,6 @@ class UnixSocketJobInstanceProxy(JobInstanceProxyBase):
         super().__init__(initial, notifications)
         self._client = client
         self._server_address = server_address
-        self._output = _ProxyOutput(client, server_address, initial.instance_id)
-
-    @property
-    def output(self) -> Output:
-        return self._output
 
     def stop(self, stop_reason=StopReason.STOPPED):
         self._client.stop_instance(self._server_address, self.id, stop_reason)
@@ -109,20 +116,39 @@ class UnixSocketJobInstanceProxy(JobInstanceProxyBase):
     def _exec_phase_op(self, phase_id: str, op_name: str, *op_args):
         return self._client.exec_phase_op(self._server_address, self.id, phase_id, op_name, *op_args)
 
+    def _fetch_output_tail(self, mode: Mode, max_lines: int) -> List[OutputLine]:
+        return self._client.get_output_tail(self._server_address, self.id, mode, max_lines)
+
 
 class _ProxyOutput(Output):
+    """Bounded buffer of output events received since proxy construction.
 
-    def __init__(self, client: NodeRpcClient, server_address: str, instance_id: InstanceID):
-        self._client = client
-        self._server_address = server_address
-        self._instance_id = instance_id
+    TAIL reads covered by the buffer are served locally. Reads the buffer cannot
+    prove complete are served directly from the remote instance; fetched lines are
+    intentionally not merged into the event-fed buffer.
+    """
+
+    def __init__(self, fetch_tail: Callable[[Mode, int], List[OutputLine]], max_lines: int):
+        self._fetch_tail = fetch_tail
+        self._max_lines = max_lines
+        self._lines: List[OutputLine] = []
+        self._lock = Lock()
 
     @property
     def locations(self):
         return ()
 
+    def add_line(self, line: OutputLine):
+        with self._lock:
+            self._lines.append(line)
+            del self._lines[:-self._max_lines]
+
     def tail(self, mode: Mode = Mode.TAIL, max_lines: int = 0):
-        return self._client.get_output_tail(self._server_address, self._instance_id, max_lines)
+        with self._lock:
+            lines = list(self._lines)
+        if mode == Mode.TAIL and 0 < max_lines <= len(lines):
+            return lines[-max_lines:]
+        return self._fetch_tail(mode, max_lines)
 
 
 class PhaseControlProxy:

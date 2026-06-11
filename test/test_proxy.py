@@ -4,9 +4,9 @@ from datetime import timedelta
 import pytest
 
 from runtools.runcore.job import (
-    InstanceLifecycleEvent, InstanceObservableNotifications, InstanceStatusEvent,
+    InstanceLifecycleEvent, InstanceObservableNotifications, InstanceOutputEvent, InstanceStatusEvent,
 )
-from runtools.runcore.output import Output
+from runtools.runcore.output import Mode, OutputLine
 from runtools.runcore.proxy import JobInstanceProxyBase
 from runtools.runcore.run import Stage, StopReason, TerminationStatus
 from runtools.runcore.status import Event, Status
@@ -17,14 +17,14 @@ from runtools.runcore.util import utc_now
 class FakeProxy(JobInstanceProxyBase):
     """Minimal concrete proxy exercising the transport-neutral state half."""
 
-    def __init__(self, initial, notifications):
-        super().__init__(initial, notifications)
+    def __init__(self, initial, notifications, output_buffer_depth=100):
+        super().__init__(initial, notifications, output_buffer_depth)
         self.executed_ops = []
         self.stopped_with = None
-
-    @property
-    def output(self) -> Output:
-        raise NotImplementedError
+        self.fetched_lines = []
+        self.fetch_count = 0
+        self.fetched_mode = None
+        self.fetched_max_lines = None
 
     def stop(self, stop_reason=StopReason.STOPPED):
         self.stopped_with = stop_reason
@@ -32,6 +32,14 @@ class FakeProxy(JobInstanceProxyBase):
     def _exec_phase_op(self, phase_id, op_name, *op_args):
         self.executed_ops.append((phase_id, op_name, op_args))
         return 'done'
+
+    def _fetch_output_tail(self, mode, max_lines):
+        self.fetch_count += 1
+        self.fetched_mode = mode
+        self.fetched_max_lines = max_lines
+        if max_lines > 0:
+            return self.fetched_lines[:max_lines] if mode == Mode.HEAD else self.fetched_lines[-max_lines:]
+        return self.fetched_lines
 
 
 @pytest.fixture
@@ -54,6 +62,11 @@ def fire_lifecycle(hub, event):
 
 def fire_status(hub, event):
     hub.status_notification.observer_proxy.instance_status_update(event)
+
+
+def fire_output(hub, job_run, line):
+    event = InstanceOutputEvent(job_run.metadata, line, utc_now())
+    hub.output_notification.observer_proxy.instance_output_update(event)
 
 
 def test_last_updated_is_max_phase_timestamp(base_ts):
@@ -153,3 +166,118 @@ def test_proxy_run_is_not_supported(base_ts, hub):
 
     with pytest.raises(NotImplementedError):
         proxy.run()
+
+
+def test_output_fetches_default_tail(base_ts, hub):
+    proxy = FakeProxy(fake_job_run('j1', created_at=base_ts, term_status=None), hub)
+    proxy.fetched_lines = [OutputLine('l1', 1), OutputLine('l2', 2)]
+
+    assert proxy.output.tail() == proxy.fetched_lines
+    assert proxy.output.tail() == proxy.fetched_lines
+    assert proxy.fetch_count == 2
+    assert proxy.fetched_max_lines == 0
+
+
+def test_output_serves_small_tail_from_events(base_ts, hub):
+    run = fake_job_run('j1', created_at=base_ts, term_status=None)
+    proxy = FakeProxy(run, hub)
+
+    for ordinal in (1, 2, 3, 4):
+        fire_output(hub, run, OutputLine(f'l{ordinal}', ordinal))
+
+    assert [line.ordinal for line in proxy.output.tail(max_lines=3)] == [2, 3, 4]
+    assert proxy.fetch_count == 0
+
+
+def test_output_fetches_when_tail_request_exceeds_event_buffer(base_ts, hub):
+    run = fake_job_run('j1', created_at=base_ts, term_status=None)
+    proxy = FakeProxy(run, hub, output_buffer_depth=3)
+    proxy.fetched_lines = [OutputLine(f'l{o}', o) for o in range(1, 8)]
+
+    output = proxy.output
+    for ordinal in (5, 6, 7):
+        fire_output(hub, run, OutputLine(f'l{ordinal}', ordinal))
+
+    assert [line.ordinal for line in output.tail(max_lines=4)] == [4, 5, 6, 7]
+    assert proxy.fetch_count == 1
+    assert proxy.fetched_max_lines == 4
+
+
+def test_output_default_tail_fetches_even_when_events_exist(base_ts, hub):
+    run = fake_job_run('j1', created_at=base_ts, term_status=None)
+    proxy = FakeProxy(run, hub)
+    proxy.fetched_lines = [OutputLine(f'l{o}', o) for o in range(1, 8)]
+
+    output = proxy.output
+    for ordinal in (5, 6, 7):
+        fire_output(hub, run, OutputLine(f'l{ordinal}', ordinal))
+
+    assert [line.ordinal for line in output.tail()] == [1, 2, 3, 4, 5, 6, 7]
+    assert proxy.fetch_count == 1
+    assert proxy.fetched_max_lines == 0
+
+
+def test_output_head_read_fetches(base_ts, hub):
+    run = fake_job_run('j1', created_at=base_ts, term_status=None)
+    proxy = FakeProxy(run, hub)
+    proxy.fetched_lines = [OutputLine(f'l{o}', o) for o in range(1, 8)]
+
+    output = proxy.output
+    for ordinal in (5, 6, 7):
+        fire_output(hub, run, OutputLine(f'l{ordinal}', ordinal))
+
+    assert [line.ordinal for line in output.tail(Mode.HEAD, max_lines=2)] == [1, 2]
+    assert proxy.fetch_count == 1
+    assert proxy.fetched_mode == Mode.HEAD
+    assert proxy.fetched_max_lines == 2
+
+
+def test_output_fetch_results_are_not_cached(base_ts, hub):
+    run = fake_job_run('j1', created_at=base_ts, term_status=None)
+    proxy = FakeProxy(run, hub)
+    proxy.fetched_lines = [OutputLine('l1', 1)]
+
+    output = proxy.output
+    output.tail()
+    output.tail()
+
+    assert proxy.fetch_count == 2
+
+
+def test_output_buffer_trims_to_depth(base_ts, hub):
+    run = fake_job_run('j1', created_at=base_ts, term_status=None)
+    proxy = FakeProxy(run, hub, output_buffer_depth=3)
+
+    output = proxy.output
+    for ordinal in (1, 2, 3, 4, 5):
+        fire_output(hub, run, OutputLine(f'l{ordinal}', ordinal))
+
+    assert [line.ordinal for line in output.tail(max_lines=3)] == [3, 4, 5]
+    assert proxy.fetch_count == 0
+
+
+def test_output_tail_slices_by_mode(base_ts, hub):
+    run = fake_job_run('j1', created_at=base_ts, term_status=None)
+    proxy = FakeProxy(run, hub)
+    proxy.fetched_lines = [OutputLine(f'l{ordinal}', ordinal) for ordinal in (1, 2, 3)]
+
+    output = proxy.output
+    for ordinal in (1, 2, 3):
+        fire_output(hub, run, OutputLine(f'l{ordinal}', ordinal))
+
+    assert [line.ordinal for line in output.tail(max_lines=2)] == [2, 3]
+    assert [line.ordinal for line in output.tail(Mode.HEAD, max_lines=2)] == [1, 2]
+    assert proxy.fetch_count == 1
+
+
+def test_output_ignores_events_of_other_instances(base_ts, hub):
+    run = fake_job_run('j1', created_at=base_ts, term_status=None)
+    proxy = FakeProxy(run, hub)
+
+    output = proxy.output
+    other = fake_job_run('j2', created_at=base_ts, term_status=None)
+    fire_output(hub, other, OutputLine('other', 1))
+    fire_output(hub, run, OutputLine('mine', 1))
+
+    assert [line.message for line in output.tail(max_lines=1)] == ['mine']
+    assert proxy.fetch_count == 0
