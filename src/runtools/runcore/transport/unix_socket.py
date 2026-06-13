@@ -25,10 +25,12 @@ from runtools.runcore.client import (
 )
 from runtools.runcore.env import UnixSocketTransportConfig
 from runtools.runcore.err import run_isolated_collect_exceptions
-from runtools.runcore.job import InstanceID, JobInstanceMetadata, JobRun
+from runtools.runcore.job import InstanceID, JobInstance, JobInstanceMetadata, JobRun
 from runtools.runcore.matching import JobRunCriteria
 from runtools.runcore.output import Mode, OutputLine
+from runtools.runcore.proxy import JobInstanceProxyBase
 from runtools.runcore.run import StopReason
+from runtools.runcore.transport import DiscoveredRuns, InstanceDirectoryBase
 from runtools.runcore.util.socket import DatagramSocketServer, SocketRequestResult, StreamSocketClient
 
 log = logging.getLogger(__name__)
@@ -252,7 +254,7 @@ def clean_stale_component_dirs(env_dir: Path) -> List[Path]:
 # RPC client
 # ---------------------------------------------------------------------------
 
-class UnixSocketNodeClient(StreamSocketClient):
+class UnixSocketRpcClient(StreamSocketClient):
     """Client for communicating with job instances over the unix_socket transport.
 
     Uses JSON-RPC 2.0 over Unix domain sockets to query and control job instances
@@ -362,48 +364,43 @@ class UnixSocketNodeClient(StreamSocketClient):
             run_match = JobRunCriteria.all()
         return self.broadcast_method("get_active_runs", run_match.serialize(), retval_mapper=_job_runs_retval_mapper)
 
-    def get_active_runs(self, server_address: str, run_match) -> List[JobRun]:
-        """Retrieves information about active job instances from a specific server.
+    def _broadcast_instance_command(self, method: str, instance_id: InstanceID, *params,
+                                    retval_mapper: Callable[[Any], Any] = _no_retval_mapper) -> Any:
+        """Broadcast an instance-keyed command — only the owning node acts.
 
-        Args:
-            server_address: Address of the target server
-            run_match: Filter criteria for matching specific instances
-
-        Returns:
-            List of JobRun objects for matching instances
-
-        Raises:
-            InstanceCallServerError: For server-side errors
-            InstanceCallClientError: For client-side errors
-            TargetNotFoundError: When target doesn't exist
+        Returns the owning node's return value. Raises TargetNotFoundError when no
+        node owns the instance; any other node-side error is raised as-is.
         """
-        return self.call_method(
-            server_address, "get_active_runs", run_match.serialize(), retval_mapper=_job_runs_retval_mapper)
+        results = self.broadcast_method(method, instance_id.serialize(), *params, retval_mapper=retval_mapper)
+        for result in results:
+            if result.error is None:
+                return result.retval
+        for result in results:
+            if result.error is not None and not isinstance(result.error, TargetNotFoundError):
+                raise result.error
+        raise TargetNotFoundError(str(instance_id))
 
-    def stop_instance(self, server_address: str, instance_id: InstanceID, stop_reason: StopReason = StopReason.STOPPED
-                      ) -> None:
-        """Stops a specific job instance.
+    def stop_instance(self, instance_id: InstanceID, stop_reason: StopReason = StopReason.STOPPED) -> None:
+        """Stops a job instance, wherever in the environment it runs.
 
         Args:
-            server_address: Address of the target server
             instance_id: ID of the instance to stop
             stop_reason: Reason for stopping the instance
 
         Raises:
             ValueError: If instance_id is not provided
-            TargetNotFoundError: If the specified server or the target instance is not found
+            TargetNotFoundError: If no node owns the instance
         """
         if not instance_id:
             raise ValueError('Instance ID is mandatory for the stop operation')
 
-        self.call_method(server_address, "stop_instance", instance_id.serialize(), stop_reason.name)
+        self._broadcast_instance_command("stop_instance", instance_id, stop_reason.name)
 
-    def get_output_tail(self, server_address: str, instance_id: InstanceID,
+    def get_output_tail(self, instance_id: InstanceID,
                         mode: Mode = Mode.TAIL, max_lines: int = 100) -> List[OutputLine]:
-        """Retrieves recent output lines from a specific job instance.
+        """Retrieves recent output lines from a job instance, wherever it runs.
 
         Args:
-            server_address: Address of the target server
             instance_id: ID of the instance to read output from
             mode: Whether to read from the beginning or end of the buffer
             max_lines: Maximum number of lines to retrieve (default: 100)
@@ -412,20 +409,19 @@ class UnixSocketNodeClient(StreamSocketClient):
             List of OutputLine objects containing the instance output
 
         Raises:
-            TargetNotFoundError: If the specified server or the target instance is not found
+            TargetNotFoundError: If no node owns the instance
         """
 
         def resp_mapper(retval: Any) -> List[OutputLine]:
             return [OutputLine.deserialize(line) for line in retval]
 
-        return self.call_method(server_address, "get_output_tail", instance_id.serialize(), max_lines, mode.name,
-                                retval_mapper=resp_mapper)
+        return self._broadcast_instance_command("get_output_tail", instance_id, max_lines, mode.name,
+                                                retval_mapper=resp_mapper)
 
-    def exec_phase_op(self, server_address: str, instance_id: InstanceID, phase_id: str, op_name: str, *op_args) -> Any:
-        """Executes an operation on a specific phase of a job instance.
+    def exec_phase_op(self, instance_id: InstanceID, phase_id: str, op_name: str, *op_args) -> Any:
+        """Executes an operation on a phase of a job instance, wherever it runs.
 
         Args:
-            server_address: Address of the server hosting the instance
             instance_id: ID of the target instance
             phase_id: ID of the phase to operate on
             op_name: Name of the operation to execute
@@ -436,7 +432,7 @@ class UnixSocketNodeClient(StreamSocketClient):
 
         Raises:
             ValueError: If phase_id or op_name is not provided
-            TargetNotFoundError: If the specified server or the target instance is not found
+            TargetNotFoundError: If no node owns the instance
             PhaseNotFoundError: If the specified phase is not found
         """
         if not phase_id:
@@ -444,8 +440,7 @@ class UnixSocketNodeClient(StreamSocketClient):
         if not op_name:
             raise ValueError('Operation name is required for control operation')
 
-        return self.call_method(
-            server_address, "exec_phase_op", instance_id.serialize(), phase_id, op_name, op_args)
+        return self._broadcast_instance_command("exec_phase_op", instance_id, phase_id, op_name, op_args)
 
 
 # ---------------------------------------------------------------------------
@@ -477,7 +472,7 @@ class UnixSocketEventReceiver(DatagramSocketServer):
 
     Listens on a Unix datagram socket for serialized events emitted by node-side
     :class:`UnixSocketEventDispatcher` instances and routes the parsed payload to registered
-    handlers. Conforms to :class:`runtools.runcore.transport.NodeEventReceiver`.
+    handlers.
     """
 
     def __init__(self, socket_path, instance_match=None):
@@ -539,30 +534,91 @@ class UnixSocketEventReceiver(DatagramSocketServer):
 
 
 # ---------------------------------------------------------------------------
-# Connector-side transport bundle
+# Discovery
 # ---------------------------------------------------------------------------
 
-class UnixSocketConnectorTransport:
-    """Connector-side runtime bundle for the unix_socket transport.
+class UnixSocketInstanceDiscovery:
+    """Find active runs by broadcasting to Unix socket RPC servers.
 
-    Owns the connector's filesystem layout (component dir + liveness flock), the RPC client
-    used to reach nodes' sockets, and the UDP event receiver. ``close()`` releases all three.
-
-    Conforms to :class:`runtools.runcore.transport.ConnectorTransport`.
+    Each discovery sweep asks all reachable node servers for their active runs. The
+    returned :class:`DiscoveredRuns` is incomplete if any server fails to answer.
     """
 
-    def __init__(self, layout: UnixSocketConnectorLayout, node_client: UnixSocketNodeClient,
-                 event_receiver: UnixSocketEventReceiver):
-        self.layout = layout
-        self.node_client = node_client
-        self.event_receiver = event_receiver
+    def __init__(self, rpc_client: UnixSocketRpcClient):
+        self._client = rpc_client
 
-    def close(self) -> None:
+    def discover_active_runs(self, run_match=None) -> DiscoveredRuns:
+        """Run one broadcast discovery sweep."""
+        runs = []
+        complete = True
+        for result in self._client.collect_active_runs(run_match):
+            if result.error:
+                log.warning("Instance call error op=discover_active_runs",
+                            extra={"op": "discover_active_runs", "server": str(result.server_address)},
+                            exc_info=result.error)
+                complete = False
+                continue
+            runs.extend(result.retval)
+        return DiscoveredRuns(runs, complete)
+
+
+# ---------------------------------------------------------------------------
+# Instance proxy
+# ---------------------------------------------------------------------------
+
+class UnixSocketJobInstanceProxy(JobInstanceProxyBase):
+    """Proxy to a job instance reachable over the unix_socket transport.
+
+    Commands and output reads are instance-keyed broadcasts: only the owning node
+    acts, so the proxy needs no routing — wherever the instance runs, it is reached.
+    """
+
+    def __init__(self, initial: JobRun, client: UnixSocketRpcClient):
+        super().__init__(initial)
+        self._client = client
+
+    def stop(self, stop_reason=StopReason.STOPPED):
+        self._client.stop_instance(self.id, stop_reason)
+
+    def _exec_phase_op(self, phase_id: str, op_name: str, *op_args):
+        return self._client.exec_phase_op(self.id, phase_id, op_name, *op_args)
+
+    def _fetch_output_tail(self, mode: Mode, max_lines: int) -> List[OutputLine]:
+        return self._client.get_output_tail(self.id, mode, max_lines)
+
+
+# ---------------------------------------------------------------------------
+# Instance directory
+# ---------------------------------------------------------------------------
+
+class UnixSocketInstanceDirectory(InstanceDirectoryBase):
+    """Instance directory over unix domain sockets.
+
+    Uses a local component directory for its sockets and liveness lock, a Unix
+    socket RPC client for commands and output reads, and a datagram receiver for
+    instance events.
+    """
+
+    def __init__(self, layout: UnixSocketConnectorLayout, rpc_client: UnixSocketRpcClient,
+                 event_receiver: UnixSocketEventReceiver, discovery: UnixSocketInstanceDiscovery):
+        super().__init__(discovery)
+        self._layout = layout
+        self._rpc_client = rpc_client
+        self._event_receiver = event_receiver
+
+    def _create_proxy(self, initial: JobRun) -> JobInstance:
+        return UnixSocketJobInstanceProxy(initial, self._rpc_client)
+
+    def _start_receiving(self, handler) -> None:
+        self._event_receiver.register_handler(handler)
+        self._event_receiver.start()
+
+    def _close_resources(self) -> None:
         run_isolated_collect_exceptions(
-            "Errors during closing unix_socket connector transport",
-            self.event_receiver.close,
-            self.node_client.close,
-            self.layout.cleanup,
+            "Errors during closing unix_socket instance directory",
+            self._event_receiver.close,
+            self._rpc_client.close,
+            self._layout.cleanup,
         )
 
 
@@ -570,12 +626,13 @@ class UnixSocketConnectorTransport:
 # Factory
 # ---------------------------------------------------------------------------
 
-def create_connector_transport(env_id: str,
-                               transport_config: UnixSocketTransportConfig) -> UnixSocketConnectorTransport:
-    """Build a connector-side unix_socket transport bundle: layout + RPC client + event receiver."""
+def create_instance_directory(env_id: str,
+                              transport_config: UnixSocketTransportConfig) -> UnixSocketInstanceDirectory:
+    """Create the Unix socket directory for an environment."""
     # Sweep stale components before allocating our own — no need to scan past our live lock.
     clean_stale_component_dirs(resolve_env_dir(env_id, transport_config.root_dir))
     layout = StandardUnixSocketConnectorLayout.create(env_id, transport_config.root_dir)
-    node_client = UnixSocketNodeClient(layout.server_sockets_provider)
+    rpc_client = UnixSocketRpcClient(layout.server_sockets_provider)
     event_receiver = UnixSocketEventReceiver(layout.listener_events_socket_path)
-    return UnixSocketConnectorTransport(layout, node_client, event_receiver)
+    discovery = UnixSocketInstanceDiscovery(rpc_client)
+    return UnixSocketInstanceDirectory(layout, rpc_client, event_receiver, discovery)

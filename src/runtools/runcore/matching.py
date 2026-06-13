@@ -681,7 +681,12 @@ class JobRunCriteria(MatchCriteria[JobRun]):
 
     @classmethod
     def all(cls) -> JobRunCriteria:
-        return cls(metadata_criteria=(MetadataCriterion.all_match(),))
+        """Unconstrained criteria — matches every run.
+
+        Carries no criterion groups, so it is falsy (``__bool__`` means
+        "constrains anything") and consumers treat it as a full sweep.
+        """
+        return cls()
 
     @classmethod
     def deserialize(cls, as_dict) -> JobRunCriteria:

@@ -6,7 +6,7 @@ This module defines transport-agnostic pieces:
 - ``InstanceCallResult`` — one server's outcome from a broadcast
 - helpers that map a raw JSON-RPC response to a return value or raise the right error
 
-Transport-specific RPC clients (e.g. ``UnixSocketNodeClient``) live under
+Transport-specific RPC clients (e.g. ``UnixSocketRpcClient``) live under
 ``runtools.runcore.transport.<transport>`` and consume these primitives.
 """
 

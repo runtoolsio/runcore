@@ -19,7 +19,6 @@ The module provides factory methods for quickly creating commonly used connector
         active_runs = conn.get_active_runs()
 """
 
-import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from threading import Event, Lock
@@ -32,12 +31,9 @@ from runtools.runcore.env import EnvironmentConfig, UnixSocketTransportConfig, E
 from runtools.runcore.err import run_isolated_collect_exceptions
 from runtools.runcore.job import InstanceNotifications, JobInstance, InstanceLifecycleObserver, InstanceLifecycleEvent, \
     JobRun, InstanceID
-from runtools.runcore.listening import InstanceEventReceiver
 from runtools.runcore.matching import JobRunCriteria, SortOption
-from runtools.runcore.proxy import UnixSocketJobInstanceProxy
-from runtools.runcore.transport import ConnectorTransport
+from runtools.runcore.transport import InstanceDirectory
 
-log = logging.getLogger(__name__)
 
 
 def wait_for_interrupt(env, *, reraise=True):
@@ -266,20 +262,18 @@ class EnvironmentConnector(ABC):
 
 
 class _Connector(EnvironmentConnector):
-    """Generic connector that delegates all transport-specific behavior to a ``ConnectorTransport``.
+    """Connector that combines live instance access with persisted run history.
 
-    The transport bundle owns its own resources (RPC client, event receiver, layout, etc.) and
-    cleans them up via ``transport.close()``. This class owns the database and output backends
-    and closes them after the transport.
+    Live instances come from the instance directory. Historical runs, stats, and
+    deletion come from the environment database. Output backends are kept here
+    because they are used for historical output reads and cleanup.
     """
 
-    def __init__(self, env_id, env_db, transport: ConnectorTransport, output_backends=()):
+    def __init__(self, env_id, env_db, directory: InstanceDirectory, output_backends=()):
         self._env_id = env_id
         self._db = env_db
-        self._transport = transport
+        self._directory = directory
         self._output_backends = tuple(output_backends)
-        self._notifications = InstanceEventReceiver()
-        self._transport.event_receiver.register_handler(self._notifications)
 
     @property
     def env_id(self):
@@ -288,7 +282,7 @@ class _Connector(EnvironmentConnector):
     @property
     @override
     def notifications(self) -> InstanceNotifications:
-        return self._notifications
+        return self._directory.notifications
 
     @property
     @override
@@ -296,50 +290,18 @@ class _Connector(EnvironmentConnector):
         return self._output_backends
 
     def open(self):
-        self._transport.event_receiver.start()
+        self._directory.open()
 
     def get_active_runs(self, run_match=None):
-        """Retrieve active job runs from all nodes the transport can reach.
-
-        Note:
-            Communication errors are logged but not surfaced to callers, which may result
-            in incomplete data. Future options to consider:
-              1. Return a result dataclass with both runs and errors
-              2. Raise an exception containing partial results
-              3. Add an optional on_error callback parameter
-              4. Add a separate get_active_runs_with_errors() method
-        """
-        run_results = self._transport.node_client.collect_active_runs(run_match)
-        active_runs = []
-
-        for result in run_results:
-            if result.error:
-                log.warning("Instance call error op=collect_active_runs",
-                            extra={"op": "collect_active_runs", "server": str(result.server_address)},
-                            exc_info=result.error)
-                continue
-            active_runs.extend(result.retval)
-
-        return active_runs
+        """Snapshots of the directory's live instances — event-maintained, no per-call RPC."""
+        return [instance.snap() for instance in self._directory.get_instances(run_match)]
 
     def get_instances(self, run_match=None):
-        # Same error handling consideration as get_active_runs()
-        run_results = self._transport.node_client.collect_active_runs(run_match)
-        instances = []
+        return self._directory.get_instances(run_match)
 
-        for result in run_results:
-            if result.error:
-                log.warning("Instance call error op=get_instances",
-                            extra={"op": "get_instances", "server": str(result.server_address)},
-                            exc_info=result.error)
-                continue
-
-            server_address = result.server_address
-            for job_run in result.retval:
-                instances.append(UnixSocketJobInstanceProxy(
-                    job_run, self._notifications, self._transport.node_client, server_address))
-
-        return instances
+    @override
+    def get_instance(self, instance_id):
+        return self._directory.get_instance(instance_id)
 
     def read_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
         return self._db.read_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
@@ -362,34 +324,30 @@ class _Connector(EnvironmentConnector):
     def close(self):
         run_isolated_collect_exceptions(
             "Errors during closing environment connector",
-            self._transport.close,
+            self._directory.close,
             self._db.close,
             *(b.close for b in self._output_backends),
         )
 
 
-def compose(env_id, env_db, transport: ConnectorTransport, output_backends) -> EnvironmentConnector:
-    """Internal framework plumbing: construct a concrete connector from a transport bundle.
+def compose(env_id, env_db, directory: InstanceDirectory, output_backends) -> EnvironmentConnector:
+    """Construct an :class:`EnvironmentConnector` from its runtime parts.
 
-    Consumed by ``_create()`` (dispatching by transport variant) and by ``EnvironmentNode``
-    implementations that embed a sibling-facing connector. Returns the abstract
-    ``EnvironmentConnector`` so callers depend on the interface, not the concrete class.
-
-    Not part of the public API — :func:`connect` is the supported entry point for callers
-    that just want a connector to an existing environment.
+    This is internal assembly code used by environment factories. User code should
+    call :func:`connect` instead.
     """
-    return _Connector(env_id, env_db, transport, output_backends)
+    return _Connector(env_id, env_db, directory, output_backends)
 
 
 def _create(env_db: EnvironmentDatabase, env_config: EnvironmentConfig) -> EnvironmentConnector:
     """Internal: create a connector from an environment database and configuration."""
     if isinstance(env_config.transport, UnixSocketTransportConfig):
         from runtools.runcore.transport import unix_socket
-        # Build cheap, in-memory output backends first; transport allocates a component
-        # dir + flock and would leak if output construction failed after transport setup.
+        # Build cheap, in-memory output backends first; the directory allocates a component
+        # dir + flock and would leak if output construction failed after directory setup.
         output_backends = output.create_backends(env_config.id, env_config.output.storages)
-        transport = unix_socket.create_connector_transport(env_config.id, env_config.transport)
-        return compose(env_config.id, env_db, transport, output_backends)
+        directory = unix_socket.create_instance_directory(env_config.id, env_config.transport)
+        return compose(env_config.id, env_db, directory, output_backends)
 
     raise AssertionError(
         f"Unsupported transport: {type(env_config.transport).__name__}. This is a programming error.")

@@ -1,3 +1,4 @@
+import bisect
 from abc import abstractmethod
 from threading import Lock
 from typing import Callable, List, override
@@ -5,50 +6,61 @@ from typing import Callable, List, override
 from runtools.runcore.job import (
     JobRun, JobInstance, InstanceNotifications, InstanceObservableNotifications,
     InstanceLifecycleEvent, InstanceOutputEvent, InstancePhaseEvent, InstanceStatusEvent,
+    NotificationBinding,
 )
 from runtools.runcore.matching import MetadataCriterion
 from runtools.runcore.output import Mode, Output, OutputLine
-from runtools.runcore.run import StopReason, Stage
-from runtools.runcore.transport import NodeRpcClient
+from runtools.runcore.run import StopReason
 
 
 class JobInstanceProxyBase(JobInstance):
-    """Transport-neutral base for proxies to job instances running in another process.
+    """Base class for job instance proxies.
 
-    Covers the state half: initialized from a discovery snapshot and kept fresh by
-    lifecycle/phase/status events from the env-wide notification hub — reads never do
-    I/O. Updates are replacement-only, guarded by :meth:`JobRun.is_newer_than` so
-    replayed or out-of-order events cannot regress state. Unbinds from the hub when
-    the instance ends.
+    A proxy represents an instance whose state and commands are mediated by a
+    transport implementation. It keeps a local :class:`JobRun` snapshot and
+    updates that snapshot from state events. Snapshot reads are local; commands
+    and output reads are delegated to the concrete transport.
 
-    Output is event-fed for conventional tail reads; deeper or head reads are fetched
-    from the remote instance on demand (see ``_ProxyOutput``).
+    State updates are monotonic: older snapshots are ignored according to
+    :meth:`JobRun.is_newer_than`.
 
-    Transport subclasses implement the command half: ``stop``, ``_exec_phase_op`` and
-    ``_fetch_output_tail``.
+    Subclasses implement command delivery and remote output fetches.
     """
 
-    def __init__(self, initial: JobRun, notifications: InstanceNotifications, output_buffer_depth: int = 100):
+    def __init__(self, initial: JobRun, output_buffer_depth: int = 100):
         self._job_run = initial  # Replacement-only, never mutated in place => lock-free reads
-        self._source_notifications = notifications
         self._output = _ProxyOutput(self._fetch_output_tail, output_buffer_depth)
-
-        instance_filter = MetadataCriterion.exact_match(initial.instance_id)
-        self._notifications = InstanceObservableNotifications(instance_filter=instance_filter)
-        self._notifications.bind_to(notifications)
+        self._notifications = InstanceObservableNotifications(
+            instance_filter=(MetadataCriterion.exact_match(initial.instance_id)))
         self._notifications.add_observer_lifecycle(self._on_lifecycle_update)
         self._notifications.add_observer_phase(self._on_phase_update)
         self._notifications.add_observer_status(self._on_status_update)
         self._notifications.add_observer_output(self._on_output_update)
 
+    @property
+    def metadata(self):
+        return self._job_run.metadata
+
     def _update_state(self, job_run: JobRun):
+        """Apply a possibly-newer snapshot of this instance.
+
+        Guarded by :meth:`JobRun.is_newer_than` — older snapshots (stale discovery
+        results, replayed events) never regress the cached state.
+        """
         if job_run.is_newer_than(self._job_run):
             self._job_run = job_run
 
+    def bind_to(self, source: InstanceNotifications) -> NotificationBinding:
+        """Subscribe this proxy to an upstream instance event source.
+
+        The proxy is inert until bound — construction has no external effects.
+        The caller (the directory) owns the returned binding and unbinds it when
+        the instance leaves the view.
+        """
+        return self._notifications.bind_to(source)
+
     def _on_lifecycle_update(self, event: InstanceLifecycleEvent):
         self._update_state(event.job_run)
-        if event.new_stage == Stage.ENDED:
-            self._notifications.unbind_from(self._source_notifications)
 
     def _on_phase_update(self, event: InstancePhaseEvent):
         self._update_state(event.job_run)
@@ -58,10 +70,6 @@ class JobInstanceProxyBase(JobInstance):
 
     def _on_output_update(self, event: InstanceOutputEvent):
         self._output.add_line(event.output_line)
-
-    @property
-    def metadata(self):
-        return self._job_run.metadata
 
     def snap(self) -> JobRun:
         return self._job_run
@@ -101,31 +109,16 @@ class JobInstanceProxyBase(JobInstance):
         return self._notifications
 
 
-class UnixSocketJobInstanceProxy(JobInstanceProxyBase):
-    """Proxy to a job instance reachable over the unix-socket transport."""
-
-    def __init__(self, initial: JobRun, notifications: InstanceNotifications,
-                 client: NodeRpcClient, server_address: str):
-        super().__init__(initial, notifications)
-        self._client = client
-        self._server_address = server_address
-
-    def stop(self, stop_reason=StopReason.STOPPED):
-        self._client.stop_instance(self._server_address, self.id, stop_reason)
-
-    def _exec_phase_op(self, phase_id: str, op_name: str, *op_args):
-        return self._client.exec_phase_op(self._server_address, self.id, phase_id, op_name, *op_args)
-
-    def _fetch_output_tail(self, mode: Mode, max_lines: int) -> List[OutputLine]:
-        return self._client.get_output_tail(self._server_address, self.id, mode, max_lines)
-
-
 class _ProxyOutput(Output):
     """Bounded buffer of output events received since proxy construction.
 
     TAIL reads covered by the buffer are served locally. Reads the buffer cannot
     prove complete are served directly from the remote instance; fetched lines are
     intentionally not merged into the event-fed buffer.
+
+    The buffer is kept sorted by line ordinal and drops duplicate deliveries, so
+    transport delivery order is not load-bearing — the output analog of the
+    :meth:`JobRun.is_newer_than` guard on state.
     """
 
     def __init__(self, fetch_tail: Callable[[Mode, int], List[OutputLine]], max_lines: int):
@@ -140,7 +133,13 @@ class _ProxyOutput(Output):
 
     def add_line(self, line: OutputLine):
         with self._lock:
-            self._lines.append(line)
+            if not self._lines or line.ordinal > self._lines[-1].ordinal:
+                self._lines.append(line)  # Fast path: in-order delivery
+            else:
+                index = bisect.bisect_left(self._lines, line.ordinal, key=lambda l: l.ordinal)
+                if index < len(self._lines) and self._lines[index].ordinal == line.ordinal:
+                    return  # Duplicate delivery
+                self._lines.insert(index, line)
             del self._lines[:-self._max_lines]
 
     def tail(self, mode: Mode = Mode.TAIL, max_lines: int = 0):

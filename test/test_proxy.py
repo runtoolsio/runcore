@@ -18,7 +18,8 @@ class FakeProxy(JobInstanceProxyBase):
     """Minimal concrete proxy exercising the transport-neutral state half."""
 
     def __init__(self, initial, notifications, output_buffer_depth=100):
-        super().__init__(initial, notifications, output_buffer_depth)
+        super().__init__(initial, output_buffer_depth)
+        self.binding = self.bind_to(notifications)
         self.executed_ops = []
         self.stopped_with = None
         self.fetched_lines = []
@@ -137,19 +138,6 @@ def test_proxy_ignores_events_of_other_instances(base_ts, hub):
     fire_lifecycle(hub, lifecycle_event(other, Stage.ENDED))
 
     assert proxy.snap() == initial
-
-
-def test_proxy_unbinds_from_hub_when_instance_ends(base_ts, hub):
-    initial = fake_job_run('j1', created_at=base_ts, term_status=None)
-    proxy = FakeProxy(initial, hub)
-
-    ended = fake_job_run('j1', created_at=base_ts, ended_at=base_ts + timedelta(minutes=10))
-    fire_lifecycle(hub, lifecycle_event(ended, Stage.ENDED))
-    # Newer event for the same (ended) instance must not reach the unbound proxy
-    later = fake_job_run('j1', created_at=base_ts, ended_at=base_ts + timedelta(minutes=20))
-    fire_lifecycle(hub, lifecycle_event(later, Stage.ENDED))
-
-    assert proxy.snap() == ended
 
 
 def test_phase_control_delegates_to_exec_phase_op(base_ts, hub):
@@ -280,4 +268,23 @@ def test_output_ignores_events_of_other_instances(base_ts, hub):
     fire_output(hub, run, OutputLine('mine', 1))
 
     assert [line.message for line in output.tail(max_lines=1)] == ['mine']
+    assert proxy.fetch_count == 0
+
+
+def test_binding_unbind_is_idempotent(base_ts, hub):
+    proxy = FakeProxy(fake_job_run('j1', created_at=base_ts, term_status=None), hub)
+
+    proxy.binding.unbind()
+    proxy.binding.unbind()  # Second unbind must be a no-op, not a double observer removal
+
+
+def test_output_orders_lines_by_ordinal(base_ts, hub):
+    run = fake_job_run('j1', created_at=base_ts, term_status=None)
+    proxy = FakeProxy(run, hub)
+
+    output = proxy.output
+    for ordinal in (1, 3, 2, 3):  # Late and duplicate deliveries
+        fire_output(hub, run, OutputLine(f'l{ordinal}', ordinal))
+
+    assert [line.ordinal for line in output.tail(max_lines=3)] == [1, 2, 3]
     assert proxy.fetch_count == 0

@@ -1055,13 +1055,19 @@ class InstanceObservableNotifications(InstanceNotifications):
         self.status_notification = ObservableNotification[InstanceStatusObserver](
             event_filter=event_filter, error_hook=error_hook, force_reraise=force_reraise)
 
-    def bind_to(self, source: InstanceNotifications, priority: int = DEFAULT_OBSERVER_PRIORITY) -> None:
-        """Register this notification to receive events from source."""
+    def bind_to(self, source: InstanceNotifications, priority: int = DEFAULT_OBSERVER_PRIORITY) -> 'NotificationBinding':
+        """Register this notification to receive events from source.
+
+        Returns:
+            NotificationBinding: Handle for this binding — ``unbind()`` detaches
+            without the caller having to keep a reference to the source.
+        """
         source.add_observer_lifecycle(self.lifecycle_notification.observer_proxy, priority)
         source.add_observer_phase(self.phase_notification.observer_proxy, priority)
         source.add_observer_output(self.output_notification.observer_proxy, priority)
         source.add_observer_control(self.control_notification.observer_proxy, priority)
         source.add_observer_status(self.status_notification.observer_proxy, priority)
+        return NotificationBinding(self, source)
 
     def unbind_from(self, source: InstanceNotifications) -> None:
         """Stop receiving events from source."""
@@ -1100,6 +1106,24 @@ class InstanceObservableNotifications(InstanceNotifications):
 
     def remove_observer_status(self, observer):
         self.status_notification.remove_observer(observer)
+
+
+class NotificationBinding:
+    """Handle for one active :meth:`InstanceObservableNotifications.bind_to`.
+
+    ``unbind()`` detaches the binding without the holder having to keep a
+    reference to the source. Idempotent — repeated calls are no-ops.
+    """
+
+    def __init__(self, bound: InstanceObservableNotifications, source: InstanceNotifications):
+        self._bound = bound
+        self._source = source
+
+    def unbind(self):
+        if self._source is None:
+            return
+        self._bound.unbind_from(self._source)
+        self._source = None
 
 
 class InstanceEventsObserver(
