@@ -100,10 +100,6 @@ class JobInstanceProxyBase(JobInstance):
         raise NotImplementedError("Remote run is not supported")
 
     @property
-    def tracking(self):
-        raise NotImplementedError("Remote status tracking not yet supported")
-
-    @property
     @override
     def notifications(self) -> InstanceNotifications:
         return self._notifications
