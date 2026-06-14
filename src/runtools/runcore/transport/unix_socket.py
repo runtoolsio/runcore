@@ -12,7 +12,7 @@ import shutil
 from abc import ABC, abstractmethod
 from json import JSONDecodeError
 from pathlib import Path
-from typing import Any, Callable, Iterable, List, Optional
+from typing import Any, Callable, List, Optional
 
 from runtools.runcore import paths, util
 from runtools.runcore.client import (
@@ -21,7 +21,6 @@ from runtools.runcore.client import (
     _convert_result,
     _job_runs_retval_mapper,
     _no_retval_mapper,
-    _parse_retval_or_raise_error,
 )
 from runtools.runcore.env import UnixSocketTransportConfig
 from runtools.runcore.err import run_isolated_collect_exceptions
@@ -153,6 +152,9 @@ class StandardUnixSocketConnectorLayout(UnixSocketConnectorLayout):
         Returns:
             Path: Full path of domain socket used for receiving all events
         """
+        # TODO Only the combined events socket is exposed. The node dispatcher already routes
+        #      per event type, so per-type connector listener sockets (+ receiver binding) could
+        #      be added here to let a connector subscribe to a subset of event types.
         return self._component_dir / self._listener_events_socket_name
 
     @property
@@ -282,39 +284,9 @@ class UnixSocketRpcClient(StreamSocketClient):
         self._request_id += 1
         return self._request_id
 
-    def call_method(
-            self,
-            server_address: str,
-            method: str,
-            *params: Any,
-            retval_mapper: Callable[[Any], Any] = _no_retval_mapper) -> Any:
-        """Call a method on a specific server.
-
-        Args:
-            server_address: Address of target server
-            method: Method name to call
-            params: Method parameters
-            retval_mapper: Optional function to transform return value
-
-        Returns:
-            Method return value (transformed by mapper if provided)
-
-        Raises:
-            InstanceCallServerError: For server-side errors
-            InstanceCallClientError: For client-side errors
-            TargetNotFoundError: When target doesn't exist
-            PhaseNotFoundError: When phase doesn't exist
-        """
-        request_results = self._send_requests(method, *params, server_addresses=[server_address])
-        if not request_results:
-            raise TargetNotFoundError(server_address)
-
-        json_rpc_res = _parse_retval_or_raise_error(request_results[0])
-        return retval_mapper(json_rpc_res)
-
     def broadcast_method(self, method: str, *params: Any, retval_mapper: Callable[[Any], Any] = _no_retval_mapper) \
             -> List[InstanceCallResult]:
-        """Send a method call to all available servers.
+        """Send a method call to all reachable servers.
 
         Args:
             method: Method name to call
@@ -327,17 +299,12 @@ class UnixSocketRpcClient(StreamSocketClient):
         request_results: List[SocketRequestResult] = self._send_requests(method, *params)
         return [_convert_result(req_res, retval_mapper) for req_res in request_results]
 
-    def _send_requests(
-            self,
-            method: str,
-            *params: Any,
-            server_addresses: Iterable[str] = ()) -> List[SocketRequestResult]:
-        """Send JSON-RPC requests to specified servers.
+    def _send_requests(self, method: str, *params: Any) -> List[SocketRequestResult]:
+        """Broadcast a JSON-RPC request to all reachable servers.
 
         Args:
             method: Method name
             params: Method parameters
-            server_addresses: Optional list of target servers
 
         Returns:
             List of SocketRequestResult with responses
@@ -348,7 +315,7 @@ class UnixSocketRpcClient(StreamSocketClient):
             "params": params,
             "id": self._next_request_id()
         }
-        return self.communicate(json.dumps(request), server_addresses)
+        return self.communicate(json.dumps(request), ())
 
     def collect_active_runs(self, run_match) -> List[InstanceCallResult]:
         """Retrieves information about all active job instances from all available servers.
@@ -599,8 +566,11 @@ class UnixSocketInstanceDirectory(InstanceDirectoryBase):
     instance events.
     """
 
-    def __init__(self, layout: UnixSocketConnectorLayout, rpc_client: UnixSocketRpcClient,
-                 event_receiver: UnixSocketEventReceiver, discovery: UnixSocketInstanceDiscovery):
+    def __init__(self,
+                 layout: UnixSocketConnectorLayout,
+                 rpc_client: UnixSocketRpcClient,
+                 discovery: UnixSocketInstanceDiscovery,
+                 event_receiver: UnixSocketEventReceiver):
         super().__init__(discovery)
         self._layout = layout
         self._rpc_client = rpc_client
@@ -633,6 +603,6 @@ def create_instance_directory(env_id: str,
     clean_stale_component_dirs(resolve_env_dir(env_id, transport_config.root_dir))
     layout = StandardUnixSocketConnectorLayout.create(env_id, transport_config.root_dir)
     rpc_client = UnixSocketRpcClient(layout.server_sockets_provider)
-    event_receiver = UnixSocketEventReceiver(layout.listener_events_socket_path)
     discovery = UnixSocketInstanceDiscovery(rpc_client)
-    return UnixSocketInstanceDirectory(layout, rpc_client, event_receiver, discovery)
+    event_receiver = UnixSocketEventReceiver(layout.listener_events_socket_path)
+    return UnixSocketInstanceDirectory(layout, rpc_client, discovery, event_receiver)
