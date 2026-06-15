@@ -21,11 +21,11 @@ from runtools.runcore.output import OutputLocation
 from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.run import TerminationStatus, Outcome, PhaseRun, Fault, Stage
 from runtools.runcore.status import Status
-from runtools.runcore.util import MatchingStrategy, format_dt_sql, parse_dt_sql
+from runtools.runcore.util import MatchingStrategy, format_dt_sql, parse_dt_sql, utc_now
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEFAULT_BATCH_SIZE = 100
 
 
@@ -428,6 +428,7 @@ class SQLite(EnvironmentDatabase):
                      faults TEXT CHECK (faults IS NULL OR json_valid(faults)),
                      status TEXT CHECK (status IS NULL OR json_valid(status)),
                      warnings INT,
+                     updated_at TIMESTAMP NOT NULL,
                      PRIMARY KEY (job_id, run_id, ordinal)
                      )
                      ''')
@@ -472,8 +473,9 @@ class SQLite(EnvironmentDatabase):
         if not auto_increment:
             try:
                 self._conn.execute(
-                    "INSERT INTO runs (job_id, run_id, ordinal, user_params, created) VALUES (?, ?, ?, ?, ?)",
-                    (job_id, run_id, 1, params_json, created_str))
+                    "INSERT INTO runs (job_id, run_id, ordinal, user_params, created, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (job_id, run_id, 1, params_json, created_str, created_str))
             except sqlite3.IntegrityError:
                 raise DuplicateInstanceError(InstanceID(job_id, run_id, 1))
             self._insert_tags(job_id, run_id, 1, normalized_tags)
@@ -487,8 +489,9 @@ class SQLite(EnvironmentDatabase):
         for _ in range(max_retries):
             try:
                 self._conn.execute(
-                    "INSERT INTO runs (job_id, run_id, ordinal, user_params, created) VALUES (?, ?, ?, ?, ?)",
-                    (job_id, run_id, ordinal, params_json, created_str))
+                    "INSERT INTO runs (job_id, run_id, ordinal, user_params, created, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (job_id, run_id, ordinal, params_json, created_str, created_str))
             except sqlite3.IntegrityError:
                 ordinal += 1
                 continue
@@ -747,6 +750,7 @@ class SQLite(EnvironmentDatabase):
                     json.dumps([f.serialize() for f in r.faults]) if r.faults else None,
                     json.dumps(r.status.serialize()) if r.status else None,
                     len(r.status.warnings) if r.status else None,
+                    format_dt_sql(utc_now()),
                     r.metadata.job_id,
                     r.metadata.run_id,
                     r.metadata.ordinal,
@@ -754,7 +758,8 @@ class SQLite(EnvironmentDatabase):
 
         update_sql = (
             "UPDATE runs SET user_params=?, features=?, created=?, started=?, ended=?, exec_time=?, "
-            "root_phase=?, output_locations=?, termination_status=?, faults=?, status=?, warnings=? "
+            "root_phase=?, output_locations=?, termination_status=?, faults=?, status=?, warnings=?, "
+            "updated_at=? "
             "WHERE job_id=? AND run_id=? AND ordinal=?"
         )
         for run in job_runs:

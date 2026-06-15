@@ -496,3 +496,17 @@ def test_suppressed_run(sut):
     jobs = sut.read_runs()
     assert len(jobs) == 1
     assert jobs[0].lifecycle.termination.status == TerminationStatus.SUPPRESSED
+
+
+def test_active_snapshot_persists_with_updated_at(sut):
+    run = fake_job_run('j1', term_status=None)  # Non-ended: still running
+    iid = run.metadata.instance_id
+    sut.init_run(iid.job_id, iid.run_id, run.metadata.user_params, created_at=run.lifecycle.created_at)
+
+    sut.store_runs(run)
+
+    ended, updated_at = sut._conn.execute(
+        "SELECT ended, updated_at FROM runs WHERE job_id=? AND run_id=? AND ordinal=?",
+        (iid.job_id, iid.run_id, iid.ordinal)).fetchone()
+    assert ended is None          # Active row stored, not just init-only
+    assert updated_at is not None  # Persistence freshness stamped
