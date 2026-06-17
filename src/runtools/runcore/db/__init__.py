@@ -154,7 +154,12 @@ class RunStorage(ABC):
 
     @abstractmethod
     def store_runs(self, *job_runs):
-        """Store one or more completed job runs."""
+        """Authoritatively update the stored rows for one or more job runs, terminal included."""
+
+    @abstractmethod
+    def store_active_runs(self, *job_runs):
+        """Best-effort update of active-run snapshots. Must not overwrite a row that is
+        already terminal (ended) — a run that ended in the meantime is left untouched."""
 
     @abstractmethod
     def remove_runs(self, run_match) -> list[InstanceID]:

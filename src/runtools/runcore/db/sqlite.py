@@ -373,6 +373,35 @@ def _to_job_run(r) -> JobRun:
     return JobRun(metadata, root_phase, output_locations, faults, status)
 
 
+_RUN_UPDATE_SQL = (
+    "UPDATE runs SET user_params=?, features=?, created=?, started=?, ended=?, exec_time=?, "
+    "root_phase=?, output_locations=?, termination_status=?, faults=?, status=?, warnings=?, "
+    "updated_at=? "
+    "WHERE job_id=? AND run_id=? AND ordinal=?"
+)
+
+
+def _run_update_values(r: JobRun):
+    """SET-clause values plus the (job_id, run_id, ordinal) keys for :data:`_RUN_UPDATE_SQL`."""
+    return (json.dumps(dict(r.metadata.user_params)) if r.metadata.user_params else None,
+            json.dumps(list(r.metadata.features)) if r.metadata.features else None,
+            format_dt_sql(r.lifecycle.created_at),
+            format_dt_sql(r.lifecycle.started_at) if r.lifecycle.started_at else None,
+            format_dt_sql(r.lifecycle.termination.terminated_at) if r.lifecycle.termination else None,
+            round(r.lifecycle.total_run_time.total_seconds(), 3) if r.lifecycle.total_run_time else None,
+            json.dumps(r.root_phase.serialize()),
+            json.dumps([l.serialize() for l in r.output_locations]) if r.output_locations else None,
+            r.lifecycle.termination.status.value if r.lifecycle.termination else None,
+            json.dumps([f.serialize() for f in r.faults]) if r.faults else None,
+            json.dumps(r.status.serialize()) if r.status else None,
+            len(r.status.warnings) if r.status else None,
+            format_dt_sql(utc_now()),
+            r.metadata.job_id,
+            r.metadata.run_id,
+            r.metadata.ordinal,
+            )
+
+
 class SQLite(EnvironmentDatabase):
 
     def __init__(self, connection_factory, batch_size=DEFAULT_BATCH_SIZE):
@@ -736,37 +765,20 @@ class SQLite(EnvironmentDatabase):
         Tags are NOT updated here — ``init_run`` is the sole writer of the
         run_tags junction. Tags are immutable through the run's lifecycle.
         """
-
-        def to_tuple(r: JobRun):
-            return (json.dumps(dict(r.metadata.user_params)) if r.metadata.user_params else None,
-                    json.dumps(list(r.metadata.features)) if r.metadata.features else None,
-                    format_dt_sql(r.lifecycle.created_at),
-                    format_dt_sql(r.lifecycle.started_at) if r.lifecycle.started_at else None,
-                    format_dt_sql(r.lifecycle.termination.terminated_at) if r.lifecycle.termination else None,
-                    round(r.lifecycle.total_run_time.total_seconds(), 3) if r.lifecycle.total_run_time else None,
-                    json.dumps(r.root_phase.serialize()),
-                    json.dumps([l.serialize() for l in r.output_locations]) if r.output_locations else None,
-                    r.lifecycle.termination.status.value if r.lifecycle.termination else None,
-                    json.dumps([f.serialize() for f in r.faults]) if r.faults else None,
-                    json.dumps(r.status.serialize()) if r.status else None,
-                    len(r.status.warnings) if r.status else None,
-                    format_dt_sql(utc_now()),
-                    r.metadata.job_id,
-                    r.metadata.run_id,
-                    r.metadata.ordinal,
-                    )
-
-        update_sql = (
-            "UPDATE runs SET user_params=?, features=?, created=?, started=?, ended=?, exec_time=?, "
-            "root_phase=?, output_locations=?, termination_status=?, faults=?, status=?, warnings=?, "
-            "updated_at=? "
-            "WHERE job_id=? AND run_id=? AND ordinal=?"
-        )
         for run in job_runs:
-            cursor = self._conn.execute(update_sql, to_tuple(run))
+            cursor = self._conn.execute(_RUN_UPDATE_SQL, _run_update_values(run))
             if cursor.rowcount == 0:
                 log.warning("No init row found instance=%s", run.metadata.instance_id,
                             extra={"instance": str(run.metadata.instance_id)})
+        self._conn.commit()
+
+    @override
+    @ensure_open
+    def store_active_runs(self, *job_runs):
+        """See `RunStorage.store_active_runs`. The ``ended IS NULL`` guard makes a stale
+        active write a no-op once the row is terminal, so it cannot resurrect an ended run."""
+        for run in job_runs:
+            self._conn.execute(_RUN_UPDATE_SQL + " AND ended IS NULL", _run_update_values(run))
         self._conn.commit()
 
     @override

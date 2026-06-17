@@ -510,3 +510,18 @@ def test_active_snapshot_persists_with_updated_at(sut):
         (iid.job_id, iid.run_id, iid.ordinal)).fetchone()
     assert ended is None          # Active row stored, not just init-only
     assert updated_at is not None  # Persistence freshness stamped
+
+
+def test_store_active_runs_does_not_overwrite_ended_row(sut):
+    run = fake_job_run('j1', term_status=TerminationStatus.COMPLETED)
+    iid = run.metadata.instance_id
+    sut.init_run(iid.job_id, iid.run_id, run.metadata.user_params, created_at=run.lifecycle.created_at)
+    sut.store_runs(run)  # Terminal row written authoritatively
+
+    stale_active = fake_job_run('j1', run_id=iid.run_id, term_status=None)  # Same id, looks active
+    sut.store_active_runs(stale_active)
+
+    ended, = sut._conn.execute(
+        "SELECT ended FROM runs WHERE job_id=? AND run_id=? AND ordinal=?",
+        (iid.job_id, iid.run_id, iid.ordinal)).fetchone()
+    assert ended is not None  # Active write was a no-op; terminal row intact
