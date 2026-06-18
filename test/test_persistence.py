@@ -16,8 +16,11 @@ def test_load_sqlite():
 class FakeDB:
     def __init__(self):
         self.stored = []
+        self.fail = False  # When True, store_active_runs raises instead of recording
 
     def store_active_runs(self, *job_runs):
+        if self.fail:
+            raise RuntimeError("db unavailable")
         self.stored.extend(job_runs)
 
 
@@ -127,4 +130,28 @@ def test_events_ignored_after_close(persister, fake_db):
     fire_phase(notifications, fake_job_run('j1', term_status=None))
     persister.flush()
 
+    assert fake_db.stored == []
+
+
+def test_failed_flush_retains_snapshot_and_retries(persister, fake_db):
+    notifications = attach(persister)
+    run = fake_job_run('j1', term_status=None)
+    fire_status(notifications, run)
+
+    fake_db.fail = True
+    with pytest.raises(RuntimeError):
+        persister.flush()       # Propagates; caller (the flush loop) logs and retries
+    assert fake_db.stored == []  # Nothing landed
+
+    fake_db.fail = False
+    persister.flush()           # Snapshot was retained, not dropped — now it lands
+    assert fake_db.stored == [run]
+
+
+def test_close_swallows_final_flush_failure(persister, fake_db):
+    notifications = attach(persister)
+    fire_status(notifications, fake_job_run('j1', term_status=None))
+
+    fake_db.fail = True
+    persister.close()  # Best-effort: shutdown must not raise on an unretriable final flush
     assert fake_db.stored == []

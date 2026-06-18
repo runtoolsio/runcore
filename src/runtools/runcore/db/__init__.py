@@ -149,6 +149,16 @@ class RunStorage(ABC):
         """Iterate over ended job runs matching the specified criteria."""
 
     @abstractmethod
+    def read_active_runs(self, run_match=None) -> list[JobRun]:
+        """Return the latest persisted snapshot of each active (non-ended) run.
+
+        The mirror of :meth:`read_runs` (which returns only ended history): selects rows
+        that have no termination and carry a real snapshot, skipping init-only rows the
+        run-state persister has not filled yet. Snapshots lag the persister's flush
+        interval and, after a producer crash, may name runs that are no longer running.
+        """
+
+    @abstractmethod
     def read_run_stats(self, run_match=None):
         """Compute aggregate statistics for jobs matching the specified criteria."""
 

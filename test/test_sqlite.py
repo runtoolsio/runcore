@@ -6,7 +6,7 @@ import pytest
 from runtools.runcore.db import sqlite, IncompatibleSchemaError
 from runtools.runcore.db.sqlite import SCHEMA_VERSION
 from runtools.runcore.job import DuplicateInstanceError, InstanceID
-from runtools.runcore.matching import criteria, JobRunCriteria, LifecycleCriterion
+from runtools.runcore.matching import criteria, JobRunCriteria, LifecycleCriterion, PhaseCriterion
 from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.run import TerminationStatus, Outcome
 from runtools.runcore.test.job import fake_job_run
@@ -525,3 +525,57 @@ def test_store_active_runs_does_not_overwrite_ended_row(sut):
         "SELECT ended FROM runs WHERE job_id=? AND run_id=? AND ordinal=?",
         (iid.job_id, iid.run_id, iid.ordinal)).fetchone()
     assert ended is not None  # Active write was a no-op; terminal row intact
+
+
+def _init_active(db, run):
+    """Init a row then write its active snapshot (the persister's two-phase path)."""
+    iid = run.metadata.instance_id
+    db.init_run(iid.job_id, iid.run_id, run.metadata.user_params, created_at=run.lifecycle.created_at)
+    db.store_active_runs(run)
+
+
+def test_read_active_runs_returns_persisted_active_snapshots(sut):
+    run = fake_job_run('j1', term_status=None)
+    _init_active(sut, run)
+
+    assert [r.metadata.instance_id for r in sut.read_active_runs()] == [run.metadata.instance_id]
+
+
+def test_read_active_runs_excludes_ended(sut):
+    _init_and_store(sut, fake_job_run('j1', term_status=TerminationStatus.COMPLETED))
+
+    assert sut.read_active_runs() == []  # Terminal rows are read_runs' domain, not active discovery
+
+
+def test_read_active_runs_excludes_init_only_rows(sut):
+    run = fake_job_run('j1', term_status=None)
+    iid = run.metadata.instance_id
+    sut.init_run(iid.job_id, iid.run_id, run.metadata.user_params, created_at=run.lifecycle.created_at)
+    # No snapshot stored yet → root_phase NULL
+
+    assert sut.read_active_runs() == []  # Init-only row is not yet a discoverable active run
+
+
+def test_read_active_runs_honors_run_match(sut):
+    _init_active(sut, fake_job_run('j1', term_status=None))
+    _init_active(sut, fake_job_run('j2', term_status=None))
+
+    matched = sut.read_active_runs(parse('j1'))
+    assert [r.metadata.instance_id.job_id for r in matched] == ['j1']
+
+
+def test_read_active_runs_post_filters_phase_criteria(sut):
+    _init_active(sut, fake_job_run('j1', term_status=None))
+
+    # Phase criteria are not expressible by _build_where_clause; without post-filtering this
+    # active row would leak through as a false positive.
+    no_such_phase = JobRunCriteria.builder().phase(PhaseCriterion(phase_id='does-not-exist')).build()
+    assert sut.read_active_runs(no_such_phase) == []
+
+
+def test_read_runs_post_filters_phase_criteria(sut):
+    _init_and_store(sut, fake_job_run('j1', term_status=TerminationStatus.COMPLETED))
+
+    # Same backstop on the history path: an unrepresented phase criterion must not leak.
+    no_such_phase = JobRunCriteria.builder().phase(PhaseCriterion(phase_id='does-not-exist')).build()
+    assert sut.read_runs(no_such_phase) == []

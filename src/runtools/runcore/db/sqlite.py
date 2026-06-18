@@ -548,29 +548,50 @@ class SQLite(EnvironmentDatabase):
                   asc=True, limit=-1, offset=-1, last=False) -> Iterator[JobRun]:
         """See `RunStorage.iter_runs`.
 
-        Uses batched fetching to minimize lock contention.
+        Uses batched fetching to minimize lock contention. ``_build_where_clause`` covers
+        only part of ``run_match`` (see its TODO — non-root phase and instance params are
+        not expressed in SQL), so when a match is given each batch is post-filtered with
+        the full ``run_match`` and offset/limit apply to that post-filtered stream. Without
+        a match there is nothing to filter, so SQL paginates directly.
         """
-        current_offset = offset if offset >= 0 else 0
-        remaining_limit = limit if limit >= 0 else float('inf')
+        user_offset = offset if offset >= 0 else 0
+        remaining = limit if limit >= 0 else float('inf')
 
-        while remaining_limit > 0:
-            # Fetch next batch
-            batch_size = min(self._batch_size, remaining_limit) if remaining_limit != float('inf') else self._batch_size
+        if run_match is None:
+            while remaining > 0:
+                batch_size = min(self._batch_size, remaining) if remaining != float('inf') else self._batch_size
+                batch = self._fetch_batch_runs(
+                    None, sort, asc=asc, batch_offset=user_offset, batch_size=batch_size, last=last)
+                if not batch:
+                    break
+                for job_run in batch:
+                    yield job_run
+                user_offset += len(batch)
+                remaining -= len(batch)
+                if len(batch) < self._batch_size:
+                    break
+            return
+
+        # SQL prefilters; the full run_match is the backstop, so offset/limit cannot be
+        # pushed into SQL — they apply to the post-filtered stream here.
+        to_skip = user_offset
+        sql_offset = 0
+        while remaining > 0:
             batch = self._fetch_batch_runs(
-                run_match, sort, asc=asc, batch_offset=current_offset, batch_size=batch_size, last=last
-            )
-
+                run_match, sort, asc=asc, batch_offset=sql_offset, batch_size=self._batch_size, last=last)
             if not batch:
                 break
-
+            sql_offset += len(batch)
             for job_run in batch:
+                if not run_match(job_run):
+                    continue
+                if to_skip > 0:
+                    to_skip -= 1
+                    continue
                 yield job_run
-
-            # Update for next iteration
-            current_offset += len(batch)
-            remaining_limit -= len(batch)
-
-            # If we got fewer records than batch size, we've reached the end
+                remaining -= 1
+                if remaining <= 0:
+                    break
             if len(batch) < self._batch_size:
                 break
 
@@ -756,6 +777,34 @@ class SQLite(EnvironmentDatabase):
             )
 
         return [to_job_stats(row) for row in c.fetchall()]
+
+    @override
+    @ensure_open
+    def read_active_runs(self, run_match=None) -> list[JobRun]:
+        """See `RunStorage.read_active_runs`."""
+        statement = (
+            "SELECT h.*, "
+            "(SELECT json_group_array(tag) FROM run_tags t "
+            " WHERE t.job_id = h.job_id AND t.run_id = h.run_id AND t.ordinal = h.ordinal) "
+            "AS tags "
+            "FROM runs h"
+        )
+        where_clause, where_params = _build_where_clause(run_match, alias='h')
+        # ended IS NULL → active; root_phase IS NOT NULL → the persister has written a real
+        # snapshot, so skip init-only rows that _to_job_run cannot deserialize.
+        guard = "h.ended IS NULL AND h.root_phase IS NOT NULL"
+        statement += (where_clause + " AND " + guard) if where_clause else (" WHERE " + guard)
+
+        cursor = self._conn.cursor()
+        cursor.row_factory = sqlite3.Row
+        cursor.execute(statement, where_params)
+        try:
+            runs = [_to_job_run(row) for row in cursor.fetchall()]
+        finally:
+            cursor.close()
+        # _build_where_clause covers only metadata/lifecycle; re-apply the full criteria
+        # here so predicates it can't express (e.g. phase) don't leak false positives.
+        return [run for run in runs if run_match(run)] if run_match else runs
 
     @override
     @ensure_open
