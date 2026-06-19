@@ -1,0 +1,608 @@
+"""PostgreSQL implementation of :class:`EnvironmentDatabase`.
+
+Unlike the SQLite driver (one connection guarded by a process lock), this driver uses a
+``psycopg_pool.ConnectionPool`` and lets Postgres serialize concurrent writers — each
+operation borrows a connection and runs in its own transaction. JSON is stored as ``JSONB``
+and timestamps as ``TIMESTAMPTZ`` (bound as explicit UTC, since the domain uses naive UTC).
+
+The target database named by ``EnvironmentEntry.location`` (a libpq connection string) must
+already exist; this driver manages the schema (tables) within it, not the database itself.
+"""
+
+import logging
+from datetime import timedelta, timezone
+from functools import wraps
+from typing import Iterator, List, override
+
+import psycopg
+from psycopg.errors import UniqueViolation
+from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
+from psycopg_pool import ConnectionPool
+
+from runtools.runcore.db import EnvironmentDatabase, IncompatibleSchemaError
+from runtools.runcore.db.sql import Dialect, build_where_clause
+from runtools.runcore.err import InvalidStateError
+from runtools.runcore.job import (JobStats, JobRun, JobInstanceMetadata, InstanceID, DuplicateInstanceError,
+                                   normalize_tags)
+from runtools.runcore.matching import SortOption
+from runtools.runcore.output import OutputLocation
+from runtools.runcore.retention import RetentionPolicy
+from runtools.runcore.run import TerminationStatus, Outcome, PhaseRun, Fault
+from runtools.runcore.status import Status
+from runtools.runcore.util import MatchingStrategy, utc_now
+
+log = logging.getLogger(__name__)
+
+SCHEMA_VERSION = 2
+DEFAULT_POOL_MAX_SIZE = 10
+
+
+# --- Driver module contract (create / create_environment / exists / delete) ---
+
+def _dsn(entry) -> str:
+    if not entry.location:
+        raise ValueError("Postgres environment requires a libpq connection string in 'location'")
+    return entry.location
+
+
+def exists(entry) -> bool:
+    """True if the environment's schema (the ``runs`` table) is present in the target database."""
+    with psycopg.connect(_dsn(entry)) as conn:
+        return conn.execute("SELECT to_regclass('runs')").fetchone()[0] is not None
+
+
+def delete(entry) -> None:
+    """Drop the environment's tables. The database itself is left in place."""
+    with psycopg.connect(_dsn(entry)) as conn:
+        conn.execute("DROP TABLE IF EXISTS run_tags, runs, config, schema_info CASCADE")
+
+
+def create_environment(entry, config) -> None:
+    """Provision the schema and seed the initial configuration."""
+    with create(entry) as db:
+        db.save_config(entry.id, config.model_dump(mode='json', exclude={'id'}))
+
+
+def create(entry, **kwargs) -> 'PostgreSQL':
+    """Create a (not yet opened) Postgres database handle for ``entry``."""
+    return PostgreSQL(_dsn(entry), **kwargs)
+
+
+# --- Dialect: Postgres uses %s placeholders and aware-UTC timestamps ---
+
+def _bind_dt(dt):
+    """Domain datetimes are naive UTC; bind them to TIMESTAMPTZ as explicit UTC."""
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
+def _read_dt(dt):
+    """Read a TIMESTAMPTZ back as the naive UTC the domain uses."""
+    return dt.astimezone(timezone.utc).replace(tzinfo=None) if dt is not None else None
+
+
+def _pg_pattern_match(column, strategy):
+    """Only EXACT id/tag matches are expressed in SQL.
+
+    PARTIAL (``re.search``) and FN_MATCH (``fnmatch``) aren't faithfully representable in SQL —
+    any LIKE/regex approximation risks excluding rows the in-memory matcher would accept. They
+    return no predicate, leaving the field unconstrained; the ``run_match`` post-filter that every
+    read applies is the authority. Callers that act on the prefilter alone (``remove_runs``,
+    ``read_run_stats``) gate on :func:`_fully_sql_expressed`.
+    """
+    if strategy == MatchingStrategy.EXACT:
+        return f"{column} = %s", lambda p: p
+    return None, None
+
+
+_PG_DIALECT = Dialect(placeholder="%s", pattern_match=_pg_pattern_match, bind_dt=_bind_dt)
+
+
+def _fully_sql_expressed(run_match) -> bool:
+    """True if the SQL WHERE expresses run_match exactly, so no post-filter is required.
+
+    SQL covers lifecycle criteria and EXACT id/tag matches, but not phase criteria or the
+    PARTIAL/FN_MATCH strategies — those need the in-memory matcher.
+    """
+    if run_match is None:
+        return True
+    if getattr(run_match, 'phase_criteria', ()):
+        return False
+    return all(c.strategy in (MatchingStrategy.EXACT, MatchingStrategy.ALWAYS_TRUE)
+               for c in getattr(run_match, 'metadata_criteria', ()))
+
+
+# --- Row mapping (JSONB columns arrive already deserialized) ---
+
+_SELECT_RUNS = (
+    "SELECT h.*, "
+    "(SELECT json_agg(t.tag) FROM run_tags t "
+    " WHERE t.job_id = h.job_id AND t.run_id = h.run_id AND t.ordinal = h.ordinal) AS tags "
+    "FROM runs h"
+)
+
+_RUN_UPDATE_SQL = (
+    "UPDATE runs SET user_params=%s, features=%s, created=%s, started=%s, ended=%s, exec_time=%s, "
+    "root_phase=%s, output_locations=%s, termination_status=%s, faults=%s, status=%s, warnings=%s, "
+    "updated_at=%s "
+    "WHERE job_id=%s AND run_id=%s AND ordinal=%s"
+)
+
+
+def _to_metadata(row) -> JobInstanceMetadata:
+    """Build JobInstanceMetadata from a runs row — available even for init-only rows."""
+    return JobInstanceMetadata(
+        InstanceID(row['job_id'], row['run_id'], row['ordinal']),
+        row['user_params'] or {},
+        features=tuple(row['features'] or ()),
+        tags=tuple(row['tags'] or ()),
+    )
+
+
+def _to_job_run(row) -> JobRun:
+    """Build a JobRun from a runs row. JSONB columns are already Python objects."""
+    root_phase = PhaseRun.deserialize(row['root_phase'])
+    output_locations = tuple(OutputLocation.deserialize(loc) for loc in (row['output_locations'] or ()))
+    faults = tuple(Fault.deserialize(f) for f in (row['faults'] or ()))
+    status = Status.deserialize(row['status']) if row['status'] else None
+    return JobRun(_to_metadata(row), root_phase, output_locations, faults, status)
+
+
+def _matches_metadata(run_match, metadata) -> bool:
+    """Apply only run_match's metadata criteria — usable on init-only rows that have no JobRun.
+
+    Mirrors ``JobRunCriteria.matches_metadata``; each criterion handles its own exclude logic.
+    """
+    criteria = getattr(run_match, 'metadata_criteria', ())
+    return not criteria or any(c(metadata) for c in criteria)
+
+
+def _run_update_params(r: JobRun):
+    """SET values plus (job_id, run_id, ordinal) keys for :data:`_RUN_UPDATE_SQL`."""
+    term = r.lifecycle.termination
+    return (
+        Jsonb(dict(r.metadata.user_params)) if r.metadata.user_params else None,
+        Jsonb(list(r.metadata.features)) if r.metadata.features else None,
+        _bind_dt(r.lifecycle.created_at),
+        _bind_dt(r.lifecycle.started_at) if r.lifecycle.started_at else None,
+        _bind_dt(term.terminated_at) if term else None,
+        round(r.lifecycle.total_run_time.total_seconds(), 3) if r.lifecycle.total_run_time else None,
+        Jsonb(r.root_phase.serialize()),
+        Jsonb([loc.serialize() for loc in r.output_locations]) if r.output_locations else None,
+        term.status.value if term else None,
+        Jsonb([f.serialize() for f in r.faults]) if r.faults else None,
+        Jsonb(r.status.serialize()) if r.status else None,
+        len(r.status.warnings) if r.status else None,
+        _bind_dt(utc_now()),
+        r.metadata.job_id,
+        r.metadata.run_id,
+        r.metadata.ordinal,
+    )
+
+
+_SORT_COLUMNS = {
+    SortOption.CREATED: "h.created",
+    SortOption.STARTED: "h.started",
+    SortOption.ENDED: "h.ended",
+    SortOption.TIME: "h.exec_time",
+    SortOption.JOB_ID: "h.job_id",
+    SortOption.RUN_ID: "h.run_id",
+}
+
+
+def _order_by(sort: SortOption, asc: bool) -> str:
+    try:
+        column = _SORT_COLUMNS[sort]
+    except KeyError:
+        raise ValueError(f"Unsupported sort option: {sort}")
+    d = "ASC" if asc else "DESC"
+    # Deterministic tiebreaker on the primary key so paging is stable.
+    return f"{column} {d} NULLS LAST, h.job_id {d}, h.run_id {d}, h.ordinal {d}"
+
+
+def _status_csv(*outcomes) -> str:
+    """Comma-separated termination_status codes for the given outcomes (literal ints, no params)."""
+    return ', '.join(str(s.value) for s in TerminationStatus.get_statuses(*outcomes))
+
+
+# One row per job — the newest ended run, PK tiebreaker for determinism on equal timestamps.
+_LAST_PER_JOB_SQL = (
+    "(h.job_id, h.run_id, h.ordinal) IN "
+    "(SELECT DISTINCT ON (job_id) job_id, run_id, ordinal FROM runs "
+    " WHERE ended IS NOT NULL ORDER BY job_id, ended DESC, run_id DESC, ordinal DESC)"
+)
+
+
+def _last_run_ids(runs) -> set:
+    """instance_ids of the newest run per job among ``runs`` (by ended time, PK tiebreak).
+
+    Mirrors :data:`_LAST_PER_JOB_SQL` so ``last=True`` behaves the same on the criteria and
+    no-criteria paths.
+    """
+    latest = {}
+    for run in runs:
+        iid = run.metadata.instance_id
+        key = (run.lifecycle.last_transition_at, iid.run_id, iid.ordinal)
+        if iid.job_id not in latest or key > latest[iid.job_id][0]:
+            latest[iid.job_id] = (key, iid)
+    return {iid for _, iid in latest.values()}
+
+
+def ensure_open(f):
+    @wraps(f)
+    def wrapper(self, *args, **kwargs):
+        if self._pool is None:
+            raise InvalidStateError("Database connection not opened")
+        return f(self, *args, **kwargs)
+
+    return wrapper
+
+
+_SCHEMA_DDL = f"""
+CREATE TABLE IF NOT EXISTS runs (
+    job_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL DEFAULT 1,
+    user_params JSONB,
+    features JSONB,
+    created TIMESTAMPTZ NOT NULL,
+    started TIMESTAMPTZ,
+    ended TIMESTAMPTZ,
+    exec_time DOUBLE PRECISION,
+    root_phase JSONB,
+    output_locations JSONB,
+    termination_status INTEGER,
+    faults JSONB,
+    status JSONB,
+    warnings INTEGER,
+    updated_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (job_id, run_id, ordinal)
+);
+CREATE INDEX IF NOT EXISTS runs_ended_idx ON runs (ended);
+CREATE INDEX IF NOT EXISTS runs_created_idx ON runs (created);
+CREATE INDEX IF NOT EXISTS runs_exec_time_idx ON runs (exec_time);
+CREATE INDEX IF NOT EXISTS runs_job_ended_idx ON runs (job_id, ended DESC) WHERE ended IS NOT NULL;
+CREATE TABLE IF NOT EXISTS run_tags (
+    job_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL,
+    tag TEXT NOT NULL CHECK (length(tag) BETWEEN 1 AND 64),
+    PRIMARY KEY (job_id, run_id, ordinal, tag),
+    FOREIGN KEY (job_id, run_id, ordinal) REFERENCES runs (job_id, run_id, ordinal) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS run_tags_tag_idx ON run_tags (tag);
+CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value JSONB NOT NULL);
+CREATE TABLE IF NOT EXISTS schema_info (version INTEGER NOT NULL);
+"""
+
+
+class PostgreSQL(EnvironmentDatabase):
+
+    def __init__(self, dsn: str, max_size: int = DEFAULT_POOL_MAX_SIZE):
+        self._dsn = dsn
+        self._max_size = max_size
+        self._pool: ConnectionPool | None = None
+
+    @override
+    def open(self):
+        if self._pool is not None:
+            raise InvalidStateError("Database connection already opened")
+        # Pin the session to UTC so naive-UTC binds and TIMESTAMPTZ comparisons stay consistent.
+        pool = ConnectionPool(self._dsn, min_size=1, max_size=self._max_size, open=False,
+                              kwargs={"options": "-c timezone=UTC"})
+        pool.open(wait=True)
+        self._pool = pool
+        self._init_schema()
+
+    def is_open(self):
+        return self._pool is not None
+
+    @ensure_open
+    def _init_schema(self):
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('schema_info')")
+            if cur.fetchone()[0] is not None:
+                cur.execute("SELECT version FROM schema_info")
+                row = cur.fetchone()
+                version = row[0] if row else None
+                if version != SCHEMA_VERSION:
+                    raise IncompatibleSchemaError(version, SCHEMA_VERSION)
+                return
+            cur.execute(_SCHEMA_DDL)
+            cur.execute("INSERT INTO schema_info (version) VALUES (%s)", (SCHEMA_VERSION,))
+            log.debug("Schema created")
+
+    @override
+    def close(self):
+        if self._pool is not None:
+            self._pool.close()
+            self._pool = None
+
+    def _fetch(self, sql, params):
+        with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, params)
+            return cur.fetchall()
+
+    def _matching_pks(self, where, params, run_match):
+        """(job_id, run_id, ordinal) of rows that satisfy the *full* run_match.
+
+        Used when ``run_match`` carries criteria the SQL ``where`` prefilter can't express. Rows
+        with a snapshot are matched as full JobRuns. Init-only rows (no ``root_phase``) have no
+        JobRun: they can't satisfy a phase criterion, but their metadata can still be matched, so
+        a metadata-only criterion (e.g. PARTIAL/FN_MATCH on the id) still selects them.
+        """
+        has_phase = bool(getattr(run_match, 'phase_criteria', ()))
+        pks = []
+        for r in self._fetch(_SELECT_RUNS + where, params):
+            if r['root_phase'] is not None:
+                selected = run_match(_to_job_run(r))
+            else:
+                selected = not has_phase and _matches_metadata(run_match, _to_metadata(r))
+            if selected:
+                pks.append((r['job_id'], r['run_id'], r['ordinal']))
+        return pks
+
+    @override
+    @ensure_open
+    def init_run(self, job_id, run_id, user_params=None, *,
+                 created_at, tags=(), auto_increment=False, max_retries=5):
+        """See `RunStorage.init_run`."""
+        params = Jsonb(dict(user_params)) if user_params else None
+        created = _bind_dt(created_at)
+        normalized_tags = normalize_tags(tags) if tags else ()
+
+        if not auto_increment:
+            try:
+                self._insert_run(job_id, run_id, 1, params, created, normalized_tags)
+            except UniqueViolation:
+                raise DuplicateInstanceError(InstanceID(job_id, run_id, 1))
+            return InstanceID(job_id, run_id, 1)
+
+        for _ in range(max_retries):
+            with self._pool.connection() as conn, conn.cursor() as cur:
+                cur.execute("SELECT COALESCE(MAX(ordinal), 0) + 1 FROM runs WHERE job_id = %s AND run_id = %s",
+                            (job_id, run_id))
+                ordinal = cur.fetchone()[0]
+            try:
+                self._insert_run(job_id, run_id, ordinal, params, created, normalized_tags)
+            except UniqueViolation:
+                continue  # Lost the race for this ordinal — recompute and retry
+            return InstanceID(job_id, run_id, ordinal)
+        raise RuntimeError(f"Failed to allocate ordinal for ({job_id}, {run_id}) after {max_retries} retries")
+
+    def _insert_run(self, job_id, run_id, ordinal, user_params, created, tags):
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO runs (job_id, run_id, ordinal, user_params, created, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (job_id, run_id, ordinal, user_params, created, created))
+            if tags:
+                cur.executemany(
+                    "INSERT INTO run_tags (job_id, run_id, ordinal, tag) VALUES (%s, %s, %s, %s)",
+                    [(job_id, run_id, ordinal, t) for t in tags])
+
+    @override
+    @ensure_open
+    def read_runs(self, run_match=None, sort=SortOption.ENDED, *,
+                  asc=True, limit=-1, offset=-1, last=False) -> list[JobRun]:
+        """See `RunStorage.read_runs`."""
+        return list(self.iter_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last))
+
+    @override
+    @ensure_open
+    def iter_runs(self, run_match=None, sort=SortOption.ENDED, *,
+                  asc=True, limit=-1, offset=-1, last=False) -> Iterator[JobRun]:
+        """See `RunStorage.iter_runs`.
+
+        Without a match, SQL paginates (and picks last-per-job) directly. With a match, the rows
+        are post-filtered with the full ``run_match`` first — so ``last`` chooses the newest run
+        *among the matching ones* (not the newest overall, which might not match) — and offset/limit
+        then apply to that stream.
+        """
+        where, params = build_where_clause(run_match, _PG_DIALECT, alias='h')
+        where = (where + " AND h.ended IS NOT NULL") if where else " WHERE h.ended IS NOT NULL"
+
+        user_offset = offset if offset >= 0 else 0
+        user_limit = limit if limit >= 0 else None
+
+        if run_match is None:
+            if last:
+                where += " AND " + _LAST_PER_JOB_SQL
+            sql = _SELECT_RUNS + where + " ORDER BY " + _order_by(sort, asc)
+            if user_limit is not None:
+                sql += " LIMIT %s OFFSET %s"
+                params = params + [user_limit, user_offset]
+            elif user_offset:
+                sql += " OFFSET %s"
+                params = params + [user_offset]
+            return iter([_to_job_run(row) for row in self._fetch(sql, params)])
+
+        # The full run_match is the authority: fetch matches, then reduce/paginate in order.
+        sql = _SELECT_RUNS + where + " ORDER BY " + _order_by(sort, asc)
+        matched = [run for run in (_to_job_run(row) for row in self._fetch(sql, params)) if run_match(run)]
+        if last:
+            keep = _last_run_ids(matched)
+            matched = [run for run in matched if run.metadata.instance_id in keep]  # keeps sort order
+        end = None if user_limit is None else user_offset + user_limit
+        return iter(matched[user_offset:end])
+
+    @override
+    @ensure_open
+    def read_active_runs(self, run_match=None) -> list[JobRun]:
+        """See `RunStorage.read_active_runs`."""
+        where, params = build_where_clause(run_match, _PG_DIALECT, alias='h')
+        # ended IS NULL → active; root_phase IS NOT NULL → the persister has written a real
+        # snapshot, so skip init-only rows that _to_job_run cannot deserialize.
+        guard = "h.ended IS NULL AND h.root_phase IS NOT NULL"
+        sql = _SELECT_RUNS + ((where + " AND " + guard) if where else (" WHERE " + guard))
+        runs = [_to_job_run(row) for row in self._fetch(sql, params)]
+        # Re-apply the full criteria for predicates SQL can't express (e.g. phase).
+        return [run for run in runs if run_match(run)] if run_match else runs
+
+    @override
+    @ensure_open
+    def read_run_stats(self, run_match=None) -> List[JobStats]:
+        """See `RunStorage.read_run_stats`."""
+        where, params = build_where_clause(run_match, _PG_DIALECT, alias='h')
+        where = (where + " AND h.ended IS NOT NULL") if where else " WHERE h.ended IS NOT NULL"
+        if not _fully_sql_expressed(run_match):
+            # Criteria SQL can't express (phase, PARTIAL/FN_MATCH): aggregate only the rows that
+            # match the full criteria, otherwise unrelated runs would be folded into the stats.
+            pks = self._matching_pks(where, params, run_match)
+            if not pks:
+                return []
+            where = " WHERE (h.job_id, h.run_id, h.ordinal) IN (" + ", ".join(["(%s, %s, %s)"] * len(pks)) + ")"
+            params = [value for pk in pks for value in pk]
+        sql = f"""
+            WITH filtered AS (
+                SELECT * FROM runs h{where}
+            ),
+            last_per_job AS (
+                SELECT DISTINCT ON (job_id)
+                       job_id, exec_time AS last_time,
+                       termination_status AS last_term_status, warnings AS last_warnings
+                FROM filtered
+                ORDER BY job_id, ended DESC, run_id DESC, ordinal DESC
+            )
+            SELECT
+                f.job_id,
+                COUNT(*) AS count,
+                MIN(f.created) AS first_created,
+                MAX(f.created) AS last_created,
+                MIN(f.exec_time) AS fastest_time,
+                AVG(f.exec_time) AS average_time,
+                MAX(f.exec_time) AS slowest_time,
+                lp.last_time,
+                lp.last_term_status,
+                COUNT(*) FILTER (WHERE f.termination_status IN ({_status_csv(Outcome.SUCCESS)})) AS succeeded,
+                COUNT(*) FILTER (WHERE f.termination_status IN ({_status_csv(Outcome.FAULT)})) AS failed,
+                COUNT(*) FILTER (WHERE f.termination_status IN ({_status_csv(Outcome.ABORTED)})) AS aborted,
+                COUNT(*) FILTER (WHERE f.termination_status IN ({_status_csv(Outcome.REJECTED)})) AS rejected,
+                COUNT(*) FILTER (WHERE f.termination_status IN ({_status_csv(Outcome.IGNORED)})) AS ignored,
+                lp.last_warnings
+            FROM filtered f
+            JOIN last_per_job lp ON f.job_id = lp.job_id
+            GROUP BY f.job_id, lp.last_time, lp.last_term_status, lp.last_warnings
+        """
+
+        def to_job_stats(r):
+            return JobStats(
+                job_id=r['job_id'],
+                count=r['count'],
+                first_created=_read_dt(r['first_created']),
+                last_created=_read_dt(r['last_created']),
+                fastest_time=timedelta(seconds=r['fastest_time']) if r['fastest_time'] is not None else None,
+                average_time=timedelta(seconds=r['average_time']) if r['average_time'] is not None else None,
+                slowest_time=timedelta(seconds=r['slowest_time']) if r['slowest_time'] is not None else None,
+                last_time=timedelta(seconds=r['last_time']) if r['last_time'] is not None else None,
+                termination_status=(
+                    TerminationStatus.from_code(r['last_term_status'])
+                    if r['last_term_status'] is not None else TerminationStatus.UNKNOWN
+                ),
+                success_count=r['succeeded'] or 0,
+                failed_count=r['failed'] or 0,
+                aborted_count=r['aborted'] or 0,
+                rejected_count=r['rejected'] or 0,
+                ignored_count=r['ignored'] or 0,
+                warning_count=r['last_warnings'] or 0,
+            )
+
+        return [to_job_stats(row) for row in self._fetch(sql, params)]
+
+    @ensure_open
+    def count_instances(self, run_match):
+        """Count instances matching the criteria.
+
+        SQL-exact criteria are counted directly (init-only rows included); criteria SQL can't
+        express (phase, PARTIAL/FN_MATCH) are counted via the full matcher, which — like reads —
+        cannot evaluate init-only rows, so those are excluded in that case.
+        """
+        where, params = build_where_clause(run_match, _PG_DIALECT, alias='h')
+        if not _fully_sql_expressed(run_match):
+            return len(self._matching_pks(where, params, run_match))
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(f"SELECT COUNT(*) FROM runs h{where}", params)
+            return cur.fetchone()[0]
+
+    @override
+    @ensure_open
+    def store_runs(self, *job_runs):
+        """See `RunStorage.store_runs`. Tags are immutable; ``init_run`` is their sole writer."""
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            for run in job_runs:
+                cur.execute(_RUN_UPDATE_SQL, _run_update_params(run))
+                if cur.rowcount == 0:
+                    log.warning("No init row found instance=%s", run.metadata.instance_id,
+                                extra={"instance": str(run.metadata.instance_id)})
+
+    @override
+    @ensure_open
+    def store_active_runs(self, *job_runs):
+        """See `RunStorage.store_active_runs`. The ``ended IS NULL`` guard makes a stale active
+        write a no-op once the row is terminal, so it cannot resurrect an ended run."""
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            for run in job_runs:
+                cur.execute(_RUN_UPDATE_SQL + " AND ended IS NULL", _run_update_params(run))
+
+    @override
+    @ensure_open
+    def remove_runs(self, run_match):
+        """See `RunStorage.remove_runs`.
+
+        When the criteria are fully SQL-expressed, delete directly. Otherwise (phase or
+        PARTIAL/FN_MATCH criteria) apply the full matcher to the candidates first — deleting from
+        the prefilter alone would remove rows the criteria don't actually select.
+        """
+        if _fully_sql_expressed(run_match):
+            where, params = build_where_clause(run_match, _PG_DIALECT)
+            if not where:
+                raise ValueError("No rows to remove")
+            with self._pool.connection() as conn, conn.cursor() as cur:
+                cur.execute("DELETE FROM runs" + where + " RETURNING job_id, run_id, ordinal", params)
+                return [InstanceID(job_id=r[0], run_id=r[1], ordinal=r[2]) for r in cur.fetchall()]
+
+        # Criteria SQL can't express: delete only candidates that match the full criteria.
+        where, params = build_where_clause(run_match, _PG_DIALECT, alias='h')
+        ids = self._matching_pks(where, params, run_match)
+        if not ids:
+            return []
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            cur.executemany("DELETE FROM runs WHERE job_id = %s AND run_id = %s AND ordinal = %s", ids)
+        return [InstanceID(job_id=j, run_id=r, ordinal=o) for j, r, o in ids]
+
+    @override
+    @ensure_open
+    def enforce_retention(self, job_id: str, policy: RetentionPolicy):
+        """Prune old runs according to retention policy (per-job then per-env)."""
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            if policy.max_runs_per_job >= 0:
+                cur.execute(
+                    "DELETE FROM runs WHERE job_id = %s AND (job_id, run_id, ordinal) NOT IN "
+                    "(SELECT job_id, run_id, ordinal FROM runs WHERE job_id = %s "
+                    " ORDER BY ended DESC NULLS LAST LIMIT %s)",
+                    (job_id, job_id, policy.max_runs_per_job))
+            if policy.max_runs_per_env >= 0:
+                cur.execute(
+                    "DELETE FROM runs WHERE (job_id, run_id, ordinal) NOT IN "
+                    "(SELECT job_id, run_id, ordinal FROM runs ORDER BY ended DESC NULLS LAST LIMIT %s)",
+                    (policy.max_runs_per_env,))
+
+    @override
+    @ensure_open
+    def load_config(self, env_id: str) -> dict:
+        """Load environment config as a dict with parsed JSON values."""
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("SELECT key, value FROM config")
+            config = {"id": env_id}
+            for key, value in cur.fetchall():
+                config[key] = value  # JSONB already deserialized
+            return config
+
+    @override
+    @ensure_open
+    def save_config(self, env_id: str, config: dict):
+        """Replace all config from a dict of non-default settings."""
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM config")
+            for key, value in config.items():
+                cur.execute("INSERT INTO config (key, value) VALUES (%s, %s)", (key, Jsonb(value)))

@@ -13,13 +13,14 @@ from typing import List, Iterator, override
 
 from runtools.runcore import paths
 from runtools.runcore.db import EnvironmentDatabase, IncompatibleSchemaError
+from runtools.runcore.db.sql import Dialect, build_where_clause
 from runtools.runcore.err import InvalidStateError
 from runtools.runcore.job import (JobStats, JobRun, JobInstanceMetadata, InstanceID, DuplicateInstanceError,
                                   normalize_tags)
-from runtools.runcore.matching import LifecycleCriterion, SortOption
+from runtools.runcore.matching import SortOption
 from runtools.runcore.output import OutputLocation
 from runtools.runcore.retention import RetentionPolicy
-from runtools.runcore.run import TerminationStatus, Outcome, PhaseRun, Fault, Stage
+from runtools.runcore.run import TerminationStatus, Outcome, PhaseRun, Fault
 from runtools.runcore.status import Status
 from runtools.runcore.util import MatchingStrategy, format_dt_sql, parse_dt_sql, utc_now
 
@@ -102,248 +103,23 @@ def ensure_open(f):
     return wrapper
 
 
-def _build_where_clause(run_match, alias=''):
-    """
-    Builds a parameterized SQL WHERE clause from the provided run match criteria.
+def _sqlite_pattern_match(column, strategy):
+    """SQLite's id/tag match operators: case-sensitive GLOB for wildcard matches."""
+    match strategy:
+        case MatchingStrategy.EXACT:
+            return f"{column} = ?", lambda p: p
+        case MatchingStrategy.PARTIAL:
+            return f"{column} GLOB ?", lambda p: f"*{p}*"
+        case MatchingStrategy.FN_MATCH:
+            return f"{column} GLOB ?", lambda p: p
+    return None, None
 
-    TODO: Post fetch filter for criteria not supported in WHERE (instance parameters, etc.)
-    Only root phase details are stored as direct fields in the database.
-    Phase criteria are only applied if they target the root phase.
-    Other phase criteria require post-fetch filtering.
 
-    Args:
-        run_match (JobRunCriteria): The run match criteria.
-        alias (str): Optional table alias prefix.
+_SQLITE_DIALECT = Dialect(placeholder="?", pattern_match=_sqlite_pattern_match, bind_dt=format_dt_sql)
 
-    Returns:
-        tuple[str, list]: WHERE clause with ? placeholders, and list of parameter values.
-    """
-    if not run_match:
-        return "", []
 
-    if alias and not alias.endswith('.'):
-        alias = alias + "."
-    # Inside correlated subqueries (tag predicates), bare column names like
-    # `job_id` would bind to the INNER table (run_tags), not the outer runs row.
-    # Use an explicit outer-table reference instead.
-    outer_ref = alias if alias else 'runs.'
-
-    conditions = []
-    params = []
-
-    def _id_match_fragment(field: str, pattern: str, strategy: MatchingStrategy):
-        match strategy:
-            case MatchingStrategy.PARTIAL:
-                return f'{alias}{field} GLOB ?', f'*{pattern}*'
-            case MatchingStrategy.FN_MATCH:
-                return f'{alias}{field} GLOB ?', pattern
-            case MatchingStrategy.EXACT:
-                return f'{alias}{field} = ?', pattern
-            case _:
-                return None, None
-
-    def _tag_match_fragment(pattern: str, strategy: MatchingStrategy):
-        """EXISTS clause: ``any run-tag matches pattern under strategy``."""
-        prefix = (f"EXISTS (SELECT 1 FROM run_tags t "
-                  f"WHERE t.job_id={outer_ref}job_id AND t.run_id={outer_ref}run_id "
-                  f"AND t.ordinal={outer_ref}ordinal AND ")
-        match strategy:
-            case MatchingStrategy.EXACT:
-                return prefix + "t.tag = ?)", pattern
-            case MatchingStrategy.PARTIAL:
-                return prefix + "t.tag GLOB ?)", f'*{pattern}*'
-            case MatchingStrategy.FN_MATCH:
-                return prefix + "t.tag GLOB ?)", pattern
-            case _:
-                return None, None
-
-    def _metadata_clause(c) -> tuple[str | None, list]:
-        """Build one criterion's WHERE fragment. Returns (sql, params).
-
-        - ``None``   — criterion is unconstrained (match all).
-        - otherwise — a single parenthesized AND-joined predicate.
-        """
-        parts: list[str] = []
-        params: list = []
-
-        if c.strategy != MatchingStrategy.ALWAYS_TRUE:
-            id_parts: list[str] = []
-            id_params: list = []
-            if c.job_id:
-                frag, val = _id_match_fragment('job_id', c.job_id, c.strategy)
-                if frag is not None:
-                    id_parts.append(frag)
-                    id_params.append(val)
-            if c.run_id:
-                frag, val = _id_match_fragment('run_id', c.run_id, c.strategy)
-                if frag is not None:
-                    id_parts.append(frag)
-                    id_params.append(val)
-            if id_parts:
-                join_op = ' OR ' if c.match_any_field else ' AND '
-                parts.append('(' + join_op.join(id_parts) + ')')
-                params.extend(id_params)
-
-            # Tags are always an AND filter (each pattern must find a matching run-tag).
-            # The bare-token tag-axis search is composed as a separate OR'd criterion
-            # at the JobRunCriteria level — not via tags participating in this OR group.
-            for pat in c.tags:
-                frag, val = _tag_match_fragment(pat, c.strategy)
-                if frag is not None:
-                    parts.append(frag)
-                    params.append(val)
-
-        if c.ordinal is not None:
-            parts.append(f'{alias}ordinal = ?')
-            params.append(c.ordinal)
-
-        if not parts:
-            return None, []
-        return '(' + ' AND '.join(parts) + ')', params
-
-    metadata_conditions = []
-    metadata_params = []
-    exclude_conditions = []
-    exclude_params = []
-    match_all_seen = False
-    for c in run_match.metadata_criteria:
-        if c.exclude is not None:
-            excl = c.exclude
-            exclude_conditions.append(
-                f"NOT ({alias}job_id = ? AND {alias}run_id = ? AND {alias}ordinal = ?)")
-            exclude_params.extend([excl.job_id, excl.run_id, excl.ordinal])
-
-        clause, clause_params = _metadata_clause(c)
-        if clause is None:
-            # Unconstrained criterion — OR'd with anything = match-all.
-            # Discard accumulated metadata predicates; excludes still apply.
-            match_all_seen = True
-            continue
-        if not match_all_seen:
-            metadata_conditions.append(clause)
-            metadata_params.extend(clause_params)
-
-    if match_all_seen:
-        metadata_conditions = []
-        metadata_params = []
-
-    if metadata_conditions:
-        conditions.append('(' + ' OR '.join(metadata_conditions) + ')')
-        params.extend(metadata_params)
-    conditions.extend(exclude_conditions)
-    params.extend(exclude_params)
-
-    def add_datetime_conditions(column: str, dt_range) -> tuple[list[str], list]:
-        conds = []
-        prms = []
-        if not dt_range:
-            return conds, prms
-
-        # Check if this is an unbounded range that just checks for existence
-        if dt_range.is_unbounded():
-            conds.append(f"{alias}{column} IS NOT NULL")
-            return conds, prms
-
-        if dt_range.since:
-            conds.append(f"{alias}{column} >= ?")
-            prms.append(format_dt_sql(dt_range.since))
-        if dt_range.until:
-            if dt_range.until_included:
-                conds.append(f"{alias}{column} <= ?")
-            else:
-                conds.append(f"{alias}{column} < ?")
-            prms.append(format_dt_sql(dt_range.until))
-        return conds, prms
-
-    def add_time_range_conditions(time_range) -> tuple[list[str], list]:
-        """Add SQL conditions for TimeRange on exec_time column."""
-        conds = []
-        prms = []
-        if time_range.min is not None:
-            conds.append(f"{alias}exec_time >= ?")
-            prms.append(time_range.min.total_seconds())
-        if time_range.max is not None:
-            conds.append(f"{alias}exec_time <= ?")
-            prms.append(time_range.max.total_seconds())
-        return conds, prms
-
-    def add_lifecycle_conditions(lifecycle_criterion: LifecycleCriterion) -> tuple[list[str], list]:
-        """Add SQL conditions for lifecycle criteria."""
-        if not lifecycle_criterion:
-            return [], []
-
-        conds = []
-        prms = []
-
-        if lifecycle_criterion.stage:
-            match lifecycle_criterion.stage:
-                case Stage.CREATED:
-                    # Created but not started yet
-                    conds.append(f"{alias}started IS NULL")
-                case Stage.RUNNING:
-                    # Started but not ended yet
-                    conds.append(f"{alias}started IS NOT NULL AND {alias}ended IS NULL")
-                case Stage.ENDED:
-                    # Has ended timestamp
-                    conds.append(f"{alias}ended IS NOT NULL")
-
-        if lifecycle_criterion.created:
-            c, p = add_datetime_conditions('created', lifecycle_criterion.created)
-            conds.extend(c)
-            prms.extend(p)
-        if lifecycle_criterion.started:
-            c, p = add_datetime_conditions('started', lifecycle_criterion.started)
-            conds.extend(c)
-            prms.extend(p)
-        if lifecycle_criterion.ended:
-            c, p = add_datetime_conditions('ended', lifecycle_criterion.ended)
-            conds.extend(c)
-            prms.extend(p)
-
-        if lifecycle_criterion.total_run_time:
-            c, p = add_time_range_conditions(lifecycle_criterion.total_run_time)
-            conds.extend(c)
-            prms.extend(p)
-
-        if lifecycle_criterion.termination:
-            term = lifecycle_criterion.termination
-            if term.status:
-                conds.append(f"{alias}termination_status = ?")
-                prms.append(term.status.value)
-
-            if term.outcome is not None:
-                statuses = TerminationStatus.get_statuses(term.outcome)
-                placeholders = ', '.join('?' * len(statuses))
-                conds.append(f"{alias}termination_status IN ({placeholders})")
-                prms.extend(s.value for s in statuses)
-
-            if term.success is not None:
-                outcomes = Outcome.get_outcomes(success=term.success)
-                statuses = TerminationStatus.get_statuses(*outcomes)
-                placeholders = ', '.join('?' * len(statuses))
-                conds.append(f"{alias}termination_status IN ({placeholders})")
-                prms.extend(s.value for s in statuses)
-
-            if term.ended_range:
-                c, p = add_datetime_conditions('ended', term.ended_range)
-                conds.extend(c)
-                prms.extend(p)
-
-        return conds, prms
-
-    lifecycle_conditions = []
-    lifecycle_params = []
-    for lc in run_match.lifecycle_criteria:
-        phase_conditions, phase_params = add_lifecycle_conditions(lc)
-        if phase_conditions:
-            lifecycle_conditions.append('(' + ' AND '.join(phase_conditions) + ')')
-            lifecycle_params.extend(phase_params)
-
-    if lifecycle_conditions:
-        conditions.append('(' + ' OR '.join(lifecycle_conditions) + ')')
-        params.extend(lifecycle_params)
-
-    return (" WHERE " + " AND ".join(conditions), params) if conditions else ("", [])
+def _build_where_clause(run_match, alias=""):
+    return build_where_clause(run_match, _SQLITE_DIALECT, alias)
 
 
 def _to_job_run(r) -> JobRun:
