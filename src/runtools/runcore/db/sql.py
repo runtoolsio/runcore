@@ -11,8 +11,10 @@ post-filter results with the full ``run_match`` as the correctness backstop.
 """
 
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Callable
 
+from runtools.runcore.job import JobStats
 from runtools.runcore.matching import LifecycleCriterion, MatchingStrategy
 from runtools.runcore.run import Outcome, Stage, TerminationStatus
 
@@ -248,3 +250,35 @@ def last_run_ids(runs) -> set:
         if iid.job_id not in latest or key > latest[iid.job_id][0]:
             latest[iid.job_id] = (key, iid)
     return {iid for _, iid in latest.values()}
+
+
+def build_job_stats(row, parse_dt: Callable) -> JobStats:
+    """Map a ``read_run_stats`` result row to :class:`JobStats`.
+
+    The aggregate columns are aliased identically by both backends; only the stored datetime
+    representation differs, so ``parse_dt`` converts the created-timestamp columns to the
+    domain's naive UTC (text parse for sqlite, tz-strip for postgres).
+    """
+    def seconds(value):
+        return timedelta(seconds=value) if value is not None else None
+
+    return JobStats(
+        job_id=row['job_id'],
+        count=row['count'],
+        first_created=parse_dt(row['first_created']),
+        last_created=parse_dt(row['last_created']),
+        fastest_time=seconds(row['fastest_time']),
+        average_time=seconds(row['average_time']),
+        slowest_time=seconds(row['slowest_time']),
+        last_time=seconds(row['last_time']),
+        termination_status=(
+            TerminationStatus.from_code(row['last_term_status'])
+            if row['last_term_status'] is not None else TerminationStatus.UNKNOWN
+        ),
+        success_count=row['succeeded'] or 0,
+        failed_count=row['failed'] or 0,
+        aborted_count=row['aborted'] or 0,
+        rejected_count=row['rejected'] or 0,
+        ignored_count=row['ignored'] or 0,
+        warning_count=row['last_warnings'] or 0,
+    )

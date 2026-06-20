@@ -10,7 +10,7 @@ already exist; this driver manages the schema (tables) within it, not the databa
 """
 
 import logging
-from datetime import timedelta, timezone
+from datetime import timezone
 from functools import wraps
 from typing import Iterator, List, override
 
@@ -21,7 +21,7 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
 from runtools.runcore.db import EnvironmentDatabase, IncompatibleSchemaError
-from runtools.runcore.db.sql import Dialect, build_where_clause, last_run_ids, LAST_PER_JOB_SQL
+from runtools.runcore.db.sql import build_job_stats, build_where_clause, Dialect, last_run_ids, LAST_PER_JOB_SQL
 from runtools.runcore.err import InvalidStateError
 from runtools.runcore.job import (JobStats, JobRun, JobInstanceMetadata, InstanceID, DuplicateInstanceError,
                                    normalize_tags)
@@ -47,9 +47,13 @@ def _dsn(entry) -> str:
 
 
 def exists(entry) -> bool:
-    """True if the environment's schema (the ``runs`` table) is present in the target database."""
+    """True if the environment's schema is present in the target database.
+
+    Uses ``schema_info`` as the single schema marker — the same table ``_init_schema`` checks and
+    stamps the version into — so creation and existence agree on one authoritative table.
+    """
     with psycopg.connect(_dsn(entry)) as conn:
-        return conn.execute("SELECT to_regclass('runs')").fetchone()[0] is not None
+        return conn.execute("SELECT to_regclass('schema_info')").fetchone()[0] is not None
 
 
 def delete(entry) -> None:
@@ -462,29 +466,7 @@ class PostgreSQL(EnvironmentDatabase):
             GROUP BY f.job_id, lp.last_time, lp.last_term_status, lp.last_warnings
         """
 
-        def to_job_stats(r):
-            return JobStats(
-                job_id=r['job_id'],
-                count=r['count'],
-                first_created=_read_dt(r['first_created']),
-                last_created=_read_dt(r['last_created']),
-                fastest_time=timedelta(seconds=r['fastest_time']) if r['fastest_time'] is not None else None,
-                average_time=timedelta(seconds=r['average_time']) if r['average_time'] is not None else None,
-                slowest_time=timedelta(seconds=r['slowest_time']) if r['slowest_time'] is not None else None,
-                last_time=timedelta(seconds=r['last_time']) if r['last_time'] is not None else None,
-                termination_status=(
-                    TerminationStatus.from_code(r['last_term_status'])
-                    if r['last_term_status'] is not None else TerminationStatus.UNKNOWN
-                ),
-                success_count=r['succeeded'] or 0,
-                failed_count=r['failed'] or 0,
-                aborted_count=r['aborted'] or 0,
-                rejected_count=r['rejected'] or 0,
-                ignored_count=r['ignored'] or 0,
-                warning_count=r['last_warnings'] or 0,
-            )
-
-        return [to_job_stats(row) for row in self._fetch(sql, params)]
+        return [build_job_stats(row, _read_dt) for row in self._fetch(sql, params)]
 
     @override
     @ensure_open

@@ -3,7 +3,6 @@ SQLite implementation of EnvironmentDatabase. Intended for in-process and develo
 networked/concurrent deployments use the Postgres driver.
 """
 
-import datetime
 import json
 import logging
 import sqlite3
@@ -14,7 +13,7 @@ from typing import List, Iterator, override
 
 from runtools.runcore import paths
 from runtools.runcore.db import EnvironmentDatabase, IncompatibleSchemaError
-from runtools.runcore.db.sql import Dialect, build_where_clause, last_run_ids, LAST_PER_JOB_SQL
+from runtools.runcore.db.sql import build_job_stats, build_where_clause, Dialect, last_run_ids, LAST_PER_JOB_SQL
 from runtools.runcore.err import InvalidStateError
 from runtools.runcore.job import (JobStats, JobRun, JobInstanceMetadata, InstanceID, DuplicateInstanceError,
                                   normalize_tags)
@@ -458,29 +457,7 @@ class SQLite(EnvironmentDatabase):
         c.row_factory = sqlite3.Row
         c.execute(sql, where_params)
 
-        def to_job_stats(r):
-            return JobStats(
-                job_id=r['job_id'],
-                count=r['count'],
-                first_created=parse_dt_sql(r['first_created']),
-                last_created=parse_dt_sql(r['last_created']),
-                fastest_time=datetime.timedelta(seconds=r['fastest_time']) if r['fastest_time'] is not None else None,
-                average_time=datetime.timedelta(seconds=r['average_time']) if r['average_time'] is not None else None,
-                slowest_time=datetime.timedelta(seconds=r['slowest_time']) if r['slowest_time'] is not None else None,
-                last_time=datetime.timedelta(seconds=r['last_time']) if r['last_time'] is not None else None,
-                termination_status=(
-                    TerminationStatus.from_code(r['last_term_status'])
-                    if r['last_term_status'] is not None else TerminationStatus.UNKNOWN
-                ),
-                success_count=r['succeeded'] or 0,
-                failed_count=r['failed'] or 0,
-                aborted_count=r['aborted'] or 0,
-                rejected_count=r['rejected'] or 0,
-                ignored_count=r['ignored'] or 0,
-                warning_count=r['last_warnings'] or 0,
-            )
-
-        return [to_job_stats(row) for row in c.fetchall()]
+        return [build_job_stats(row, parse_dt_sql) for row in c.fetchall()]
 
     @override
     @ensure_open
