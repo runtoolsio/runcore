@@ -15,7 +15,7 @@ from datetime import timedelta
 from typing import Callable
 
 from runtools.runcore.job import JobStats
-from runtools.runcore.matching import LifecycleCriterion, MatchingStrategy
+from runtools.runcore.matching import LifecycleCriterion, MatchingStrategy, SortOption
 from runtools.runcore.run import Outcome, Stage, TerminationStatus
 
 
@@ -250,6 +250,39 @@ def last_run_ids(runs) -> set:
         if iid.job_id not in latest or key > latest[iid.job_id][0]:
             latest[iid.job_id] = (key, iid)
     return {iid for _, iid in latest.values()}
+
+
+# --- ORDER BY — shared sort-option mapping, dialect supplies only the specifics ---
+
+# The runs columns that every backend sorts by identically (all under the ``h`` alias).
+# SortOption.TIME is dialect-specific (computed vs stored), so it is passed in separately.
+SORT_COLUMNS = {
+    SortOption.CREATED: "h.created",
+    SortOption.STARTED: "h.started",
+    SortOption.ENDED: "h.ended",
+    SortOption.JOB_ID: "h.job_id",
+    SortOption.RUN_ID: "h.run_id",
+}
+
+
+def build_order_by(sort: SortOption, asc: bool, *, time_expr: str, tiebreaker, nulls_last: bool = False) -> str:
+    """Build an ``ORDER BY`` body (no leading keyword) shared by the relational drivers.
+
+    Args:
+        sort: the requested sort option.
+        asc: ascending when True, descending otherwise.
+        time_expr: SQL expression for ``SortOption.TIME`` (e.g. stored ``exec_time`` or a computed
+            duration) — differs per backend.
+        tiebreaker: columns appended for a deterministic, stable order (``rowid`` or the PK).
+        nulls_last: append ``NULLS LAST`` to the primary column (Postgres; SQLite keeps its default).
+    """
+    column = time_expr if sort == SortOption.TIME else SORT_COLUMNS.get(sort)
+    if column is None:
+        raise ValueError(f"Unsupported sort option: {sort}")
+    d = "ASC" if asc else "DESC"
+    columns = [f"{column} {d}{' NULLS LAST' if nulls_last else ''}"]
+    columns += [f"{col} {d}" for col in tiebreaker]
+    return ", ".join(columns)
 
 
 def build_job_stats(row, parse_dt: Callable) -> JobStats:

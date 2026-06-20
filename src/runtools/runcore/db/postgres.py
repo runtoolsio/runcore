@@ -21,7 +21,8 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
 from runtools.runcore.db import EnvironmentDatabase, IncompatibleSchemaError
-from runtools.runcore.db.sql import build_job_stats, build_where_clause, Dialect, last_run_ids, LAST_PER_JOB_SQL
+from runtools.runcore.db.sql import (build_job_stats, build_order_by, build_where_clause, Dialect, last_run_ids,
+                                     LAST_PER_JOB_SQL)
 from runtools.runcore.err import InvalidStateError
 from runtools.runcore.job import (JobStats, JobRun, JobInstanceMetadata, InstanceID, DuplicateInstanceError,
                                    normalize_tags)
@@ -184,24 +185,10 @@ def _run_update_params(r: JobRun):
     )
 
 
-_SORT_COLUMNS = {
-    SortOption.CREATED: "h.created",
-    SortOption.STARTED: "h.started",
-    SortOption.ENDED: "h.ended",
-    SortOption.TIME: "h.exec_time",
-    SortOption.JOB_ID: "h.job_id",
-    SortOption.RUN_ID: "h.run_id",
-}
-
-
 def _order_by(sort: SortOption, asc: bool) -> str:
-    try:
-        column = _SORT_COLUMNS[sort]
-    except KeyError:
-        raise ValueError(f"Unsupported sort option: {sort}")
-    d = "ASC" if asc else "DESC"
-    # Deterministic tiebreaker on the primary key so paging is stable.
-    return f"{column} {d} NULLS LAST, h.job_id {d}, h.run_id {d}, h.ordinal {d}"
+    # TIME sorts by the stored exec_time; PK tiebreaker keeps paging stable.
+    return build_order_by(sort, asc, time_expr="h.exec_time",
+                          tiebreaker=("h.job_id", "h.run_id", "h.ordinal"), nulls_last=True)
 
 
 def _status_csv(*outcomes) -> str:

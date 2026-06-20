@@ -13,7 +13,8 @@ from typing import List, Iterator, override
 
 from runtools.runcore import paths
 from runtools.runcore.db import EnvironmentDatabase, IncompatibleSchemaError
-from runtools.runcore.db.sql import build_job_stats, build_where_clause, Dialect, last_run_ids, LAST_PER_JOB_SQL
+from runtools.runcore.db.sql import (build_job_stats, build_order_by, build_where_clause, Dialect, last_run_ids,
+                                     LAST_PER_JOB_SQL)
 from runtools.runcore.err import InvalidStateError
 from runtools.runcore.job import (JobStats, JobRun, JobInstanceMetadata, InstanceID, DuplicateInstanceError,
                                   normalize_tags)
@@ -343,23 +344,6 @@ class SQLite(EnvironmentDatabase):
         ``last``/``limit``/``offset`` are SQL-applied here; the criteria path leaves them to the
         caller (it must post-filter first), passing only ``run_match``/``sort``/``asc``.
         """
-        def sort_exp():
-            match sort:
-                case SortOption.CREATED:
-                    return 'h.created, h.rowid'
-                case SortOption.STARTED:
-                    return 'h.started, h.rowid'
-                case SortOption.ENDED:
-                    return 'h.ended, h.rowid'
-                case SortOption.TIME:
-                    return "julianday(h.ended) - julianday(h.created), h.rowid"
-                case SortOption.JOB_ID:
-                    return 'h.job_id, h.rowid'
-                case SortOption.RUN_ID:
-                    return 'h.run_id, h.rowid'
-                case _:
-                    raise ValueError(f"Unsupported sort option: {sort}")
-
         statement = (
             "SELECT h.*, "
             "(SELECT json_group_array(tag) FROM run_tags t "
@@ -373,8 +357,9 @@ class SQLite(EnvironmentDatabase):
         if last:
             statement += " AND " + LAST_PER_JOB_SQL
 
-        direction = " ASC" if asc else " DESC"
-        statement += " ORDER BY " + ', '.join(f"{col.strip()}{direction}" for col in sort_exp().split(', '))
+        # TIME sorts by computed duration; rowid tiebreaker keeps paging stable.
+        statement += " ORDER BY " + build_order_by(
+            sort, asc, time_expr="julianday(h.ended) - julianday(h.created)", tiebreaker=("h.rowid",))
 
         params = list(where_params)
         if limit is not None:
