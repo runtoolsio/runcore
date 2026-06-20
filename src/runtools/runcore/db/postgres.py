@@ -22,7 +22,7 @@ from psycopg_pool import ConnectionPool
 
 from runtools.runcore.db import EnvironmentDatabase, IncompatibleSchemaError
 from runtools.runcore.db.sql import (build_job_stats, build_order_by, build_where_clause, Dialect, last_run_ids,
-                                     LAST_PER_JOB_SQL)
+                                     LAST_PER_JOB_SQL, matching_pks)
 from runtools.runcore.err import InvalidStateError
 from runtools.runcore.job import (JobStats, JobRun, JobInstanceMetadata, InstanceID, DuplicateInstanceError,
                                    normalize_tags)
@@ -31,7 +31,7 @@ from runtools.runcore.output import OutputLocation
 from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.run import TerminationStatus, Outcome, PhaseRun, Fault
 from runtools.runcore.status import Status
-from runtools.runcore.util import MatchingStrategy, utc_now
+from runtools.runcore.util import utc_now
 
 log = logging.getLogger(__name__)
 
@@ -86,35 +86,7 @@ def _read_dt(dt):
     return dt.astimezone(timezone.utc).replace(tzinfo=None) if dt is not None else None
 
 
-def _pg_pattern_match(column, strategy):
-    """Only EXACT id/tag matches are expressed in SQL.
-
-    PARTIAL (``re.search``) and FN_MATCH (``fnmatch``) aren't faithfully representable in SQL —
-    any LIKE/regex approximation risks excluding rows the in-memory matcher would accept. They
-    return no predicate, leaving the field unconstrained; the ``run_match`` post-filter that every
-    read applies is the authority. Callers that act on the prefilter alone (``remove_runs``,
-    ``read_run_stats``) gate on :func:`_fully_sql_expressed`.
-    """
-    if strategy == MatchingStrategy.EXACT:
-        return f"{column} = %s", lambda p: p
-    return None, None
-
-
-_PG_DIALECT = Dialect(placeholder="%s", pattern_match=_pg_pattern_match, bind_dt=_bind_dt)
-
-
-def _fully_sql_expressed(run_match) -> bool:
-    """True if the SQL WHERE expresses run_match exactly, so no post-filter is required.
-
-    SQL covers lifecycle criteria and EXACT id/tag matches, but not phase criteria or the
-    PARTIAL/FN_MATCH strategies — those need the in-memory matcher.
-    """
-    if run_match is None:
-        return True
-    if getattr(run_match, 'phase_criteria', ()):
-        return False
-    return all(c.strategy in (MatchingStrategy.EXACT, MatchingStrategy.ALWAYS_TRUE)
-               for c in getattr(run_match, 'metadata_criteria', ()))
+_PG_DIALECT = Dialect(placeholder="%s", bind_dt=_bind_dt)
 
 
 # --- Row mapping (JSONB columns arrive already deserialized) ---
@@ -151,15 +123,6 @@ def _to_job_run(row) -> JobRun:
     faults = tuple(Fault.deserialize(f) for f in (row['faults'] or ()))
     status = Status.deserialize(row['status']) if row['status'] else None
     return JobRun(_to_metadata(row), root_phase, output_locations, faults, status)
-
-
-def _matches_metadata(run_match, metadata) -> bool:
-    """Apply only run_match's metadata criteria — usable on init-only rows that have no JobRun.
-
-    Mirrors ``JobRunCriteria.matches_metadata``; each criterion handles its own exclude logic.
-    """
-    criteria = getattr(run_match, 'metadata_criteria', ())
-    return not criteria or any(c(metadata) for c in criteria)
 
 
 def _run_update_params(r: JobRun):
@@ -292,23 +255,9 @@ class PostgreSQL(EnvironmentDatabase):
             return cur.fetchall()
 
     def _matching_pks(self, where, params, run_match):
-        """(job_id, run_id, ordinal) of rows that satisfy the *full* run_match.
-
-        Used when ``run_match`` carries criteria the SQL ``where`` prefilter can't express. Rows
-        with a snapshot are matched as full JobRuns. Init-only rows (no ``root_phase``) have no
-        JobRun: they can't satisfy a phase criterion, but their metadata can still be matched, so
-        a metadata-only criterion (e.g. PARTIAL/FN_MATCH on the id) still selects them.
-        """
-        has_phase = bool(getattr(run_match, 'phase_criteria', ()))
-        pks = []
-        for r in self._fetch(_SELECT_RUNS + where, params):
-            if r['root_phase'] is not None:
-                selected = run_match(_to_job_run(r))
-            else:
-                selected = not has_phase and _matches_metadata(run_match, _to_metadata(r))
-            if selected:
-                pks.append((r['job_id'], r['run_id'], r['ordinal']))
-        return pks
+        """(job_id, run_id, ordinal) of rows satisfying the full ``run_match`` — for criteria the
+        SQL ``where`` prefilter can't express (phase, PARTIAL/FN_MATCH)."""
+        return matching_pks(self._fetch(_SELECT_RUNS + where, params), run_match, _to_job_run, _to_metadata)
 
     @override
     @ensure_open
@@ -367,7 +316,7 @@ class PostgreSQL(EnvironmentDatabase):
         *among the matching ones* (not the newest overall, which might not match) — and offset/limit
         then apply to that stream.
         """
-        where, params = build_where_clause(run_match, _PG_DIALECT, alias='h')
+        where, params, _ = build_where_clause(run_match, _PG_DIALECT, alias='h')  # read always post-filters
         where = (where + " AND h.ended IS NOT NULL") if where else " WHERE h.ended IS NOT NULL"
 
         user_offset = offset if offset >= 0 else 0
@@ -398,7 +347,7 @@ class PostgreSQL(EnvironmentDatabase):
     @ensure_open
     def read_active_runs(self, run_match=None) -> list[JobRun]:
         """See `RunStorage.read_active_runs`."""
-        where, params = build_where_clause(run_match, _PG_DIALECT, alias='h')
+        where, params, _ = build_where_clause(run_match, _PG_DIALECT, alias='h')  # post-filtered below
         # ended IS NULL → active; root_phase IS NOT NULL → the persister has written a real
         # snapshot, so skip init-only rows that _to_job_run cannot deserialize.
         guard = "h.ended IS NULL AND h.root_phase IS NOT NULL"
@@ -411,9 +360,9 @@ class PostgreSQL(EnvironmentDatabase):
     @ensure_open
     def read_run_stats(self, run_match=None) -> List[JobStats]:
         """See `RunStorage.read_run_stats`."""
-        where, params = build_where_clause(run_match, _PG_DIALECT, alias='h')
+        where, params, complete = build_where_clause(run_match, _PG_DIALECT, alias='h')
         where = (where + " AND h.ended IS NOT NULL") if where else " WHERE h.ended IS NOT NULL"
-        if not _fully_sql_expressed(run_match):
+        if not complete:
             # Criteria SQL can't express (phase, PARTIAL/FN_MATCH): aggregate only the rows that
             # match the full criteria, otherwise unrelated runs would be folded into the stats.
             pks = self._matching_pks(where, params, run_match)
@@ -484,8 +433,8 @@ class PostgreSQL(EnvironmentDatabase):
         PARTIAL/FN_MATCH criteria) apply the full matcher to the candidates first — deleting from
         the prefilter alone would remove rows the criteria don't actually select.
         """
-        if _fully_sql_expressed(run_match):
-            where, params = build_where_clause(run_match, _PG_DIALECT)
+        where, params, complete = build_where_clause(run_match, _PG_DIALECT)
+        if complete:
             if not where:
                 raise ValueError("No rows to remove")
             with self._pool.connection() as conn, conn.cursor() as cur:
@@ -493,7 +442,7 @@ class PostgreSQL(EnvironmentDatabase):
                 return [InstanceID(job_id=r[0], run_id=r[1], ordinal=r[2]) for r in cur.fetchall()]
 
         # Criteria SQL can't express: delete only candidates that match the full criteria.
-        where, params = build_where_clause(run_match, _PG_DIALECT, alias='h')
+        where, params, _ = build_where_clause(run_match, _PG_DIALECT, alias='h')
         ids = self._matching_pks(where, params, run_match)
         if not ids:
             return []

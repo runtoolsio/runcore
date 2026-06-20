@@ -6,7 +6,7 @@ import pytest
 from runtools.runcore.db import sqlite, IncompatibleSchemaError
 from runtools.runcore.db.sqlite import SCHEMA_VERSION
 from runtools.runcore.job import DuplicateInstanceError, InstanceID
-from runtools.runcore.matching import criteria, JobRunCriteria, LifecycleCriterion, PhaseCriterion
+from runtools.runcore.matching import criteria, JobRunCriteria, LifecycleCriterion, MetadataCriterion, PhaseCriterion
 from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.run import TerminationStatus, Outcome
 from runtools.runcore.test.job import fake_job_run
@@ -135,6 +135,36 @@ def test_job_id_match(sut):
     assert len(sut.read_runs(parse('j1?1@i1?1', MatchingStrategy.FN_MATCH))) == 2
     assert len(sut.read_runs(parse('@i1?1', MatchingStrategy.FN_MATCH))) == 2
     assert len(sut.read_runs(parse('i1?1', MatchingStrategy.FN_MATCH))) == 2
+
+
+def test_partial_match_uses_regex_search(sut):
+    _init_and_store(sut, fake_job_run('ja'), fake_job_run('jb'), fake_job_run('xx'))
+
+    # PARTIAL is re.search: 'j.' matches 'ja'/'jb'. The old GLOB prefilter excluded them before
+    # the post-filter could see them; SQL must leave PARTIAL unconstrained.
+    matched = sut.read_runs(parse('j.', MatchingStrategy.PARTIAL))
+    assert sorted(r.metadata.instance_id.job_id for r in matched) == ['ja', 'jb']
+
+
+def test_remove_runs_applies_phase_criteria(sut):
+    _init_and_store(sut, fake_job_run('j1', 'r1'), fake_job_run('j1', 'r2'))
+
+    # Job matches in SQL, but no run has this phase — the prefilter alone would wrongly delete
+    # every j1 row, so the full matcher must gate the delete.
+    crit = (JobRunCriteria.builder()
+            .metadata(MetadataCriterion(job_id='j1'))
+            .phase(PhaseCriterion(phase_id='does-not-exist'))
+            .build())
+    assert sut.remove_runs(crit) == []
+    assert len(sut.read_runs(parse('j1'))) == 2
+
+
+def test_read_run_stats_applies_phase_criteria(sut):
+    _init_and_store(sut, fake_job_run('j1', term_status=TerminationStatus.COMPLETED))
+    assert len(sut.read_run_stats()) == 1
+
+    crit = JobRunCriteria.builder().phase(PhaseCriterion(phase_id='does-not-exist')).build()
+    assert sut.read_run_stats(crit) == []
 
 
 def test_enforce_retention_per_job(sut):

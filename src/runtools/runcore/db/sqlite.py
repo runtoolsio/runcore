@@ -14,7 +14,7 @@ from typing import List, Iterator, override
 from runtools.runcore import paths
 from runtools.runcore.db import EnvironmentDatabase, IncompatibleSchemaError
 from runtools.runcore.db.sql import (build_job_stats, build_order_by, build_where_clause, Dialect, last_run_ids,
-                                     LAST_PER_JOB_SQL)
+                                     LAST_PER_JOB_SQL, matching_pks)
 from runtools.runcore.err import InvalidStateError
 from runtools.runcore.job import (JobStats, JobRun, JobInstanceMetadata, InstanceID, DuplicateInstanceError,
                                   normalize_tags)
@@ -23,7 +23,7 @@ from runtools.runcore.output import OutputLocation
 from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.run import TerminationStatus, Outcome, PhaseRun, Fault
 from runtools.runcore.status import Status
-from runtools.runcore.util import MatchingStrategy, format_dt_sql, parse_dt_sql, utc_now
+from runtools.runcore.util import format_dt_sql, parse_dt_sql, utc_now
 
 log = logging.getLogger(__name__)
 
@@ -100,42 +100,32 @@ def ensure_open(f):
     return wrapper
 
 
-def _sqlite_pattern_match(column, strategy):
-    """SQLite's id/tag match operators: case-sensitive GLOB for wildcard matches."""
-    match strategy:
-        case MatchingStrategy.EXACT:
-            return f"{column} = ?", lambda p: p
-        case MatchingStrategy.PARTIAL:
-            return f"{column} GLOB ?", lambda p: f"*{p}*"
-        case MatchingStrategy.FN_MATCH:
-            return f"{column} GLOB ?", lambda p: p
-    return None, None
-
-
-_SQLITE_DIALECT = Dialect(placeholder="?", pattern_match=_sqlite_pattern_match, bind_dt=format_dt_sql)
+_SQLITE_DIALECT = Dialect(placeholder="?", bind_dt=format_dt_sql)
 
 
 def _build_where_clause(run_match, alias=""):
     return build_where_clause(run_match, _SQLITE_DIALECT, alias)
 
 
-def _to_job_run(r) -> JobRun:
-    """Convert a sqlite3.Row from the history table into a JobRun.
+def _to_metadata(r) -> JobInstanceMetadata:
+    """Reconstruct JobInstanceMetadata from a runs row — available even for init-only rows.
 
-    Reconstructs ``JobInstanceMetadata`` from dedicated columns plus an
-    optional ``tags`` synthetic column (a ``json_group_array(tag)`` over
-    run_tags). Rows without a ``tags`` column read back as having no tags —
-    callers that need tag fidelity must include the subselect in their query.
+    Uses the optional ``tags`` synthetic column (a ``json_group_array(tag)`` over run_tags); rows
+    without it read back as having no tags, so callers needing tag fidelity must include the
+    subselect in their query.
     """
     tags_raw = r['tags'] if 'tags' in r.keys() else None
-    tags = tuple(json.loads(tags_raw)) if tags_raw else ()
-    features = tuple(json.loads(r['features'])) if r['features'] else ()
-    metadata = JobInstanceMetadata(
+    return JobInstanceMetadata(
         InstanceID(r['job_id'], r['run_id'], r['ordinal']),
         json.loads(r['user_params']) if r['user_params'] else {},
-        features=features,
-        tags=tags,
+        features=tuple(json.loads(r['features'])) if r['features'] else (),
+        tags=tuple(json.loads(tags_raw)) if tags_raw else (),
     )
+
+
+def _to_job_run(r) -> JobRun:
+    """Convert a sqlite3.Row from the history table into a JobRun."""
+    metadata = _to_metadata(r)
     root_phase = PhaseRun.deserialize(json.loads(r['root_phase']))
     output_locations = (
         tuple(OutputLocation.deserialize(loc) for loc in json.loads(r['output_locations']))
@@ -144,6 +134,15 @@ def _to_job_run(r) -> JobRun:
     faults = tuple(Fault.deserialize(f) for f in json.loads(r['faults'])) if r['faults'] else ()
     status = Status.deserialize(json.loads(r['status'])) if r['status'] else None
     return JobRun(metadata, root_phase, output_locations, faults, status)
+
+
+_SELECT_RUNS = (
+    "SELECT h.*, "
+    "(SELECT json_group_array(tag) FROM run_tags t "
+    " WHERE t.job_id = h.job_id AND t.run_id = h.run_id AND t.ordinal = h.ordinal) "
+    "AS tags "
+    "FROM runs h"
+)
 
 
 _RUN_UPDATE_SQL = (
@@ -344,14 +343,8 @@ class SQLite(EnvironmentDatabase):
         ``last``/``limit``/``offset`` are SQL-applied here; the criteria path leaves them to the
         caller (it must post-filter first), passing only ``run_match``/``sort``/``asc``.
         """
-        statement = (
-            "SELECT h.*, "
-            "(SELECT json_group_array(tag) FROM run_tags t "
-            " WHERE t.job_id = h.job_id AND t.run_id = h.run_id AND t.ordinal = h.ordinal) "
-            "AS tags "
-            "FROM runs h"
-        )
-        where_clause, where_params = _build_where_clause(run_match, alias='h')
+        statement = _SELECT_RUNS
+        where_clause, where_params, _ = _build_where_clause(run_match, alias='h')  # caller post-filters
         # Exclude incomplete (init-only) records
         statement += (where_clause + " AND h.ended IS NOT NULL") if where_clause else " WHERE h.ended IS NOT NULL"
         if last:
@@ -377,6 +370,18 @@ class SQLite(EnvironmentDatabase):
         finally:
             cursor.close()
 
+    def _matching_pks(self, where_clause, where_params, run_match):
+        """(job_id, run_id, ordinal) of rows satisfying the full ``run_match`` — for criteria the
+        SQL ``where_clause`` can't express (phase, PARTIAL/FN_MATCH). Caller holds ``_conn_lock``."""
+        cursor = self._conn.cursor()
+        cursor.row_factory = sqlite3.Row
+        cursor.execute(_SELECT_RUNS + where_clause, where_params)
+        try:
+            rows = cursor.fetchall()
+        finally:
+            cursor.close()
+        return matching_pks(rows, run_match, _to_job_run, _to_metadata)
+
     @override
     @ensure_open
     def enforce_retention(self, job_id: str, policy: RetentionPolicy):
@@ -398,12 +403,18 @@ class SQLite(EnvironmentDatabase):
     def read_run_stats(self, run_match=None) -> List[JobStats]:
         """See `RunStorage.read_run_stats`."""
 
-        where_clause, where_params = _build_where_clause(run_match, alias='h')
+        where_clause, where_params, complete = _build_where_clause(run_match, alias='h')
         # Exclude incomplete (init-only) records
-        if where_clause:
-            where_clause += " AND h.ended IS NOT NULL"
-        else:
-            where_clause = " WHERE h.ended IS NOT NULL"
+        where_clause = (where_clause + " AND h.ended IS NOT NULL") if where_clause else " WHERE h.ended IS NOT NULL"
+        if not complete:
+            # Criteria SQL can't express (phase, PARTIAL/FN_MATCH): aggregate only the rows that
+            # match the full criteria, otherwise unrelated runs would be folded into the stats.
+            pks = self._matching_pks(where_clause, where_params, run_match)
+            if not pks:
+                return []
+            rows = ", ".join(["(?, ?, ?)"] * len(pks))
+            where_clause = f" WHERE (h.job_id, h.run_id, h.ordinal) IN (VALUES {rows})"
+            where_params = [value for pk in pks for value in pk]
         def outcome_placeholders(outcome):
             return ', '.join(str(s.value) for s in TerminationStatus.get_statuses(outcome))
 
@@ -448,14 +459,8 @@ class SQLite(EnvironmentDatabase):
     @ensure_open
     def read_active_runs(self, run_match=None) -> list[JobRun]:
         """See `RunStorage.read_active_runs`."""
-        statement = (
-            "SELECT h.*, "
-            "(SELECT json_group_array(tag) FROM run_tags t "
-            " WHERE t.job_id = h.job_id AND t.run_id = h.run_id AND t.ordinal = h.ordinal) "
-            "AS tags "
-            "FROM runs h"
-        )
-        where_clause, where_params = _build_where_clause(run_match, alias='h')
+        statement = _SELECT_RUNS
+        where_clause, where_params, _ = _build_where_clause(run_match, alias='h')  # post-filtered below
         # ended IS NULL → active; root_phase IS NOT NULL → the persister has written a real
         # snapshot, so skip init-only rows that _to_job_run cannot deserialize.
         guard = "h.ended IS NULL AND h.root_phase IS NOT NULL"
@@ -499,17 +504,30 @@ class SQLite(EnvironmentDatabase):
     @override
     @ensure_open
     def remove_runs(self, run_match):
-        """See `RunStorage.remove_runs`."""
+        """See `RunStorage.remove_runs`.
 
-        where_clause, where_params = _build_where_clause(run_match)
-        if not where_clause:
-            raise ValueError("No rows to remove")
-        cursor = self._conn.execute(
-            "DELETE FROM runs" + where_clause + " RETURNING job_id, run_id, ordinal", where_params)
-        rows = cursor.fetchall()
-        removed = [InstanceID(job_id=r[0], run_id=r[1], ordinal=r[2]) for r in rows]
+        When the criteria are fully SQL-expressed, delete directly. Otherwise (phase or
+        PARTIAL/FN_MATCH criteria) apply the full matcher to the candidates first — deleting from
+        the prefilter alone would remove rows the criteria don't actually select.
+        """
+        where_clause, where_params, complete = _build_where_clause(run_match)
+        if complete:
+            if not where_clause:
+                raise ValueError("No rows to remove")
+            cursor = self._conn.execute(
+                "DELETE FROM runs" + where_clause + " RETURNING job_id, run_id, ordinal", where_params)
+            removed = [InstanceID(job_id=r[0], run_id=r[1], ordinal=r[2]) for r in cursor.fetchall()]
+            self._conn.commit()
+            return removed
+
+        # Criteria SQL can't express: delete only candidates that match the full criteria.
+        where_clause, where_params, _ = _build_where_clause(run_match, alias='h')
+        ids = self._matching_pks(where_clause, where_params, run_match)
+        if not ids:
+            return []
+        self._conn.executemany("DELETE FROM runs WHERE job_id = ? AND run_id = ? AND ordinal = ?", ids)
         self._conn.commit()
-        return removed
+        return [InstanceID(job_id=j, run_id=r, ordinal=o) for j, r, o in ids]
 
     @override
     @ensure_open

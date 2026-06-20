@@ -25,24 +25,67 @@ class Dialect:
 
     Attributes:
         placeholder: Parameter marker for the driver's DB-API (``?`` for sqlite, ``%s`` for psycopg).
-        pattern_match: Maps ``(column_expr, strategy)`` to ``(predicate, to_param)`` — a SQL
-            predicate using :attr:`placeholder` and a function mapping the raw pattern to its
-            bound value. Returns ``(None, None)`` when the strategy constrains nothing.
         bind_dt: Maps a domain datetime to the parameter value for a timestamp-column comparison.
     """
     placeholder: str
-    pattern_match: Callable[[str, MatchingStrategy], tuple]
     bind_dt: Callable
 
 
-def build_where_clause(run_match, dialect: Dialect, alias: str = '') -> tuple[str, list]:
-    """Build a parameterized ``WHERE`` clause (incl. leading ``" WHERE "``) and its params.
+def is_sql_complete(run_match) -> bool:
+    """Whether :func:`build_where_clause` expresses ``run_match`` exactly (no post-filter needed).
 
-    Returns ``("", [])`` when ``run_match`` imposes no SQL-expressible constraint.
+    The clause covers lifecycle criteria and EXACT id/tag matches; it cannot express phase
+    criteria or the PARTIAL/FN_MATCH strategies (``re.search`` / ``fnmatch``), which only the
+    in-memory matcher evaluates. When this returns False, the clause is a superset and the caller
+    must apply the full ``run_match``.
+    """
+    if run_match is None:
+        return True
+    if getattr(run_match, 'phase_criteria', ()):
+        return False
+    return all(c.strategy in (MatchingStrategy.EXACT, MatchingStrategy.ALWAYS_TRUE)
+               for c in getattr(run_match, 'metadata_criteria', ()))
+
+
+def matches_metadata(run_match, metadata) -> bool:
+    """Apply only ``run_match``'s metadata criteria — usable on init-only rows that have no JobRun.
+
+    Mirrors ``JobRunCriteria.matches_metadata``; each criterion handles its own exclude logic.
+    """
+    criteria = getattr(run_match, 'metadata_criteria', ())
+    return not criteria or any(c(metadata) for c in criteria)
+
+
+def matching_pks(rows, run_match, to_job_run: Callable, to_metadata: Callable) -> list:
+    """(job_id, run_id, ordinal) of ``rows`` satisfying the *full* ``run_match``.
+
+    For criteria the SQL prefilter only approximates (phase, PARTIAL/FN_MATCH): rows with a
+    snapshot match as full JobRuns; init-only rows (no ``root_phase``) match on metadata only,
+    since they can't satisfy a phase criterion. ``to_job_run``/``to_metadata`` deserialize a row
+    (per-backend). ``rows`` must expose ``root_phase``/``job_id``/``run_id``/``ordinal`` by key.
+    """
+    has_phase = bool(getattr(run_match, 'phase_criteria', ()))
+    pks = []
+    for r in rows:
+        ok = run_match(to_job_run(r)) if r['root_phase'] is not None \
+            else (not has_phase and matches_metadata(run_match, to_metadata(r)))
+        if ok:
+            pks.append((r['job_id'], r['run_id'], r['ordinal']))
+    return pks
+
+
+def build_where_clause(run_match, dialect: Dialect, alias: str = '') -> tuple[str, list, bool]:
+    """Build a parameterized ``WHERE`` clause (incl. leading ``" WHERE "``), its params, and a
+    ``complete`` flag.
+
+    ``complete`` (see :func:`is_sql_complete`) is False when the clause is only a superset of
+    ``run_match`` — the caller must then post-filter with the full matcher. Returns
+    ``("", [], True)`` when ``run_match`` imposes no constraint.
     """
     if not run_match:
-        return "", []
+        return "", [], True
 
+    complete = is_sql_complete(run_match)
     ph = dialect.placeholder
     if alias and not alias.endswith('.'):
         alias = alias + "."
@@ -53,18 +96,23 @@ def build_where_clause(run_match, dialect: Dialect, alias: str = '') -> tuple[st
     conditions: list[str] = []
     params: list = []
 
+    def exact_predicate(column: str, strategy: MatchingStrategy):
+        # EXACT is the only id/tag strategy faithfully expressible in SQL; PARTIAL (re.search)
+        # and FN_MATCH (fnmatch) are left unconstrained for the post-filter (see is_sql_complete).
+        return f"{column} = {ph}" if strategy == MatchingStrategy.EXACT else None
+
     def id_fragment(field: str, pattern: str, strategy: MatchingStrategy):
-        predicate, to_param = dialect.pattern_match(f"{alias}{field}", strategy)
-        return (predicate, to_param(pattern)) if predicate else (None, None)
+        predicate = exact_predicate(f"{alias}{field}", strategy)
+        return (predicate, pattern) if predicate else (None, None)
 
     def tag_fragment(pattern: str, strategy: MatchingStrategy):
-        predicate, to_param = dialect.pattern_match("t.tag", strategy)
+        predicate = exact_predicate("t.tag", strategy)
         if not predicate:
             return None, None
         exists = (f"EXISTS (SELECT 1 FROM run_tags t "
                   f"WHERE t.job_id={outer_ref}job_id AND t.run_id={outer_ref}run_id "
                   f"AND t.ordinal={outer_ref}ordinal AND {predicate})")
-        return exists, to_param(pattern)
+        return exists, pattern
 
     def metadata_clause(c) -> tuple[str | None, list]:
         """One criterion's predicate, or ``None`` if it constrains nothing."""
@@ -215,7 +263,8 @@ def build_where_clause(run_match, dialect: Dialect, alias: str = '') -> tuple[st
         conditions.append('(' + ' OR '.join(lifecycle_groups) + ')')
         params.extend(lifecycle_params)
 
-    return (" WHERE " + " AND ".join(conditions), params) if conditions else ("", [])
+    where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+    return where, params, complete
 
 
 # --- "last run per job" — one definition shared by both backends ---
