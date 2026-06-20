@@ -256,24 +256,15 @@ def test_read_run_stats_applies_phase_criteria(sut):
     assert sut.read_run_stats(crit) == []
 
 
-def test_count_instances_applies_phase_criteria(sut):
-    _init_and_store(sut, fake_job_run('j1', term_status=TerminationStatus.COMPLETED))
-    assert sut.count_instances(None) == 1
-
-    # Phase no run has -> count must reflect the full match, not the SQL prefilter.
-    crit = JobRunCriteria.builder().phase(PhaseCriterion(phase_id='does-not-exist')).build()
-    assert sut.count_instances(crit) == 0
-
-
 def test_metadata_only_match_includes_init_only_rows(sut):
-    # An init-only row (reserved, no snapshot yet) is still matchable by metadata-only criteria.
+    # An init-only row (reserved, no snapshot yet) is still matchable by metadata-only criteria:
+    # remove_runs goes through the non-SQL post-filter path and must select it via metadata.
     run = fake_job_run('job1', term_status=None)
     sut.init_run('job1', run.metadata.run_id, created_at=run.lifecycle.created_at)  # no snapshot
 
     crit = parse('job', MatchingStrategy.PARTIAL)
-    assert sut.count_instances(crit) == 1                # not dropped for lacking root_phase
-    assert [iid.job_id for iid in sut.remove_runs(crit)] == ['job1']
-    assert sut.count_instances(crit) == 0                # and it was actually deleted
+    assert [iid.job_id for iid in sut.remove_runs(crit)] == ['job1']  # matched + deleted via metadata
+    assert sut.remove_runs(crit) == []                               # and it's gone
 
 
 def test_read_run_stats_last_run_deterministic_on_ties(sut):

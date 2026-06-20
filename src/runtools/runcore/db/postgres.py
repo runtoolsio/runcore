@@ -21,7 +21,7 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
 from runtools.runcore.db import EnvironmentDatabase, IncompatibleSchemaError
-from runtools.runcore.db.sql import Dialect, build_where_clause
+from runtools.runcore.db.sql import Dialect, build_where_clause, last_run_ids, LAST_PER_JOB_SQL
 from runtools.runcore.err import InvalidStateError
 from runtools.runcore.job import (JobStats, JobRun, JobInstanceMetadata, InstanceID, DuplicateInstanceError,
                                    normalize_tags)
@@ -205,29 +205,6 @@ def _status_csv(*outcomes) -> str:
     return ', '.join(str(s.value) for s in TerminationStatus.get_statuses(*outcomes))
 
 
-# One row per job — the newest ended run, PK tiebreaker for determinism on equal timestamps.
-_LAST_PER_JOB_SQL = (
-    "(h.job_id, h.run_id, h.ordinal) IN "
-    "(SELECT DISTINCT ON (job_id) job_id, run_id, ordinal FROM runs "
-    " WHERE ended IS NOT NULL ORDER BY job_id, ended DESC, run_id DESC, ordinal DESC)"
-)
-
-
-def _last_run_ids(runs) -> set:
-    """instance_ids of the newest run per job among ``runs`` (by ended time, PK tiebreak).
-
-    Mirrors :data:`_LAST_PER_JOB_SQL` so ``last=True`` behaves the same on the criteria and
-    no-criteria paths.
-    """
-    latest = {}
-    for run in runs:
-        iid = run.metadata.instance_id
-        key = (run.lifecycle.last_transition_at, iid.run_id, iid.ordinal)
-        if iid.job_id not in latest or key > latest[iid.job_id][0]:
-            latest[iid.job_id] = (key, iid)
-    return {iid for _, iid in latest.values()}
-
-
 def ensure_open(f):
     @wraps(f)
     def wrapper(self, *args, **kwargs):
@@ -407,7 +384,7 @@ class PostgreSQL(EnvironmentDatabase):
 
         if run_match is None:
             if last:
-                where += " AND " + _LAST_PER_JOB_SQL
+                where += " AND " + LAST_PER_JOB_SQL
             sql = _SELECT_RUNS + where + " ORDER BY " + _order_by(sort, asc)
             if user_limit is not None:
                 sql += " LIMIT %s OFFSET %s"
@@ -421,7 +398,7 @@ class PostgreSQL(EnvironmentDatabase):
         sql = _SELECT_RUNS + where + " ORDER BY " + _order_by(sort, asc)
         matched = [run for run in (_to_job_run(row) for row in self._fetch(sql, params)) if run_match(run)]
         if last:
-            keep = _last_run_ids(matched)
+            keep = last_run_ids(matched)
             matched = [run for run in matched if run.metadata.instance_id in keep]  # keeps sort order
         end = None if user_limit is None else user_offset + user_limit
         return iter(matched[user_offset:end])
@@ -508,21 +485,6 @@ class PostgreSQL(EnvironmentDatabase):
             )
 
         return [to_job_stats(row) for row in self._fetch(sql, params)]
-
-    @ensure_open
-    def count_instances(self, run_match):
-        """Count instances matching the criteria.
-
-        SQL-exact criteria are counted directly (init-only rows included); criteria SQL can't
-        express (phase, PARTIAL/FN_MATCH) are counted via the full matcher, which — like reads —
-        cannot evaluate init-only rows, so those are excluded in that case.
-        """
-        where, params = build_where_clause(run_match, _PG_DIALECT, alias='h')
-        if not _fully_sql_expressed(run_match):
-            return len(self._matching_pks(where, params, run_match))
-        with self._pool.connection() as conn, conn.cursor() as cur:
-            cur.execute(f"SELECT COUNT(*) FROM runs h{where}", params)
-            return cur.fetchone()[0]
 
     @override
     @ensure_open

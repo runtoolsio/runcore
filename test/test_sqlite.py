@@ -76,6 +76,18 @@ def test_last(sut):
     assert [job.run_id for job in jobs] == ['r1-2', 'r3-1', 'r2-2']
 
 
+def test_last_picks_newest_among_matching_runs(sut):
+    # j1's newest run lacks the tag; an older one has it. last=True must return the older match,
+    # not nothing — criteria apply before the per-job last selection.
+    older, newer = fake_job_run('j1', 'old', offset_min=1), fake_job_run('j1', 'new', offset_min=2)
+    sut.init_run('j1', 'old', created_at=older.lifecycle.created_at, tags=('keep',))
+    sut.init_run('j1', 'new', created_at=newer.lifecycle.created_at)
+    sut.store_runs(older, newer)
+
+    result = sut.read_runs(JobRunCriteria.builder().tags('keep').build(), last=True)
+    assert [r.metadata.instance_id.run_id for r in result] == ['old']
+
+
 def test_sort(sut):
     _init_and_store(sut, fake_job_run('j1'), fake_job_run('j2', offset_min=1), fake_job_run('j3', offset_min=-1))
 

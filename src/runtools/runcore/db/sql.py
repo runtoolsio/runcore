@@ -214,3 +214,37 @@ def build_where_clause(run_match, dialect: Dialect, alias: str = '') -> tuple[st
         params.extend(lifecycle_params)
 
     return (" WHERE " + " AND ".join(conditions), params) if conditions else ("", [])
+
+
+# --- "last run per job" — one definition shared by both backends ---
+#
+# The newest *ended* run per job, with a primary-key tiebreaker for determinism when two runs
+# share an ended timestamp. The SQL form is for the no-criteria path (a single restriction over
+# the whole table); when criteria the SQL can't express are present, the matcher must run first,
+# so the Python form reduces the already-matched runs instead.
+
+# Parameterless predicate; references the outer query's ``h`` alias. ROW_NUMBER + row-value IN are
+# portable across SQLite (3.25+) and Postgres.
+LAST_PER_JOB_SQL = (
+    "(h.job_id, h.run_id, h.ordinal) IN ("
+    " SELECT job_id, run_id, ordinal FROM ("
+    "  SELECT job_id, run_id, ordinal,"
+    "   ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY ended DESC, run_id DESC, ordinal DESC) AS rn"
+    "  FROM runs WHERE ended IS NOT NULL"
+    " ) ranked WHERE rn = 1)"
+)
+
+
+def last_run_ids(runs) -> set:
+    """instance_ids of the newest run per job among ``runs`` (by ended time, PK tiebreak).
+
+    The Python counterpart of :data:`LAST_PER_JOB_SQL`, for when criteria the SQL can't express
+    must be applied before choosing the last run per job.
+    """
+    latest = {}
+    for run in runs:
+        iid = run.metadata.instance_id
+        key = (run.lifecycle.last_transition_at, iid.run_id, iid.ordinal)
+        if iid.job_id not in latest or key > latest[iid.job_id][0]:
+            latest[iid.job_id] = (key, iid)
+    return {iid for _, iid in latest.values()}

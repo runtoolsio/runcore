@@ -13,7 +13,7 @@ from typing import List, Iterator, override
 
 from runtools.runcore import paths
 from runtools.runcore.db import EnvironmentDatabase, IncompatibleSchemaError
-from runtools.runcore.db.sql import Dialect, build_where_clause
+from runtools.runcore.db.sql import Dialect, build_where_clause, last_run_ids, LAST_PER_JOB_SQL
 from runtools.runcore.err import InvalidStateError
 from runtools.runcore.job import (JobStats, JobRun, JobInstanceMetadata, InstanceID, DuplicateInstanceError,
                                   normalize_tags)
@@ -348,26 +348,40 @@ class SQLite(EnvironmentDatabase):
                     break
             return
 
-        # SQL prefilters; the full run_match is the backstop, so offset/limit cannot be
-        # pushed into SQL — they apply to the post-filtered stream here.
+        # SQL prefilters; the full run_match is the backstop. last must be applied AFTER
+        # post-filtering so it picks the newest matching run per job (not the newest overall),
+        # which means the matched set has to be materialized first.
+        matched = self._iter_matched(run_match, sort, asc)
+        if last:
+            runs = list(matched)
+            keep = last_run_ids(runs)
+            runs = [run for run in runs if run.metadata.instance_id in keep]  # keeps sort order
+            end = None if limit < 0 else user_offset + limit
+            yield from runs[user_offset:end]
+            return
+
         to_skip = user_offset
+        for job_run in matched:
+            if to_skip > 0:
+                to_skip -= 1
+                continue
+            if remaining <= 0:
+                break
+            yield job_run
+            remaining -= 1
+
+    def _iter_matched(self, run_match, sort, asc) -> Iterator[JobRun]:
+        """Yield all runs matching the full ``run_match``, in sort order, fetched in batches."""
         sql_offset = 0
-        while remaining > 0:
+        while True:
             batch = self._fetch_batch_runs(
-                run_match, sort, asc=asc, batch_offset=sql_offset, batch_size=self._batch_size, last=last)
+                run_match, sort, asc=asc, batch_offset=sql_offset, batch_size=self._batch_size, last=False)
             if not batch:
                 break
             sql_offset += len(batch)
             for job_run in batch:
-                if not run_match(job_run):
-                    continue
-                if to_skip > 0:
-                    to_skip -= 1
-                    continue
-                yield job_run
-                remaining -= 1
-                if remaining <= 0:
-                    break
+                if run_match(job_run):
+                    yield job_run
             if len(batch) < self._batch_size:
                 break
 
@@ -427,7 +441,7 @@ class SQLite(EnvironmentDatabase):
         statement += where_clause
 
         if last:
-            statement += " AND h.rowid IN (SELECT MAX(rowid) FROM runs WHERE ended IS NOT NULL GROUP BY job_id)"
+            statement += " AND " + LAST_PER_JOB_SQL
 
         # Apply the sort direction to all columns in the ORDER BY clause
         sort_direction = " ASC" if asc else " DESC"
@@ -447,23 +461,6 @@ class SQLite(EnvironmentDatabase):
             return [_to_job_run(row) for row in rows]
         finally:
             cursor.close()
-
-    @ensure_open
-    def count_instances(self, run_match):
-        """
-        Counts the total number of job instances based on the specified match criteria.
-        Datasource: The database as defined by the configured persistence type.
-
-        Args:
-            run_match (InstanceMatchCriteria): Criteria to filter job instances.
-
-        Returns:
-            int: Total count of job instances matching the specified criteria.
-        """
-        where_clause, where_params = _build_where_clause(run_match, alias='h')
-        sql = f"SELECT COUNT(*) FROM runs h {where_clause}"
-        c = self._conn.execute(sql, where_params)
-        return c.fetchone()[0]
 
     @override
     @ensure_open
