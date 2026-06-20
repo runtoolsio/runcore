@@ -1,5 +1,6 @@
 """
-SQLite implementation of EnvironmentDatabase with batch fetching to avoid lock starvation.
+SQLite implementation of EnvironmentDatabase. Intended for in-process and development use;
+networked/concurrent deployments use the Postgres driver.
 """
 
 import datetime
@@ -27,7 +28,6 @@ from runtools.runcore.util import MatchingStrategy, format_dt_sql, parse_dt_sql,
 log = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 2
-DEFAULT_BATCH_SIZE = 100
 
 
 def _resolve_path(entry) -> Path:
@@ -73,23 +73,20 @@ def create(entry, **kwargs):
             - cached_statements: Number of statements to cache (default: 128)
             - uri: True if database parameter is a URI (default: False)
             - autocommit: Transaction control mode (default: sqlite3.LEGACY_TRANSACTION_CONTROL)
-            - batch_size: Number of records to fetch per batch (default: 100)
 
     Returns:
         SQLite: Configured SQLite persistence instance
     """
-    batch_size = kwargs.pop('batch_size', DEFAULT_BATCH_SIZE)
     kwargs['check_same_thread'] = False
     resolved = str(_resolve_path(entry))
 
-    return SQLite(lambda: sqlite3.connect(resolved, **kwargs), batch_size)
+    return SQLite(lambda: sqlite3.connect(resolved, **kwargs))
 
 
 def create_memory(env_id: str, **kwargs) -> 'SQLite':
     """Create an in-memory SQLite database for testing."""
     kwargs['check_same_thread'] = False
-    batch_size = kwargs.pop('batch_size', DEFAULT_BATCH_SIZE)
-    return SQLite(lambda: sqlite3.connect(':memory:', **kwargs), batch_size)
+    return SQLite(lambda: sqlite3.connect(':memory:', **kwargs))
 
 
 def ensure_open(f):
@@ -180,16 +177,14 @@ def _run_update_values(r: JobRun):
 
 class SQLite(EnvironmentDatabase):
 
-    def __init__(self, connection_factory, batch_size=DEFAULT_BATCH_SIZE):
+    def __init__(self, connection_factory):
         """
         Args:
             connection_factory: Callable that returns a sqlite3.Connection
-            batch_size: Number of records to fetch per batch
         """
         self._connection_factory = connection_factory
         self._conn = None
         self._conn_lock = Lock()
-        self._batch_size = batch_size
 
     @override
     def open(self):
@@ -324,90 +319,31 @@ class SQLite(EnvironmentDatabase):
                   asc=True, limit=-1, offset=-1, last=False) -> Iterator[JobRun]:
         """See `RunStorage.iter_runs`.
 
-        Uses batched fetching to minimize lock contention. ``_build_where_clause`` covers
-        only part of ``run_match`` (see its TODO — non-root phase and instance params are
-        not expressed in SQL), so when a match is given each batch is post-filtered with
-        the full ``run_match`` and offset/limit apply to that post-filtered stream. Without
-        a match there is nothing to filter, so SQL paginates directly.
+        Without a match, last/offset/limit are pushed into SQL. With a match, the SQL clause is
+        only a superset (``_build_where_clause`` can't express phase or PARTIAL/FN_MATCH), so the
+        rows are post-filtered with the full ``run_match`` and then last/offset/limit apply to
+        that result.
         """
         user_offset = offset if offset >= 0 else 0
-        remaining = limit if limit >= 0 else float('inf')
+        user_limit = limit if limit >= 0 else None
 
         if run_match is None:
-            while remaining > 0:
-                batch_size = min(self._batch_size, remaining) if remaining != float('inf') else self._batch_size
-                batch = self._fetch_batch_runs(
-                    None, sort, asc=asc, batch_offset=user_offset, batch_size=batch_size, last=last)
-                if not batch:
-                    break
-                for job_run in batch:
-                    yield job_run
-                user_offset += len(batch)
-                remaining -= len(batch)
-                if len(batch) < self._batch_size:
-                    break
-            return
+            return iter(self._query_runs(None, sort, asc, last=last, limit=user_limit, offset=user_offset))
 
-        # SQL prefilters; the full run_match is the backstop. last must be applied AFTER
-        # post-filtering so it picks the newest matching run per job (not the newest overall),
-        # which means the matched set has to be materialized first.
-        matched = self._iter_matched(run_match, sort, asc)
+        runs = [run for run in self._query_runs(run_match, sort, asc) if run_match(run)]
         if last:
-            runs = list(matched)
             keep = last_run_ids(runs)
             runs = [run for run in runs if run.metadata.instance_id in keep]  # keeps sort order
-            end = None if limit < 0 else user_offset + limit
-            yield from runs[user_offset:end]
-            return
-
-        to_skip = user_offset
-        for job_run in matched:
-            if to_skip > 0:
-                to_skip -= 1
-                continue
-            if remaining <= 0:
-                break
-            yield job_run
-            remaining -= 1
-
-    def _iter_matched(self, run_match, sort, asc) -> Iterator[JobRun]:
-        """Yield all runs matching the full ``run_match``, in sort order, fetched in batches."""
-        sql_offset = 0
-        while True:
-            batch = self._fetch_batch_runs(
-                run_match, sort, asc=asc, batch_offset=sql_offset, batch_size=self._batch_size, last=False)
-            if not batch:
-                break
-            sql_offset += len(batch)
-            for job_run in batch:
-                if run_match(job_run):
-                    yield job_run
-            if len(batch) < self._batch_size:
-                break
+        end = None if user_limit is None else user_offset + user_limit
+        return iter(runs[user_offset:end])
 
     @ensure_open
-    def _fetch_batch_runs(self, run_match=None, sort=SortOption.ENDED, *,
-                                  asc=True, batch_offset=0, batch_size=DEFAULT_BATCH_SIZE,
-                                  last=False) -> List[JobRun]:
+    def _query_runs(self, run_match, sort, asc, *, last=False, limit=None, offset=0) -> List[JobRun]:
+        """Run one ended-rows-only history query and map the rows to JobRuns.
+
+        ``last``/``limit``/``offset`` are SQL-applied here; the criteria path leaves them to the
+        caller (it must post-filter first), passing only ``run_match``/``sort``/``asc``.
         """
-        Fetches a batch of job runs from the database.
-
-        This is an internal method that fetches a specific batch of records. It acquires
-        the lock only for the duration of the database query and releases it after
-        fetching the batch.
-
-        Args:
-            run_match: Match criteria for filtering records
-            sort: Sort criteria
-            asc: Sort order
-            batch_offset: Number of records to skip
-            batch_size: Number of records to fetch
-            last: Whether to fetch only the last record per job
-
-        Returns:
-            List[JobRun]: A batch of job runs
-        """
-
         def sort_exp():
             match sort:
                 case SortOption.CREATED:
@@ -434,31 +370,26 @@ class SQLite(EnvironmentDatabase):
         )
         where_clause, where_params = _build_where_clause(run_match, alias='h')
         # Exclude incomplete (init-only) records
-        if where_clause:
-            where_clause += " AND h.ended IS NOT NULL"
-        else:
-            where_clause = " WHERE h.ended IS NOT NULL"
-        statement += where_clause
-
+        statement += (where_clause + " AND h.ended IS NOT NULL") if where_clause else " WHERE h.ended IS NOT NULL"
         if last:
             statement += " AND " + LAST_PER_JOB_SQL
 
-        # Apply the sort direction to all columns in the ORDER BY clause
-        sort_direction = " ASC" if asc else " DESC"
-        sort_columns = sort_exp().split(', ')
-        order_by_clause = ', '.join(f"{col.strip()}{sort_direction}" for col in sort_columns)
-        statement += " ORDER BY " + order_by_clause
-        statement += " LIMIT ? OFFSET ?"
+        direction = " ASC" if asc else " DESC"
+        statement += " ORDER BY " + ', '.join(f"{col.strip()}{direction}" for col in sort_exp().split(', '))
 
-        log.debug("Executing batch query", extra={"statement": statement, "batch_size": batch_size, "offset": batch_offset})
+        params = list(where_params)
+        if limit is not None:
+            statement += " LIMIT ? OFFSET ?"
+            params += [limit, offset]
+        elif offset:
+            statement += " LIMIT -1 OFFSET ?"  # SQLite requires a LIMIT to use OFFSET
+            params.append(offset)
 
         cursor = self._conn.cursor()
         cursor.row_factory = sqlite3.Row
-        cursor.execute(statement, where_params + [batch_size, batch_offset])
-
+        cursor.execute(statement, params)
         try:
-            rows = cursor.fetchall()
-            return [_to_job_run(row) for row in rows]
+            return [_to_job_run(row) for row in cursor.fetchall()]
         finally:
             cursor.close()
 
