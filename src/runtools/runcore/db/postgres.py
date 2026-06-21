@@ -9,12 +9,15 @@ The target database named by ``EnvironmentEntry.location`` (a libpq connection s
 already exist; this driver manages the schema (tables) within it, not the database itself.
 """
 
+import hashlib
 import logging
+import re
 from datetime import timezone
 from functools import wraps
 from typing import Iterator, List, override
 
 import psycopg
+from psycopg import sql
 from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
@@ -41,26 +44,52 @@ DEFAULT_POOL_MAX_SIZE = 10
 
 # --- Driver module contract (create / create_environment / exists / delete) ---
 
+# Environments are isolated by Postgres schema within the database named by `location`: each env
+# gets its own `runtools_<readable>_<hash>` schema. The prefix guarantees the driver only ever
+# creates and (on delete) drops schemas it owns — so pointing `location` at a shared database can
+# never clobber `public` or a foreign app's schema, even if an env_id collides with one.
+_SCHEMA_PREFIX = "runtools_"
+_MAX_IDENTIFIER = 63  # Postgres truncates identifiers past this (silently) — names must fit within.
+_HASH_LEN = 12        # hex chars of the env-id digest; uniqueness comes from this, not the readable part.
+
+
 def _dsn(entry) -> str:
     if not entry.location:
         raise ValueError("Postgres environment requires a libpq connection string in 'location'")
     return entry.location
 
 
+def _schema(entry) -> str:
+    """The (unquoted) schema name for an environment — deterministic and ≤63 bytes.
+
+    Layout: ``runtools_<readable>_<hash>``. The hash (over the full env_id) guarantees uniqueness
+    and bounded length; the readable slice is cosmetic (sanitized, truncated to fit), so two long
+    env_ids sharing a prefix can't collide even after truncation. Wrap in ``sql.Identifier`` to
+    emit as SQL.
+    """
+    digest = hashlib.blake2b(entry.id.encode("utf-8"), digest_size=_HASH_LEN // 2).hexdigest()
+    budget = _MAX_IDENTIFIER - len(_SCHEMA_PREFIX) - 1 - len(digest)  # room for prefix + '_' + hash
+    readable = re.sub(r"[^a-z0-9_]", "_", entry.id.lower())[:budget]
+    return f"{_SCHEMA_PREFIX}{readable}_{digest}"
+
+
 def exists(entry) -> bool:
     """True if the environment's schema is present in the target database.
 
-    Uses ``schema_info`` as the single schema marker — the same table ``_init_schema`` checks and
-    stamps the version into — so creation and existence agree on one authoritative table.
+    Probes ``schema_info`` (the single schema marker ``_init_schema`` stamps) in the env's schema
+    via ``pg_class``/``pg_namespace`` with a bound parameter — no identifier/literal quoting.
     """
     with psycopg.connect(_dsn(entry)) as conn:
-        return conn.execute("SELECT to_regclass('schema_info')").fetchone()[0] is not None
+        row = conn.execute(
+            "SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = %s AND c.relname = 'schema_info'", (_schema(entry),)).fetchone()
+        return row is not None
 
 
 def delete(entry) -> None:
-    """Drop the environment's tables. The database itself is left in place."""
+    """Drop the environment's schema (and everything in it). The database is left in place."""
     with psycopg.connect(_dsn(entry)) as conn:
-        conn.execute("DROP TABLE IF EXISTS run_tags, runs, config, schema_info CASCADE")
+        conn.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(_schema(entry))))
 
 
 def create_environment(entry, config) -> None:
@@ -71,7 +100,7 @@ def create_environment(entry, config) -> None:
 
 def create(entry, **kwargs) -> 'PostgreSQL':
     """Create a (not yet opened) Postgres database handle for ``entry``."""
-    return PostgreSQL(_dsn(entry), **kwargs)
+    return PostgreSQL(_dsn(entry), _schema(entry), **kwargs)
 
 
 # --- Dialect: Postgres uses %s placeholders and aware-UTC timestamps ---
@@ -209,10 +238,19 @@ CREATE TABLE IF NOT EXISTS schema_info (version INTEGER NOT NULL);
 
 class PostgreSQL(EnvironmentDatabase):
 
-    def __init__(self, dsn: str, max_size: int = DEFAULT_POOL_MAX_SIZE):
+    def __init__(self, dsn: str, schema: str, max_size: int = DEFAULT_POOL_MAX_SIZE):
         self._dsn = dsn
+        self._schema = schema
         self._max_size = max_size
         self._pool: ConnectionPool | None = None
+
+    def _configure(self, conn):
+        # Every pooled connection resolves unqualified names in this env's schema only — so all the
+        # storage SQL stays schema-agnostic. (Timezone is pinned via the connection options.)
+        # Session-level SET persists past the commit; the commit is required so the pool doesn't
+        # discard the connection for being left in a transaction.
+        conn.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(self._schema)))
+        conn.commit()
 
     @override
     def open(self):
@@ -220,7 +258,7 @@ class PostgreSQL(EnvironmentDatabase):
             raise InvalidStateError("Database connection already opened")
         # Pin the session to UTC so naive-UTC binds and TIMESTAMPTZ comparisons stay consistent.
         pool = ConnectionPool(self._dsn, min_size=1, max_size=self._max_size, open=False,
-                              kwargs={"options": "-c timezone=UTC"})
+                              kwargs={"options": "-c timezone=UTC"}, configure=self._configure)
         pool.open(wait=True)
         self._pool = pool
         self._init_schema()
@@ -231,6 +269,8 @@ class PostgreSQL(EnvironmentDatabase):
     @ensure_open
     def _init_schema(self):
         with self._pool.connection() as conn, conn.cursor() as cur:
+            # Must precede any table DDL; search_path already points here, so tables land in-schema.
+            cur.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(self._schema)))
             cur.execute("SELECT to_regclass('schema_info')")
             if cur.fetchone()[0] is not None:
                 cur.execute("SELECT version FROM schema_info")
@@ -249,9 +289,9 @@ class PostgreSQL(EnvironmentDatabase):
             self._pool.close()
             self._pool = None
 
-    def _fetch(self, sql, params):
+    def _fetch(self, query, params):
         with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(sql, params)
+            cur.execute(query, params)
             return cur.fetchall()
 
     def _matching_pks(self, where, params, run_match):

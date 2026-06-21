@@ -92,6 +92,91 @@ def test_schema_version_mismatch_raises(sut, pg_dsn):
         reopened.open()
 
 
+# --- environment isolation (schema-per-env on a shared database) ---
+
+def test_exists_false_before_create_true_after(pg_dsn):
+    entry = EnvironmentEntry(id="ex_env", driver="postgres", location=pg_dsn)
+    postgres.delete(entry)
+    try:
+        assert not postgres.exists(entry)
+        with postgres.create(entry):  # open() provisions the schema
+            pass
+        assert postgres.exists(entry)
+    finally:
+        postgres.delete(entry)
+
+
+def test_two_envs_same_dsn_are_isolated(pg_dsn):
+    a = EnvironmentEntry(id="env_a", driver="postgres", location=pg_dsn)
+    b = EnvironmentEntry(id="env_b", driver="postgres", location=pg_dsn)
+    for e in (a, b):
+        postgres.delete(e)
+    db_a, db_b = postgres.create(a), postgres.create(b)
+    db_a.open()
+    db_b.open()
+    try:
+        _init_and_store(db_a, fake_job_run('only_in_a'))
+        db_a.save_config('env_a', {'transport': {'type': 'a'}})
+        db_b.save_config('env_b', {'transport': {'type': 'b'}})
+
+        # Same database, different schemas → neither sees the other's runs or config.
+        assert [r.metadata.instance_id.job_id for r in db_a.read_runs()] == ['only_in_a']
+        assert db_b.read_runs() == []
+        assert db_a.load_config('env_a')['transport'] == {'type': 'a'}
+        assert db_b.load_config('env_b')['transport'] == {'type': 'b'}
+    finally:
+        db_a.close()
+        db_b.close()
+        for e in (a, b):
+            postgres.delete(e)
+
+
+def test_schema_name_bounded_and_collision_free_for_long_ids():
+    # Two long ids sharing a 60-char prefix must map to distinct, ≤63-byte schema names —
+    # the hash suffix disambiguates even after the readable part truncates.
+    base = "x" * 60
+    a = postgres._schema(EnvironmentEntry(id=base + "_a", driver="postgres"))
+    b = postgres._schema(EnvironmentEntry(id=base + "_b", driver="postgres"))
+    assert a != b
+    assert len(a) <= 63 and len(b) <= 63
+
+
+def test_long_id_envs_are_isolated(pg_dsn):
+    base = "y" * 60
+    a = EnvironmentEntry(id=base + "_a", driver="postgres", location=pg_dsn)
+    b = EnvironmentEntry(id=base + "_b", driver="postgres", location=pg_dsn)
+    for e in (a, b):
+        postgres.delete(e)
+    db_a, db_b = postgres.create(a), postgres.create(b)
+    db_a.open()
+    db_b.open()
+    try:
+        _init_and_store(db_a, fake_job_run('in_a'))
+        assert [r.metadata.instance_id.job_id for r in db_a.read_runs()] == ['in_a']
+        assert db_b.read_runs() == []  # distinct schemas despite the shared 60-char prefix
+    finally:
+        db_a.close()
+        db_b.close()
+        for e in (a, b):
+            postgres.delete(e)
+
+
+def test_delete_one_env_leaves_the_other(pg_dsn):
+    a = EnvironmentEntry(id="env_a", driver="postgres", location=pg_dsn)
+    b = EnvironmentEntry(id="env_b", driver="postgres", location=pg_dsn)
+    for e in (a, b):
+        postgres.delete(e)
+        with postgres.create(e):
+            pass
+    try:
+        postgres.delete(a)
+        assert not postgres.exists(a)
+        assert postgres.exists(b)  # dropping one schema must not touch the other
+    finally:
+        for e in (a, b):
+            postgres.delete(e)
+
+
 # --- round-trip / reads ---
 
 def test_store_and_fetch_round_trips_via_native_types(sut):
