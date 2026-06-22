@@ -23,7 +23,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
-from runtools.runcore.db import EnvironmentDatabase, IncompatibleSchemaError
+from runtools.runcore.db import EnvironmentDatabase, EnvironmentStoreNotProvisionedError, IncompatibleSchemaError
 from runtools.runcore.db.sql import (build_job_stats, build_order_by, build_where_clause, Dialect, last_run_ids,
                                      LAST_PER_JOB_SQL, matching_pks)
 from runtools.runcore.err import InvalidStateError
@@ -59,7 +59,7 @@ def _dsn(entry) -> str:
     return entry.location
 
 
-def _schema(entry) -> str:
+def _schema_name(env_id: str) -> str:
     """The (unquoted) schema name for an environment — deterministic and ≤63 bytes.
 
     Layout: ``runtools_<readable>_<hash>``. The hash (over the full env_id) guarantees uniqueness
@@ -67,40 +67,51 @@ def _schema(entry) -> str:
     env_ids sharing a prefix can't collide even after truncation. Wrap in ``sql.Identifier`` to
     emit as SQL.
     """
-    digest = hashlib.blake2b(entry.id.encode("utf-8"), digest_size=_HASH_LEN // 2).hexdigest()
+    digest = hashlib.blake2b(env_id.encode("utf-8"), digest_size=_HASH_LEN // 2).hexdigest()
     budget = _MAX_IDENTIFIER - len(_SCHEMA_PREFIX) - 1 - len(digest)  # room for prefix + '_' + hash
-    readable = re.sub(r"[^a-z0-9_]", "_", entry.id.lower())[:budget]
+    readable = re.sub(r"[^a-z0-9_]", "_", env_id.lower())[:budget]
     return f"{_SCHEMA_PREFIX}{readable}_{digest}"
 
 
-def exists(entry) -> bool:
-    """True if the environment's schema is present in the target database.
+def _schema_present(conn, schema: str) -> bool:
+    """Whether ``schema``'s ``schema_info`` table exists — bound param, no search-path reliance."""
+    row = conn.execute(
+        "SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "WHERE n.nspname = %s AND c.relname = 'schema_info'", (schema,)).fetchone()
+    return row is not None
 
-    Probes ``schema_info`` (the single schema marker ``_init_schema`` stamps) in the env's schema
-    via ``pg_class``/``pg_namespace`` with a bound parameter — no identifier/literal quoting.
-    """
+
+def exists(entry) -> bool:
+    """True if the environment's schema is provisioned in the target database."""
     with psycopg.connect(_dsn(entry)) as conn:
-        row = conn.execute(
-            "SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
-            "WHERE n.nspname = %s AND c.relname = 'schema_info'", (_schema(entry),)).fetchone()
-        return row is not None
+        return _schema_present(conn, _schema_name(entry.id))
 
 
 def delete(entry) -> None:
     """Drop the environment's schema (and everything in it). The database is left in place."""
     with psycopg.connect(_dsn(entry)) as conn:
-        conn.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(_schema(entry))))
+        conn.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
+            sql.Identifier(_schema_name(entry.id))))
 
 
 def create_environment(entry, config) -> None:
-    """Provision the schema and seed the initial configuration."""
-    with create(entry) as db:
+    """Provision the schema (privileged DDL) and seed the initial configuration.
+
+    The one place that issues DDL — separate from ``open()``, which only validates. Run by an
+    administrator; the role needs ``CREATE`` on the database.
+    """
+    db = create(entry)
+    db._open_pool()
+    try:
+        db._provision()
         db.save_config(entry.id, config.model_dump(mode='json', exclude={'id'}))
+    finally:
+        db.close()
 
 
 def create(entry, **kwargs) -> 'PostgreSQL':
     """Create a (not yet opened) Postgres database handle for ``entry``."""
-    return PostgreSQL(_dsn(entry), _schema(entry), **kwargs)
+    return PostgreSQL(_dsn(entry), entry.id, **kwargs)
 
 
 # --- Dialect: Postgres uses %s placeholders and aware-UTC timestamps ---
@@ -238,9 +249,10 @@ CREATE TABLE IF NOT EXISTS schema_info (version INTEGER NOT NULL);
 
 class PostgreSQL(EnvironmentDatabase):
 
-    def __init__(self, dsn: str, schema: str, max_size: int = DEFAULT_POOL_MAX_SIZE):
+    def __init__(self, dsn: str, env_id: str, max_size: int = DEFAULT_POOL_MAX_SIZE):
         self._dsn = dsn
-        self._schema = schema
+        self._env_id = env_id
+        self._schema = _schema_name(env_id)
         self._max_size = max_size
         self._pool: ConnectionPool | None = None
 
@@ -252,8 +264,7 @@ class PostgreSQL(EnvironmentDatabase):
         conn.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(self._schema)))
         conn.commit()
 
-    @override
-    def open(self):
+    def _open_pool(self):
         if self._pool is not None:
             raise InvalidStateError("Database connection already opened")
         # Pin the session to UTC so naive-UTC binds and TIMESTAMPTZ comparisons stay consistent.
@@ -261,18 +272,41 @@ class PostgreSQL(EnvironmentDatabase):
                               kwargs={"options": "-c timezone=UTC"}, configure=self._configure)
         pool.open(wait=True)
         self._pool = pool
-        self._init_schema()
+
+    @override
+    def open(self):
+        """Open the pool and validate the schema. Never issues DDL — see :func:`create_environment`
+        for the privileged provisioning path. Raises if the environment is not yet provisioned."""
+        self._open_pool()
+        try:
+            self._validate_schema()
+        except BaseException:
+            self.close()  # don't leak the pool on a failed open
+            raise
 
     def is_open(self):
         return self._pool is not None
 
     @ensure_open
-    def _init_schema(self):
+    def _validate_schema(self):
+        """Confirm the env's schema is provisioned and at the expected version. Read-only."""
         with self._pool.connection() as conn, conn.cursor() as cur:
-            # Must precede any table DDL; search_path already points here, so tables land in-schema.
+            if not _schema_present(conn, self._schema):
+                raise EnvironmentStoreNotProvisionedError(self._env_id)
+            cur.execute("SELECT version FROM schema_info")
+            row = cur.fetchone()
+            version = row[0] if row else None
+            if version != SCHEMA_VERSION:
+                raise IncompatibleSchemaError(version, SCHEMA_VERSION)
+
+    @ensure_open
+    def _provision(self):
+        """Create the env's schema + tables (privileged DDL). Idempotent: a no-op if already at the
+        current version, an error if a different version is present."""
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            # Must precede table DDL; search_path already points here, so tables land in-schema.
             cur.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(self._schema)))
-            cur.execute("SELECT to_regclass('schema_info')")
-            if cur.fetchone()[0] is not None:
+            if _schema_present(conn, self._schema):
                 cur.execute("SELECT version FROM schema_info")
                 row = cur.fetchone()
                 version = row[0] if row else None
@@ -281,7 +315,7 @@ class PostgreSQL(EnvironmentDatabase):
                 return
             cur.execute(_SCHEMA_DDL)
             cur.execute("INSERT INTO schema_info (version) VALUES (%s)", (SCHEMA_VERSION,))
-            log.debug("Schema created")
+            log.debug("Schema provisioned")
 
     @override
     def close(self):

@@ -88,6 +88,22 @@ class IncompatibleSchemaError(RuntoolsException):
         self.expected_version = expected_version
 
 
+class EnvironmentStoreNotProvisionedError(RuntoolsException):
+    """The environment is registered but its backing store has not been provisioned.
+
+    Distinct from a missing registry entry (``EnvironmentNotFoundError``): the environment is
+    known, but its tables/store don't exist yet. Raised by drivers whose ``open()`` only validates
+    (notably Postgres, where store DDL is an admin-only privilege). An administrator must create it
+    via ``create_environment`` before it can be opened.
+    """
+
+    def __init__(self, env_id):
+        super().__init__(
+            f"Environment '{env_id}' backing store is not provisioned. "
+            f"An administrator must create it (create_environment) before it can be opened.")
+        self.env_id = env_id
+
+
 class ConfigStorage(ABC):
     """Environment configuration stored in the database."""
 

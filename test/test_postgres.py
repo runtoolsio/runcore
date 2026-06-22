@@ -9,9 +9,9 @@ import os
 
 import pytest
 
-from runtools.runcore.db import IncompatibleSchemaError, postgres
-from runtools.runcore.db.postgres import SCHEMA_VERSION
-from runtools.runcore.env import EnvironmentEntry
+from runtools.runcore.db import EnvironmentStoreNotProvisionedError, IncompatibleSchemaError, postgres
+from runtools.runcore.db.postgres import PostgreSQL, SCHEMA_VERSION
+from runtools.runcore.env import EnvironmentConfig, EnvironmentEntry
 from runtools.runcore.job import DuplicateInstanceError, InstanceID
 from runtools.runcore.matching import JobRunCriteria, LifecycleCriterion, MetadataCriterion, PhaseCriterion
 from runtools.runcore.retention import RetentionPolicy
@@ -49,10 +49,16 @@ def pg_dsn():
         yield f"postgresql://{container.username}:{container.password}@{host}:{port}/{container.dbname}"
 
 
+def _provision(entry):
+    """Admin-side provisioning (DDL + seed config) — open() is validate-only now."""
+    postgres.create_environment(entry, EnvironmentConfig.default_local(entry.id))
+
+
 @pytest.fixture
 def sut(pg_dsn):
     entry = EnvironmentEntry(id="test_env", driver="postgres", location=pg_dsn)
     postgres.delete(entry)  # reset schema between tests (and clean up any prior leftovers)
+    _provision(entry)
     db = postgres.create(entry)
     db.open()
     try:
@@ -92,6 +98,23 @@ def test_schema_version_mismatch_raises(sut, pg_dsn):
         reopened.open()
 
 
+# --- lifecycle: provision (privileged) vs open (validate) ---
+
+def test_open_unprovisioned_raises(pg_dsn):
+    """open() must not provision — an unprovisioned env raises rather than silently creating it."""
+    entry = EnvironmentEntry(id="unprov_env", driver="postgres", location=pg_dsn)
+    postgres.delete(entry)
+    db = postgres.create(entry)
+    try:
+        with pytest.raises(EnvironmentStoreNotProvisionedError):
+            db.open()
+        assert not postgres.exists(entry)  # nothing was created
+        assert not db.is_open()            # pool was closed on the failed open, not leaked
+    finally:
+        db.close()
+        postgres.delete(entry)
+
+
 # --- environment isolation (schema-per-env on a shared database) ---
 
 def test_exists_false_before_create_true_after(pg_dsn):
@@ -99,8 +122,7 @@ def test_exists_false_before_create_true_after(pg_dsn):
     postgres.delete(entry)
     try:
         assert not postgres.exists(entry)
-        with postgres.create(entry):  # open() provisions the schema
-            pass
+        _provision(entry)
         assert postgres.exists(entry)
     finally:
         postgres.delete(entry)
@@ -111,6 +133,7 @@ def test_two_envs_same_dsn_are_isolated(pg_dsn):
     b = EnvironmentEntry(id="env_b", driver="postgres", location=pg_dsn)
     for e in (a, b):
         postgres.delete(e)
+        _provision(e)
     db_a, db_b = postgres.create(a), postgres.create(b)
     db_a.open()
     db_b.open()
@@ -135,8 +158,8 @@ def test_schema_name_bounded_and_collision_free_for_long_ids():
     # Two long ids sharing a 60-char prefix must map to distinct, ≤63-byte schema names —
     # the hash suffix disambiguates even after the readable part truncates.
     base = "x" * 60
-    a = postgres._schema(EnvironmentEntry(id=base + "_a", driver="postgres"))
-    b = postgres._schema(EnvironmentEntry(id=base + "_b", driver="postgres"))
+    a = postgres._schema_name(base + "_a")
+    b = postgres._schema_name(base + "_b")
     assert a != b
     assert len(a) <= 63 and len(b) <= 63
 
@@ -147,6 +170,7 @@ def test_long_id_envs_are_isolated(pg_dsn):
     b = EnvironmentEntry(id=base + "_b", driver="postgres", location=pg_dsn)
     for e in (a, b):
         postgres.delete(e)
+        _provision(e)
     db_a, db_b = postgres.create(a), postgres.create(b)
     db_a.open()
     db_b.open()
@@ -166,8 +190,7 @@ def test_delete_one_env_leaves_the_other(pg_dsn):
     b = EnvironmentEntry(id="env_b", driver="postgres", location=pg_dsn)
     for e in (a, b):
         postgres.delete(e)
-        with postgres.create(e):
-            pass
+        _provision(e)
     try:
         postgres.delete(a)
         assert not postgres.exists(a)
@@ -175,6 +198,58 @@ def test_delete_one_env_leaves_the_other(pg_dsn):
     finally:
         for e in (a, b):
             postgres.delete(e)
+
+
+def test_open_works_without_ddl_privilege(pg_dsn):
+    """The point of the lifecycle split: a role with no DDL rights can open() an existing env
+    (validate + read), but cannot provision one (create_environment → DDL → denied)."""
+    import psycopg
+    from psycopg import conninfo, errors, sql
+
+    role, pw = "rt_readonly_test", "rt_pw"
+    entry = EnvironmentEntry(id="role_env", driver="postgres", location=pg_dsn)
+    other = EnvironmentEntry(id="role_env_other", driver="postgres", location=pg_dsn)
+
+    # Admin: try to create a login role with no CREATE on the database. Skip if we can't.
+    try:
+        with psycopg.connect(pg_dsn, autocommit=True) as admin:
+            admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)))
+            admin.execute(sql.SQL("CREATE ROLE {} LOGIN PASSWORD {}").format(
+                sql.Identifier(role), sql.Literal(pw)))
+    except errors.InsufficientPrivilege:
+        pytest.skip("test DSN role cannot CREATE ROLE")
+
+    limited = conninfo.conninfo_to_dict(pg_dsn) | {"user": role, "password": pw}
+    limited_dsn = conninfo.make_conninfo(**limited)
+    try:
+        postgres.delete(entry)
+        _provision(entry)  # admin provisions
+        schema = postgres._schema_name(entry.id)
+        with psycopg.connect(pg_dsn, autocommit=True) as admin:
+            admin.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
+                sql.Identifier(schema), sql.Identifier(role)))
+            admin.execute(sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA {} TO {}").format(
+                sql.Identifier(schema), sql.Identifier(role)))
+
+        # Read-only role: open() validates + reads, no DDL needed.
+        db = PostgreSQL(limited_dsn, entry.id)
+        db.open()
+        try:
+            assert db.read_runs() == []
+        finally:
+            db.close()
+
+        # Same role: provisioning a new env requires DDL → denied.
+        postgres.delete(other)
+        with pytest.raises(errors.InsufficientPrivilege):
+            postgres.create_environment(
+                EnvironmentEntry(id=other.id, driver="postgres", location=limited_dsn),
+                EnvironmentConfig.default_local(other.id))
+    finally:
+        postgres.delete(entry)
+        postgres.delete(other)
+        with psycopg.connect(pg_dsn, autocommit=True) as admin:
+            admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)))
 
 
 # --- round-trip / reads ---
