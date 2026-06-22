@@ -36,7 +36,6 @@ from typing import Any, Iterable, Iterator
 from runtools.runcore.err import RuntoolsException
 from runtools.runcore.job import InstanceID, JobRun
 from runtools.runcore.matching import SortOption
-from runtools.runcore.retention import RetentionPolicy
 
 _db_modules = {}
 
@@ -190,10 +189,6 @@ class RunStorage(ABC):
     @abstractmethod
     def remove_runs(self, run_match) -> list[InstanceID]:
         """Remove job runs matching the specified criteria."""
-
-    @abstractmethod
-    def enforce_retention(self, job_id: str, policy: RetentionPolicy):
-        """Prune old runs according to retention policy."""
 
 
 class EnvironmentDatabase(ConfigStorage, RunStorage, ABC):

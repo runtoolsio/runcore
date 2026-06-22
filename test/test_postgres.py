@@ -14,7 +14,6 @@ from runtools.runcore.db.postgres import PostgreSQL, SCHEMA_VERSION
 from runtools.runcore.env import EnvironmentConfig, EnvironmentEntry
 from runtools.runcore.job import DuplicateInstanceError, InstanceID
 from runtools.runcore.matching import JobRunCriteria, LifecycleCriterion, MetadataCriterion, PhaseCriterion
-from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.run import Stage, TerminationStatus
 from runtools.runcore.test.job import fake_job_run
 from runtools.runcore.util import MatchingStrategy
@@ -444,16 +443,6 @@ def test_remove_runs(sut):
     removed = sut.remove_runs(parse('drop'))
     assert [iid.job_id for iid in removed] == ['drop']
     assert [r.metadata.instance_id.job_id for r in sut.read_runs()] == ['keep']
-
-
-def test_enforce_retention_per_job(sut):
-    _init_and_store(sut,
-        fake_job_run('j1', 'r1', offset_min=1),
-        fake_job_run('j1', 'r2', offset_min=2),
-        fake_job_run('j1', 'r3', offset_min=3))
-
-    sut.enforce_retention('j1', RetentionPolicy(max_runs_per_job=1))
-    assert [r.metadata.instance_id.run_id for r in sut.read_runs()] == ['r3']
 
 
 def test_config_round_trip(sut):

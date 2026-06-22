@@ -31,7 +31,6 @@ from runtools.runcore.job import (JobStats, JobRun, JobInstanceMetadata, Instanc
                                    normalize_tags)
 from runtools.runcore.matching import SortOption
 from runtools.runcore.output import OutputLocation
-from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.run import TerminationStatus, Outcome, PhaseRun, Fault
 from runtools.runcore.status import Status
 from runtools.runcore.util import utc_now
@@ -523,23 +522,6 @@ class PostgreSQL(EnvironmentDatabase):
         with self._pool.connection() as conn, conn.cursor() as cur:
             cur.executemany("DELETE FROM runs WHERE job_id = %s AND run_id = %s AND ordinal = %s", ids)
         return [InstanceID(job_id=j, run_id=r, ordinal=o) for j, r, o in ids]
-
-    @override
-    @ensure_open
-    def enforce_retention(self, job_id: str, policy: RetentionPolicy):
-        """Prune old runs according to retention policy (per-job then per-env)."""
-        with self._pool.connection() as conn, conn.cursor() as cur:
-            if policy.max_runs_per_job >= 0:
-                cur.execute(
-                    "DELETE FROM runs WHERE job_id = %s AND (job_id, run_id, ordinal) NOT IN "
-                    "(SELECT job_id, run_id, ordinal FROM runs WHERE job_id = %s "
-                    " ORDER BY ended DESC NULLS LAST LIMIT %s)",
-                    (job_id, job_id, policy.max_runs_per_job))
-            if policy.max_runs_per_env >= 0:
-                cur.execute(
-                    "DELETE FROM runs WHERE (job_id, run_id, ordinal) NOT IN "
-                    "(SELECT job_id, run_id, ordinal FROM runs ORDER BY ended DESC NULLS LAST LIMIT %s)",
-                    (policy.max_runs_per_env,))
 
     @override
     @ensure_open

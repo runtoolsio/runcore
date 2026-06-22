@@ -20,7 +20,6 @@ from runtools.runcore.job import (JobStats, JobRun, JobInstanceMetadata, Instanc
                                   normalize_tags)
 from runtools.runcore.matching import SortOption
 from runtools.runcore.output import OutputLocation
-from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.run import TerminationStatus, Outcome, PhaseRun, Fault
 from runtools.runcore.status import Status
 from runtools.runcore.util import format_dt_sql, parse_dt_sql, utc_now
@@ -381,22 +380,6 @@ class SQLite(EnvironmentDatabase):
         finally:
             cursor.close()
         return matching_pks(rows, run_match, _to_job_run, _to_metadata)
-
-    @override
-    @ensure_open
-    def enforce_retention(self, job_id: str, policy: RetentionPolicy):
-        """Prune old runs according to retention policy (per-job then per-env)."""
-        if policy.max_runs_per_job >= 0:
-            self._conn.execute(
-                "DELETE FROM runs WHERE job_id = ? AND rowid NOT IN "
-                "(SELECT rowid FROM runs WHERE job_id = ? ORDER BY ended DESC LIMIT ?)",
-                (job_id, job_id, policy.max_runs_per_job))
-        if policy.max_runs_per_env >= 0:
-            self._conn.execute(
-                "DELETE FROM runs WHERE rowid NOT IN "
-                "(SELECT rowid FROM runs ORDER BY ended DESC LIMIT ?)",
-                (policy.max_runs_per_env,))
-        self._conn.commit()
 
     @override
     @ensure_open

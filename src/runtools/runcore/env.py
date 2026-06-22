@@ -9,7 +9,6 @@ from runtools.runcore import paths
 from runtools.runcore.db import load_database_module
 from runtools.runcore.err import RuntoolsException
 from runtools.runcore.output import OutputConfig
-from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.util import files
 
 log = logging.getLogger(__name__)
@@ -51,11 +50,10 @@ TransportConfig = Annotated[
 class RetentionConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    max_runs_per_job: int = Field(default=500, description="Max finished runs to keep per job")
-    max_runs_per_env: int = Field(default=10000, description="Max finished runs to keep per environment")
-
-    def to_policy(self) -> RetentionPolicy:
-        return RetentionPolicy(max_runs_per_job=self.max_runs_per_job, max_runs_per_env=self.max_runs_per_env)
+    keep_days: Optional[int] = Field(
+        default=None,
+        description="Default retention for `env prune`: keep finished runs newer than N days "
+                    "(0 = remove all). None means no default — prune requires an explicit --keep-days.")
 
 
 class EnvironmentConfig(BaseModel):
