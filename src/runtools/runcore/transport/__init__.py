@@ -10,8 +10,10 @@ Main interfaces:
   mechanism the transport chooses, such as socket broadcast, SQL, or presence keys.
 - :class:`InstanceDirectory` exposes live job instances as stable proxy objects and
   publishes their events.
-- :class:`InstanceDirectoryBase` implements the shared directory behavior; concrete
-  transports provide only discovery, event receiving, proxy construction, and cleanup.
+- :class:`InstanceDirectoryBase` implements the shared directory core — identity map,
+  admission, and notifications. :class:`EventDrivenInstanceDirectoryBase` adds startup
+  driven by an external event stream; concrete transports provide proxy construction,
+  event receiving, and cleanup.
 """
 
 import logging
@@ -94,30 +96,18 @@ class _AdmittedInstance(NamedTuple):
 
 
 class InstanceDirectoryBase(ABC):
-    """Transport-neutral core of an :class:`InstanceDirectory` implementation.
+    """Transport- and input-neutral core of an :class:`InstanceDirectory` implementation.
 
-    The base keeps one proxy per live instance as an event-maintained view:
-    discovery runs once at :meth:`open` to seed the view, then events keep it
-    current — reads never query the transport. Events admit unknown instances
-    (a state-carrying event for an unknown instance creates its proxy from the
-    event's snapshot), update known ones under the staleness guard, and remove
-    ended ones. A view miss means the instance is not live; recovering instances
-    whose events were lost is the periodic reconciler's concern, not a read's.
+    Keeps one proxy per live instance as an event-maintained view: state-carrying events
+    admit unknown instances (creating a proxy from the event's snapshot), update known ones
+    under the staleness guard, and remove ended ones. Reads serve this local view and never
+    query the transport — a view miss means the instance is not live.
 
-    Startup follows a fixed order: start receiving into the buffering event
-    router, discover active instances, create proxies, then flush the router —
-    buffered events drain in receive order and dispatch switches live. This
-    prevents startup events from being lost before their proxies exist. The
-    flush is not a caller-visible barrier: proxies are available the moment
-    discovery admits them and may briefly hold discovery-stale state — buffered
-    and live events refresh them under the staleness guard.
-
-    Liveness gap, deliberate: an instance whose node dies without emitting
-    ``ENDED`` stays in the view. Dead-instance eviction arrives with the
-    periodic reconciler (transport doc, design point 4) rather than being
-    bolted onto the read path.
-
-    Subclasses provide the transport-specific pieces: proxy creation, event receiving, and resource cleanup.
+    The core is agnostic about how the view is seeded and kept current: a subclass owns
+    :meth:`open` and the input that drives it — an external event stream
+    (:class:`EventDrivenInstanceDirectoryBase`) or periodic polling — and provides proxy
+    creation and resource cleanup. Whatever the input, it feeds the one event router, so
+    admission and proxy updates flow through a single path.
     """
 
     def __init__(self, discovery: InstanceDiscovery):
@@ -134,11 +124,9 @@ class InstanceDirectoryBase(ABC):
     def notifications(self) -> InstanceNotifications:
         return self._event_router
 
+    @abstractmethod
     def open(self) -> None:
-        self._start_receiving(self._event_router)
-        for job_run in self._discovery.discover_active_runs():
-            self._admit(job_run)
-        self._event_router.flush_buffer()
+        """Seed the view and start keeping it current — subclass owns the input strategy."""
 
     def get_instances(self, run_match=None) -> List[JobInstance]:
         """Current event-maintained view, filtered by the proxies' live state.
@@ -205,9 +193,33 @@ class InstanceDirectoryBase(ABC):
         """
 
     @abstractmethod
-    def _start_receiving(self, handler) -> None:
-        """Start delivering raw events ``(event_type, instance_metadata, event_dict)`` to handler."""
-
-    @abstractmethod
     def _close_resources(self) -> None:
         """Release resources owned by this directory."""
+
+
+class EventDrivenInstanceDirectoryBase(InstanceDirectoryBase):
+    """Directory whose view is seeded by discovery and kept current by an event stream.
+
+    Startup follows a fixed order: start receiving into the buffering event router, discover
+    active instances, create proxies, then flush the router — buffered events drain in receive
+    order and dispatch switches live. This prevents startup events from being lost before their
+    proxies exist. The flush is not a caller-visible barrier: proxies are available the moment
+    discovery admits them and may briefly hold discovery-stale state — buffered and live events
+    refresh them under the staleness guard.
+
+    Liveness gap, deliberate: an instance whose node dies without emitting ``ENDED`` stays in
+    the view. Dead-instance eviction arrives with the periodic reconciler (transport doc,
+    design point 4) rather than being bolted onto the read path.
+
+    Subclasses provide event receiving on top of the core's proxy creation and cleanup.
+    """
+
+    def open(self) -> None:
+        self._start_receiving(self._event_router)
+        for job_run in self._discovery.discover_active_runs():
+            self._admit(job_run)
+        self._event_router.flush_buffer()
+
+    @abstractmethod
+    def _start_receiving(self, handler) -> None:
+        """Start delivering raw events ``(event_type, instance_metadata, event_dict)`` to handler."""

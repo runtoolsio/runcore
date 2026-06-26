@@ -7,7 +7,7 @@ from runtools.runcore.matching import JobRunCriteria, LifecycleCriterion
 from runtools.runcore.proxy import JobInstanceProxyBase
 from runtools.runcore.run import Stage, StopReason
 from runtools.runcore.test.job import fake_job_run
-from runtools.runcore.transport import DiscoveredRuns, InstanceDirectoryBase
+from runtools.runcore.transport import DiscoveredRuns, EventDrivenInstanceDirectoryBase
 from runtools.runcore.util import utc_now
 
 
@@ -36,7 +36,7 @@ class FakeDiscovery:
         return DiscoveredRuns(runs, self.complete)
 
 
-class FakeDirectory(InstanceDirectoryBase):
+class FakeDirectory(EventDrivenInstanceDirectoryBase):
 
     def __init__(self, discovery):
         super().__init__(discovery)

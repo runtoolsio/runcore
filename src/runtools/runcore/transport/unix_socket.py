@@ -29,7 +29,7 @@ from runtools.runcore.matching import JobRunCriteria
 from runtools.runcore.output import Mode, OutputLine
 from runtools.runcore.proxy import JobInstanceProxyBase
 from runtools.runcore.run import StopReason
-from runtools.runcore.transport import DiscoveredRuns, InstanceDirectoryBase
+from runtools.runcore.transport import DiscoveredRuns, EventDrivenInstanceDirectoryBase
 from runtools.runcore.util.socket import DatagramSocketServer, SocketRequestResult, StreamSocketClient
 
 log = logging.getLogger(__name__)
@@ -558,7 +558,7 @@ class UnixSocketJobInstanceProxy(JobInstanceProxyBase):
 # Instance directory
 # ---------------------------------------------------------------------------
 
-class UnixSocketInstanceDirectory(InstanceDirectoryBase):
+class UnixSocketInstanceDirectory(EventDrivenInstanceDirectoryBase):
     """Instance directory over unix domain sockets.
 
     Uses a local component directory for its sockets and liveness lock, a Unix
