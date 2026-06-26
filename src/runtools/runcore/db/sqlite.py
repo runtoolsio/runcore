@@ -144,10 +144,19 @@ _SELECT_RUNS = (
 )
 
 
+def _state_ts(dt):
+    """Full-microsecond timestamp for the ``state_updated_at`` comparator. ``format_dt_sql``
+    truncates to milliseconds — which would collapse sub-ms-distinct snapshots so an older one
+    compares equal and slips past the ``state_updated_at <= ?`` guard. The newer-wins guard needs
+    full precision, so this column stores all six fractional digits (lexicographic = chronological,
+    since ``%f`` is fixed-width zero-padded). Never parsed back — it's a comparator only."""
+    return dt.strftime('%Y-%m-%d %H:%M:%S.%f')
+
+
 _RUN_UPDATE_SQL = (
     "UPDATE runs SET user_params=?, features=?, created=?, started=?, ended=?, exec_time=?, "
     "root_phase=?, output_locations=?, termination_status=?, faults=?, status=?, warnings=?, "
-    "updated_at=? "
+    "state_updated_at=?, updated_at=? "
     "WHERE job_id=? AND run_id=? AND ordinal=?"
 )
 
@@ -166,7 +175,8 @@ def _run_update_values(r: JobRun):
             json.dumps([f.serialize() for f in r.faults]) if r.faults else None,
             json.dumps(r.status.serialize()) if r.status else None,
             len(r.status.warnings) if r.status else None,
-            format_dt_sql(utc_now()),
+            _state_ts(r.last_updated),  # state_updated_at: domain freshness (full precision; newer-wins guard)
+            format_dt_sql(utc_now()),   # updated_at: row write time
             r.metadata.job_id,
             r.metadata.run_id,
             r.metadata.ordinal,
@@ -226,6 +236,7 @@ class SQLite(EnvironmentDatabase):
                      faults TEXT CHECK (faults IS NULL OR json_valid(faults)),
                      status TEXT CHECK (status IS NULL OR json_valid(status)),
                      warnings INT,
+                     state_updated_at TIMESTAMP,
                      updated_at TIMESTAMP NOT NULL,
                      PRIMARY KEY (job_id, run_id, ordinal)
                      )
@@ -478,10 +489,23 @@ class SQLite(EnvironmentDatabase):
     @override
     @ensure_open
     def store_active_runs(self, *job_runs):
-        """See `RunStorage.store_active_runs`. The ``ended IS NULL`` guard makes a stale
-        active write a no-op once the row is terminal, so it cannot resurrect an ended run."""
+        """Update active snapshots without regressing terminal or newer state.
+
+        Args:
+            *job_runs: Latest active snapshots to persist.
+
+        Notes:
+            The SQL predicate enforces the storage invariant: terminal rows are
+            left untouched, and active rows are updated only when the candidate's
+            domain freshness is at least as new as the stored snapshot. Under
+            the single-writer model this should normally accept every candidate;
+            a skipped row indicates a stale retry or an ended run.
+        """
         for run in job_runs:
-            self._conn.execute(_RUN_UPDATE_SQL + " AND ended IS NULL", _run_update_values(run))
+            self._conn.execute(
+                _RUN_UPDATE_SQL + " AND ended IS NULL"
+                " AND (state_updated_at IS NULL OR state_updated_at <= ?)",
+                _run_update_values(run) + (_state_ts(run.last_updated),))
         self._conn.commit()
 
     @override

@@ -393,6 +393,31 @@ def test_store_active_runs_does_not_overwrite_ended(sut):
     assert sut.read_active_runs() == []  # guard kept the terminal row; nothing resurrected
 
 
+def test_store_active_runs_rejects_older_snapshot(sut):
+    """The state_updated_at guard: a stale active snapshot must not overwrite a newer one."""
+    older = fake_job_run('j1', 'r1', offset_min=1, term_status=None)
+    newer = fake_job_run('j1', 'r1', offset_min=5, term_status=None)
+    sut.init_run('j1', 'r1', created_at=older.lifecycle.created_at)
+
+    sut.store_active_runs(newer)   # newer lands first
+    sut.store_active_runs(older)   # stale → guard (state_updated_at <=) rejects it
+
+    [restored] = sut.read_active_runs()
+    assert restored == newer       # older did not clobber the newer snapshot
+
+
+def test_store_active_runs_applies_newer_snapshot(sut):
+    older = fake_job_run('j1', 'r1', offset_min=1, term_status=None)
+    newer = fake_job_run('j1', 'r1', offset_min=5, term_status=None)
+    sut.init_run('j1', 'r1', created_at=older.lifecycle.created_at)
+
+    sut.store_active_runs(older)
+    sut.store_active_runs(newer)   # newer passes the guard and applies
+
+    [restored] = sut.read_active_runs()
+    assert restored == newer
+
+
 # --- stats / remove / retention / config ---
 
 def test_read_run_stats(sut):

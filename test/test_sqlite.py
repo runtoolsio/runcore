@@ -526,6 +526,43 @@ def test_store_active_runs_does_not_overwrite_ended_row(sut):
     assert ended is not None  # Active write was a no-op; terminal row intact
 
 
+def test_store_active_runs_rejects_older_snapshot(sut):
+    """The state_updated_at guard: a stale active snapshot must not overwrite a newer one."""
+    older = fake_job_run('j1', 'r1', offset_min=1, term_status=None)
+    newer = fake_job_run('j1', 'r1', offset_min=5, term_status=None)
+    sut.init_run('j1', 'r1', created_at=older.lifecycle.created_at)
+
+    sut.store_active_runs(newer)   # newer lands first
+    sut.store_active_runs(older)   # stale → guard (state_updated_at <=) rejects it
+
+    [restored] = sut.read_active_runs()
+    assert restored == newer       # older did not clobber the newer snapshot
+
+
+def test_store_active_runs_applies_newer_snapshot(sut):
+    older = fake_job_run('j1', 'r1', offset_min=1, term_status=None)
+    newer = fake_job_run('j1', 'r1', offset_min=5, term_status=None)
+    sut.init_run('j1', 'r1', created_at=older.lifecycle.created_at)
+
+    sut.store_active_runs(older)
+    sut.store_active_runs(newer)   # newer passes the guard and applies
+
+    [restored] = sut.read_active_runs()
+    assert restored == newer
+
+
+def test_state_updated_at_stored_at_full_precision(sut):
+    """The comparator must keep full microsecond precision: format_dt_sql truncates to ms, which
+    would collapse sub-ms-distinct snapshots and let a stale write pass the `<=` guard."""
+    run = fake_job_run('j1', 'r1', term_status=None)
+    sut.init_run('j1', 'r1', created_at=run.lifecycle.created_at)
+    sut.store_active_runs(run)
+
+    stored, = sut._conn.execute("SELECT state_updated_at FROM runs WHERE job_id='j1'").fetchone()
+    # 6 fractional digits, not the 3 that format_dt_sql would leave
+    assert stored == run.last_updated.strftime('%Y-%m-%d %H:%M:%S.%f')
+
+
 def _init_active(db, run):
     """Init a row then write its active snapshot (the persister's two-phase path)."""
     iid = run.metadata.instance_id

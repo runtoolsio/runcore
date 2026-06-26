@@ -140,7 +140,7 @@ _SELECT_RUNS = (
 _RUN_UPDATE_SQL = (
     "UPDATE runs SET user_params=%s, features=%s, created=%s, started=%s, ended=%s, exec_time=%s, "
     "root_phase=%s, output_locations=%s, termination_status=%s, faults=%s, status=%s, warnings=%s, "
-    "updated_at=%s "
+    "state_updated_at=%s, updated_at=%s "
     "WHERE job_id=%s AND run_id=%s AND ordinal=%s"
 )
 
@@ -180,7 +180,8 @@ def _run_update_params(r: JobRun):
         Jsonb([f.serialize() for f in r.faults]) if r.faults else None,
         Jsonb(r.status.serialize()) if r.status else None,
         len(r.status.warnings) if r.status else None,
-        _bind_dt(utc_now()),
+        _bind_dt(r.last_updated),  # state_updated_at: domain freshness (newer-wins guard)
+        _bind_dt(utc_now()),       # updated_at: row write time
         r.metadata.job_id,
         r.metadata.run_id,
         r.metadata.ordinal,
@@ -225,6 +226,7 @@ CREATE TABLE IF NOT EXISTS runs (
     faults JSONB,
     status JSONB,
     warnings INTEGER,
+    state_updated_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (job_id, run_id, ordinal)
 );
@@ -491,11 +493,24 @@ class PostgreSQL(EnvironmentDatabase):
     @override
     @ensure_open
     def store_active_runs(self, *job_runs):
-        """See `RunStorage.store_active_runs`. The ``ended IS NULL`` guard makes a stale active
-        write a no-op once the row is terminal, so it cannot resurrect an ended run."""
+        """Update active snapshots without regressing terminal or newer state.
+
+        Args:
+            *job_runs: Latest active snapshots to persist.
+
+        Notes:
+            The SQL predicate enforces the storage invariant: terminal rows are
+            left untouched, and active rows are updated only when the candidate's
+            domain freshness is at least as new as the stored snapshot. Under
+            the single-writer model this should normally accept every candidate;
+            a skipped row indicates a stale retry or an ended run.
+        """
         with self._pool.connection() as conn, conn.cursor() as cur:
             for run in job_runs:
-                cur.execute(_RUN_UPDATE_SQL + " AND ended IS NULL", _run_update_params(run))
+                cur.execute(
+                    _RUN_UPDATE_SQL + " AND ended IS NULL"
+                    " AND (state_updated_at IS NULL OR state_updated_at <= %s)",
+                    _run_update_params(run) + (_bind_dt(run.last_updated),))
 
     @override
     @ensure_open

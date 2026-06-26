@@ -183,8 +183,16 @@ class RunStorage(ABC):
 
     @abstractmethod
     def store_active_runs(self, *job_runs):
-        """Best-effort update of active-run snapshots. Must not overwrite a row that is
-        already terminal (ended) — a run that ended in the meantime is left untouched."""
+        """Update persisted snapshots for runs that are still active.
+
+        Implementations must ignore candidates that would regress storage
+        state: a candidate must not overwrite a terminal row or a newer active
+        snapshot. This lets callers safely retry retained snapshots after
+        transient failures.
+
+        Args:
+            *job_runs: Latest active snapshots to persist.
+        """
 
     @abstractmethod
     def remove_runs(self, run_match) -> list[InstanceID]:
