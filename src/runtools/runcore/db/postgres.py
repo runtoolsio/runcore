@@ -23,7 +23,8 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
-from runtools.runcore.db import EnvironmentDatabase, EnvironmentStoreNotProvisionedError, IncompatibleSchemaError
+from runtools.runcore.db import (EnvironmentDatabase, EnvironmentStoreNotProvisionedError, IncompatibleSchemaError,
+                                 RunVersion)
 from runtools.runcore.db.sql import (build_job_stats, build_order_by, build_where_clause, Dialect, last_run_ids,
                                      LAST_PER_JOB_SQL, matching_pks)
 from runtools.runcore.err import InvalidStateError
@@ -430,6 +431,17 @@ class PostgreSQL(EnvironmentDatabase):
         runs = [_to_job_run(row) for row in self._fetch(sql, params)]
         # Re-apply the full criteria for predicates SQL can't express (e.g. phase).
         return [run for run in runs if run_match(run)] if run_match else runs
+
+    @override
+    @ensure_open
+    def active_run_versions(self) -> List[RunVersion]:
+        """See `RunStorage.active_run_versions`."""
+        # updated_at::text → opaque str cursor; a bare TIMESTAMPTZ would read back as a datetime.
+        # See RunVersion for why write-time is the cursor and the invariant it relies on.
+        rows = self._fetch(
+            "SELECT job_id, run_id, ordinal, updated_at::text AS version FROM runs "
+            "WHERE ended IS NULL AND root_phase IS NOT NULL", ())
+        return [(InstanceID(r['job_id'], r['run_id'], r['ordinal']), r['version']) for r in rows]
 
     @override
     @ensure_open

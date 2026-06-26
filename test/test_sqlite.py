@@ -609,6 +609,41 @@ def test_read_active_runs_post_filters_phase_criteria(sut):
     assert sut.read_active_runs(no_such_phase) == []
 
 
+def test_active_run_versions_lists_materialized_active_runs(sut):
+    _init_active(sut, fake_job_run('j1', term_status=None))
+    _init_active(sut, fake_job_run('j2', term_status=None))
+
+    assert {iid.job_id for iid, _ in sut.active_run_versions()} == {'j1', 'j2'}
+
+
+def test_active_run_versions_excludes_ended(sut):
+    _init_and_store(sut, fake_job_run('j1', term_status=TerminationStatus.COMPLETED))
+
+    assert sut.active_run_versions() == []  # ended rows are read_runs' domain, not active discovery
+
+
+def test_active_run_versions_excludes_init_only_rows(sut):
+    run = fake_job_run('j1', term_status=None)
+    iid = run.metadata.instance_id
+    sut.init_run(iid.job_id, iid.run_id, created_at=run.lifecycle.created_at)  # no snapshot → root_phase NULL
+
+    assert sut.active_run_versions() == []
+
+
+def test_active_run_versions_cursor_changes_on_every_accepted_write(sut):
+    # Two snapshots with equal domain freshness: the <= guard still accepts the second write, so the
+    # write-time cursor must advance — otherwise a poller would skip the deep read and miss it.
+    run = fake_job_run('j1', 'r1', offset_min=1, term_status=None)
+    sut.init_run('j1', 'r1', created_at=run.lifecycle.created_at)
+
+    sut.store_active_runs(run)
+    [(_, before)] = sut.active_run_versions()
+    sut.store_active_runs(run)  # equal last_updated, still accepted by the <= guard
+    [(_, after)] = sut.active_run_versions()
+
+    assert before != after
+
+
 def test_read_runs_post_filters_phase_criteria(sut):
     _init_and_store(sut, fake_job_run('j1', term_status=TerminationStatus.COMPLETED))
 

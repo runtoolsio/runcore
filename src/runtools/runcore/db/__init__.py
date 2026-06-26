@@ -122,6 +122,15 @@ class ConfigStorage(ABC):
         """
 
 
+RunVersion = tuple[InstanceID, str]
+"""(instance, opaque version cursor) for change detection. The cursor is the row's write-time
+``updated_at`` rendered as an opaque string — it changes on every accepted write (even when domain
+freshness ties), so a poller compares it for equality to find changed instances. This relies on
+writes to a given row being >1µs apart, which holds under single-writer-per-instance + per-statement
+commit; if that invariant is ever relaxed (multi-writer per row), switch to a monotonic counter.
+Never parsed, ordered, or treated as a datetime (its representation is backend-specific)."""
+
+
 class RunStorage(ABC):
     """Job run history stored in the database."""
 
@@ -171,6 +180,16 @@ class RunStorage(ABC):
         that have no termination and carry a real snapshot, skipping init-only rows the
         run-state persister has not filled yet. Snapshots lag the persister's flush
         interval and, after a producer crash, may name runs that are no longer running.
+        """
+
+    @abstractmethod
+    def active_run_versions(self) -> list[RunVersion]:
+        """Return a change-detection cursor for each materialized active run.
+
+        Cheap poll primitive: scans (instance, updated_at) only, without deserializing full
+        snapshots. Includes non-ended rows carrying a real snapshot (root_phase set), skips
+        init-only rows. Compare the opaque cursor for equality against a prior scan to find changed
+        instances, then deep-read those via :meth:`read_active_runs`.
         """
 
     @abstractmethod

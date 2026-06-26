@@ -12,7 +12,7 @@ from threading import Lock
 from typing import List, Iterator, override
 
 from runtools.runcore import paths
-from runtools.runcore.db import EnvironmentDatabase, IncompatibleSchemaError
+from runtools.runcore.db import EnvironmentDatabase, IncompatibleSchemaError, RunVersion
 from runtools.runcore.db.sql import (build_job_stats, build_order_by, build_where_clause, Dialect, last_run_ids,
                                      LAST_PER_JOB_SQL, matching_pks)
 from runtools.runcore.err import InvalidStateError
@@ -144,12 +144,13 @@ _SELECT_RUNS = (
 )
 
 
-def _state_ts(dt):
-    """Full-microsecond timestamp for the ``state_updated_at`` comparator. ``format_dt_sql``
-    truncates to milliseconds — which would collapse sub-ms-distinct snapshots so an older one
-    compares equal and slips past the ``state_updated_at <= ?`` guard. The newer-wins guard needs
-    full precision, so this column stores all six fractional digits (lexicographic = chronological,
-    since ``%f`` is fixed-width zero-padded). Never parsed back — it's a comparator only."""
+def _full_ts(dt):
+    """Full-microsecond timestamp string for the freshness/version columns. ``format_dt_sql``
+    truncates to milliseconds, which would collapse sub-ms-distinct writes: an older snapshot could
+    compare equal and slip past the ``state_updated_at <= ?`` guard, and two rapid writes could
+    share an ``updated_at`` cursor so a poller skips the deep read. Both columns therefore store all
+    six fractional digits (lexicographic = chronological, since ``%f`` is fixed-width zero-padded).
+    Never parsed back — comparator/cursor only."""
     return dt.strftime('%Y-%m-%d %H:%M:%S.%f')
 
 
@@ -175,8 +176,8 @@ def _run_update_values(r: JobRun):
             json.dumps([f.serialize() for f in r.faults]) if r.faults else None,
             json.dumps(r.status.serialize()) if r.status else None,
             len(r.status.warnings) if r.status else None,
-            _state_ts(r.last_updated),  # state_updated_at: domain freshness (full precision; newer-wins guard)
-            format_dt_sql(utc_now()),   # updated_at: row write time
+            _full_ts(r.last_updated),  # state_updated_at: domain freshness (newer-wins guard)
+            _full_ts(utc_now()),       # updated_at: write-time cursor (changes on every accepted write)
             r.metadata.job_id,
             r.metadata.run_id,
             r.metadata.ordinal,
@@ -473,6 +474,21 @@ class SQLite(EnvironmentDatabase):
 
     @override
     @ensure_open
+    def active_run_versions(self) -> List[RunVersion]:
+        """See `RunStorage.active_run_versions`."""
+        cursor = self._conn.cursor()
+        cursor.row_factory = sqlite3.Row
+        cursor.execute(
+            "SELECT job_id, run_id, ordinal, updated_at FROM runs "
+            "WHERE ended IS NULL AND root_phase IS NOT NULL")
+        try:
+            return [(InstanceID(r['job_id'], r['run_id'], r['ordinal']), r['updated_at'])
+                    for r in cursor.fetchall()]
+        finally:
+            cursor.close()
+
+    @override
+    @ensure_open
     def store_runs(self, *job_runs):
         """See `RunStorage.store_runs`.
 
@@ -505,7 +521,7 @@ class SQLite(EnvironmentDatabase):
             self._conn.execute(
                 _RUN_UPDATE_SQL + " AND ended IS NULL"
                 " AND (state_updated_at IS NULL OR state_updated_at <= ?)",
-                _run_update_values(run) + (_state_ts(run.last_updated),))
+                _run_update_values(run) + (_full_ts(run.last_updated),))
         self._conn.commit()
 
     @override
