@@ -1,7 +1,8 @@
 import bisect
+import datetime
 from abc import abstractmethod
 from threading import Lock
-from typing import Callable, List, override
+from typing import Callable, List, Optional, Tuple, override
 
 from runtools.runcore.job import (
     JobRun, JobInstance, InstanceNotifications, InstanceObservableNotifications,
@@ -10,7 +11,7 @@ from runtools.runcore.job import (
 )
 from runtools.runcore.matching import MetadataCriterion
 from runtools.runcore.output import Mode, Output, OutputLine
-from runtools.runcore.run import StopReason
+from runtools.runcore.run import Stage, StopReason
 
 
 class JobInstanceProxyBase(JobInstance):
@@ -195,3 +196,135 @@ class PhaseControlProxy:
             return self.exec_op(name, *args)
 
         return method_proxy
+
+
+_InstanceStateEvent = InstanceLifecycleEvent | InstancePhaseEvent | InstanceStatusEvent
+"""A state-carrying instance event — lifecycle, phase, or status (the events a directory routes
+through ``_on_state_event``). Excludes output and control, which carry no run snapshot."""
+
+_STAGE_PROGRESSION = (Stage.CREATED, Stage.RUNNING, Stage.ENDED)
+
+
+def _synthesize_events(prev: Optional[JobRun], curr: JobRun) -> List[_InstanceStateEvent]:
+    """Reconstruct the instance events that took ``prev`` to ``curr``, ordered by timestamp.
+
+    A snapshot transport learns about state changes by re-reading run snapshots, not by receiving
+    the events a producing node emits; this rebuilds those events from a snapshot pair so
+    :class:`SnapshotJobInstanceProxy` can drive the same notifications an event-driven proxy would.
+    The producer's rules are mirrored exactly (see ``runjob.instance``): a root-phase transition
+    yields a lifecycle event, every RUNNING/ENDED phase transition yields a phase event, and a
+    changed status yields a status event. CREATED is a phase's initial state, not a transition the
+    producer emits — so a CREATED root yields only its lifecycle event (the instance emits that at
+    birth) and a CREATED child yields nothing.
+
+    Every per-stage timestamp is stored on the snapshot (:meth:`RunLifecycle.transition_at`), so
+    transitions that a single poll interval would coalesce — e.g. ``CREATED -> RUNNING -> ENDED`` —
+    are replayed individually with their real timestamps; only status is coalesced to its latest
+    value.
+
+    Args:
+        prev: The last seen snapshot of the instance, or None for a first sighting — a first
+            sighting reports each phase's net (current) stage rather than replaying its history.
+        curr: The newer snapshot to diff against ``prev``.
+
+    Returns:
+        Lifecycle, phase, and status events carrying ``curr``, ordered by transition timestamp.
+    """
+    events: List[_InstanceStateEvent] = []
+    root_id = curr.root_phase.phase_id
+    prev_stages = {p.phase_id: p.lifecycle.stage for p in prev.search_phases()} if prev else {}
+
+    for phase in curr.search_phases():
+        is_root = phase.phase_id == root_id
+        for stage in _stages_reached(prev_stages.get(phase.phase_id), phase.lifecycle.stage):
+            timestamp = phase.lifecycle.transition_at(stage)
+            if timestamp is None:
+                continue  # stage skipped, e.g. stopped before start jumps CREATED -> ENDED, leaving RUNNING unset
+            if is_root:
+                events.append(InstanceLifecycleEvent(curr, stage, timestamp))
+            if stage != Stage.CREATED:  # the producer emits no CREATED phase transition — it's the initial state
+                events.append(InstancePhaseEvent(curr, is_root, phase.phase_id, stage, timestamp))
+
+    if curr.status and (prev is None or prev.status != curr.status):
+        timestamp = _status_timestamp(curr.status) or curr.lifecycle.last_transition_at
+        events.append(InstanceStatusEvent(curr, timestamp))
+
+    events.sort(key=lambda event: event.timestamp)
+    return events
+
+
+def _stages_reached(prev_stage: Optional[Stage], curr_stage: Stage) -> Tuple[Stage, ...]:
+    """Stages newly reached between ``prev_stage`` (exclusive) and ``curr_stage`` (inclusive).
+
+    An unseen phase (``prev_stage`` is None) reports only its current stage — first sightings
+    carry net state, not a replayed ``CREATED -> ...`` history. A phase whose stage did not
+    advance yields nothing.
+
+    Returns the linear-progression candidates; a phase may skip one (e.g. stopped before start
+    jumps ``CREATED -> ENDED``), so the caller drops any stage whose ``transition_at`` is None.
+    """
+    if prev_stage is None:
+        return (curr_stage,)
+    lo = _STAGE_PROGRESSION.index(prev_stage)
+    hi = _STAGE_PROGRESSION.index(curr_stage)
+    return _STAGE_PROGRESSION[lo + 1:hi + 1]
+
+
+def _status_timestamp(status) -> Optional[datetime.datetime]:
+    """Latest timestamp carried by the status, mirroring how ``JobRun.last_updated`` reads it."""
+    timestamps = []
+    if status.last_event:
+        timestamps.append(status.last_event.timestamp)
+    if status.result:
+        timestamps.append(status.result.timestamp)
+    timestamps += [warning.timestamp for warning in status.warnings]
+    timestamps += [operation.updated_at for operation in status.operations]
+    return max(timestamps) if timestamps else None
+
+
+class SnapshotJobInstanceProxy(JobInstanceProxyBase):
+    """Job instance proxy updated by whole snapshots rather than an event stream.
+
+    A snapshot transport (polling a database, presence keys, etc.) pushes fresh snapshots via
+    :meth:`update_from_snapshot` instead of binding the proxy to an upstream event source. The proxy
+    applies the newer-wins guard, replaces the cached snapshot, and emits the synthesized state
+    events to its own notification hub (where a directory's aggregate fans in). Control and output
+    are not wired on snapshot transports yet.
+    """
+
+    def update_from_snapshot(self, curr: JobRun) -> None:
+        """Apply a freshly read snapshot and emit the state events it implies.
+
+        Ignores a snapshot that is not newer than the cached one (which also stops a stale active
+        snapshot from resurrecting an ended instance). The cache is replaced before emitting so an
+        observer that reads :meth:`snap` within its callback sees the new state.
+        """
+        prev = self._job_run
+        if not curr.is_newer_than(prev):
+            return
+        events = _synthesize_events(prev, curr)
+        self._job_run = curr
+        for event in events:
+            self._emit(event)
+
+    def _emit(self, event: _InstanceStateEvent) -> None:
+        """Fan a synthesized event out through the hub to downstream and aggregate observers.
+
+        The proxy's own ``_on_*_update`` also fires but is a no-op here — the cache already holds the
+        snapshot the event carries.
+        """
+        if isinstance(event, InstanceLifecycleEvent):
+            self._notifications.lifecycle_notification.observer_proxy.instance_lifecycle_update(event)
+        elif isinstance(event, InstancePhaseEvent):
+            self._notifications.phase_notification.observer_proxy.instance_phase_update(event)
+        else:
+            self._notifications.status_notification.observer_proxy.instance_status_update(event)
+
+    def stop(self, stop_reason=StopReason.STOPPED):
+        raise NotImplementedError("Control is not yet supported on snapshot transports")
+
+    def _exec_phase_op(self, phase_id: str, op_name: str, *op_args):
+        raise NotImplementedError("Phase control is not yet supported on snapshot transports")
+
+    def _fetch_output_tail(self, mode: Mode, max_lines: int) -> List[OutputLine]:
+        raise NotImplementedError("Output is not yet supported on snapshot transports")
