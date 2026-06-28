@@ -109,6 +109,25 @@ def test_jobrun_criteria_parse_include_tag_false_is_identity_only():
     assert c.tags == ()
 
 
+def test_instances_match_matches_any_of_the_given_instances():
+    from runtools.runcore.matching import JobRunCriteria
+    from runtools.runcore.test.job import fake_job_run
+    r1, r2, other = fake_job_run('j1', 'r1'), fake_job_run('j2', 'r2'), fake_job_run('j3', 'r3')
+
+    crit = JobRunCriteria.instances_match([r1.instance_id, r2.instance_id])
+
+    assert crit(r1) and crit(r2)
+    assert not crit(other)
+
+
+def test_instances_match_empty_matches_all_so_callers_must_guard():
+    from runtools.runcore.matching import JobRunCriteria
+    from runtools.runcore.test.job import fake_job_run
+    # Empty metadata criteria is a full sweep (JobRunCriteria.all() semantics) — PollingInstanceDirectory
+    # guards against an empty changed-set so a no-change poll never turns into a read of everything.
+    assert JobRunCriteria.instances_match([])(fake_job_run('anything'))
+
+
 def test_builder_patterns_or_all_include_tag_false_keeps_tags_clean():
     """When include_tag=False, explicit tags() are the sole tag filter."""
     built = (criteria()

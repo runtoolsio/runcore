@@ -746,6 +746,11 @@ class JobRunCriteria(MatchCriteria[JobRun]):
     def instance_match(cls, instance_id) -> JobRunCriteria:
         return cls(metadata_criteria=(MetadataCriterion.exact_match(instance_id),))
 
+    @classmethod
+    def instances_match(cls, instance_ids: Iterable[InstanceID]) -> JobRunCriteria:
+        """Match any of the given instances (metadata criteria are OR'd)."""
+        return cls(metadata_criteria=tuple(MetadataCriterion.exact_match(i) for i in instance_ids))
+
     def matches_metadata(self, job_run):
         return not self.metadata_criteria or any(c(job_run.metadata) for c in self.metadata_criteria)
 

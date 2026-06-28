@@ -98,38 +98,33 @@ class _AdmittedInstance(NamedTuple):
 class InstanceDirectoryBase(ABC):
     """Transport- and input-neutral core of an :class:`InstanceDirectory` implementation.
 
-    Keeps one proxy per live instance as an event-maintained view: state-carrying events
-    admit unknown instances (creating a proxy from the event's snapshot), update known ones
-    under the staleness guard, and remove ended ones. Reads serve this local view and never
-    query the transport — a view miss means the instance is not live.
+    Owns the live proxy registry: one proxy per live ``InstanceID`` plus tombstones for recently
+    removed instances. Admission creates and wires a proxy; removal unbinds it and records a
+    tombstone so stale snapshots cannot re-admit it.
 
-    The core is agnostic about how the view is seeded and kept current: a subclass owns
-    :meth:`open` and the input that drives it — an external event stream
-    (:class:`EventDrivenInstanceDirectoryBase`) or periodic polling — and provides proxy
-    creation and resource cleanup. Whatever the input, it feeds the one event router, so
-    admission and proxy updates flow through a single path.
+    Reads are local and never touch the transport. A missing proxy means the instance is not live in
+    this directory's current view.
+
+    Subclasses provide the input strategy (event stream or polling), notification aggregate, proxy
+    creation, proxy wiring, and resource cleanup.
     """
 
-    def __init__(self, discovery: InstanceDiscovery):
-        self._discovery = discovery
-        self._event_router = InstanceEventRouter(start_buffering=True)
+    def __init__(self):
         self._admitted: Dict[InstanceID, _AdmittedInstance] = {}
         self._ended_tombstones: OrderedDict[InstanceID, bool] = OrderedDict()  # Recently ended instance IDs; older snapshots for these IDs must not recreate proxies
         self._proxies_lock = Lock()
-        self._event_router.add_observer_lifecycle(self._on_state_event)
-        self._event_router.add_observer_phase(self._on_state_event)
-        self._event_router.add_observer_status(self._on_state_event)
 
     @property
+    @abstractmethod
     def notifications(self) -> InstanceNotifications:
-        return self._event_router
+        """The all-instance event stream consumers subscribe to (the directory's aggregate)."""
 
     @abstractmethod
     def open(self) -> None:
         """Seed the view and start keeping it current — subclass owns the input strategy."""
 
     def get_instances(self, run_match=None) -> List[JobInstance]:
-        """Current event-maintained view, filtered by the proxies' live state.
+        """The current live view, filtered by the proxies' state.
 
         Never queries the transport; eventually consistent per the transport doc.
         """
@@ -150,9 +145,9 @@ class InstanceDirectoryBase(ABC):
     def _admit(self, job_run: JobRun):
         """Ensure the instance is in the view — pure membership, get-or-create.
 
-        State updates are not this method's concern: proxies receive events
-        through their own observers, and discovery-driven refresh of known
-        proxies belongs to the reconciler.
+        Applying state is not this method's concern: a new proxy carries the admitting
+        snapshot, and later updates arrive through the subclass's input (an event stream
+        or polling).
         """
         instance_id = job_run.instance_id
         with self._proxies_lock:
@@ -165,11 +160,11 @@ class InstanceDirectoryBase(ABC):
         new_proxy = self._create_proxy(job_run)
         with self._proxies_lock:
             if instance_id not in self._admitted and instance_id not in self._ended_tombstones:
-                self._admitted[instance_id] = _AdmittedInstance(new_proxy, new_proxy.bind_to(self._event_router))
+                self._admitted[instance_id] = _AdmittedInstance(new_proxy, self._wire_proxy(new_proxy))
 
     def _ensure_removed(self, instance_id: InstanceID):
-        """Drop the instance from the view, unbind its proxy from the event router,
-        and tombstone it against stale re-admission.
+        """Drop the instance from the view, unbind its membership binding, and tombstone it
+        against stale re-admission.
 
         Caller must hold ``_proxies_lock``; binding removal is lock-free, so
         unbinding under the lock is safe.
@@ -181,8 +176,15 @@ class InstanceDirectoryBase(ABC):
         while len(self._ended_tombstones) > _ENDED_TOMBSTONES_MAX:
             self._ended_tombstones.popitem(last=False)
 
-    def _on_state_event(self, event):
-        self._admit(event.job_run)
+    @abstractmethod
+    def _wire_proxy(self, proxy: JobInstanceProxyBase) -> NotificationBinding:
+        """Connect a newly admitted ``proxy`` to the directory's notification topology.
+
+        Returns the binding the directory owns and unbinds when the instance leaves the view. The
+        direction is transport-specific: an event-driven directory subscribes the proxy to its event
+        router (proxy <- router); a snapshot directory subscribes its aggregate to the proxy
+        (aggregate <- proxy), since there the proxy is the event source.
+        """
 
     @abstractmethod
     def _create_proxy(self, initial: JobRun) -> JobInstanceProxyBase:
@@ -214,11 +216,29 @@ class EventDrivenInstanceDirectoryBase(InstanceDirectoryBase):
     Subclasses provide event receiving on top of the core's proxy creation and cleanup.
     """
 
+    def __init__(self, discovery: InstanceDiscovery):
+        super().__init__()
+        self._discovery = discovery
+        self._event_router = InstanceEventRouter(start_buffering=True)
+        self._event_router.add_observer_lifecycle(self._on_state_event)
+        self._event_router.add_observer_phase(self._on_state_event)
+        self._event_router.add_observer_status(self._on_state_event)
+
+    @property
+    def notifications(self) -> InstanceNotifications:
+        return self._event_router  # the router is this transport's input and aggregate stream
+
     def open(self) -> None:
         self._start_receiving(self._event_router)
         for job_run in self._discovery.discover_active_runs():
             self._admit(job_run)
         self._event_router.flush_buffer()
+
+    def _wire_proxy(self, proxy: JobInstanceProxyBase) -> NotificationBinding:
+        return proxy.bind_to(self._event_router)  # proxy <- router: the router feeds the proxy
+
+    def _on_state_event(self, event):
+        self._admit(event.job_run)
 
     @abstractmethod
     def _start_receiving(self, handler) -> None:
