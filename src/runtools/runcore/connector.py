@@ -26,14 +26,14 @@ from typing import Iterable, Optional, override
 
 from runtools.runcore import output
 from runtools.runcore.db import EnvironmentDatabase
-from runtools.runcore.env import EnvironmentConfig, UnixSocketTransportConfig, EnvironmentEntry, \
-    _open_environment, resolve_env_ref, ensure_environment
+from runtools.runcore.env import EnvironmentConfig, UnixSocketTransportConfig, DbPollingTransportConfig, \
+    EnvironmentEntry, _open_environment, resolve_env_ref, ensure_environment
 from runtools.runcore.err import run_isolated_collect_exceptions
 from runtools.runcore.job import InstanceNotifications, JobInstance, InstanceLifecycleObserver, InstanceLifecycleEvent, \
     JobRun, InstanceID
 from runtools.runcore.matching import JobRunCriteria, SortOption
 from runtools.runcore.transport import InstanceDirectory
-
+from runtools.runcore.transport.db import PollingInstanceDirectory
 
 
 def wait_for_interrupt(env, *, reraise=True):
@@ -347,6 +347,11 @@ def _create(env_db: EnvironmentDatabase, env_config: EnvironmentConfig) -> Envir
         # dir + flock and would leak if output construction failed after directory setup.
         output_backends = output.create_backends(env_config.id, env_config.output.storages)
         directory = unix_socket.create_instance_directory(env_config.id, env_config.transport)
+        return compose(env_config.id, env_db, directory, output_backends)
+
+    if isinstance(env_config.transport, DbPollingTransportConfig):
+        output_backends = output.create_backends(env_config.id, env_config.output.storages)
+        directory = PollingInstanceDirectory(env_db)  # env_db is the RunStorage it polls
         return compose(env_config.id, env_db, directory, output_backends)
 
     raise AssertionError(

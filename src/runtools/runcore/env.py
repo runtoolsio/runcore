@@ -20,6 +20,7 @@ _SQLITE_DRIVER = 'sqlite'
 class TransportType(StrEnum):
     IN_PROCESS = 'in_process'
     UNIX_SOCKET = 'unix_socket'
+    DB_POLLING = 'db_polling'
 
 
 class InProcessTransportConfig(BaseModel):
@@ -41,8 +42,17 @@ class UnixSocketTransportConfig(BaseModel):
     )
 
 
+class DbPollingTransportConfig(BaseModel):
+    """Shared-database transport (polling): clients observe runs by polling the environment database
+    rather than contacting producing nodes. Backend-agnostic — the DB driver is chosen by the
+    EnvironmentEntry, independently of this transport."""
+    model_config = ConfigDict(frozen=True)
+
+    type: Literal["db_polling"] = TransportType.DB_POLLING
+
+
 TransportConfig = Annotated[
-    Union[InProcessTransportConfig, UnixSocketTransportConfig],
+    Union[InProcessTransportConfig, UnixSocketTransportConfig, DbPollingTransportConfig],
     Discriminator("type")
 ]
 
