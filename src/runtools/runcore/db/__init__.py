@@ -10,7 +10,7 @@ Key Components:
     ConfigStorage: Protocol for environment configuration (config table).
     RunStorage: Protocol for job run history (runs table).
 Factory Functions:
-    load_database_module: Dynamically loads a database backend module (e.g., sqlite).
+    load_database_module: Resolves the built-in database backend module for a driver name.
 
 Driver Module Contract:
     Each driver module must expose four module-level functions:
@@ -28,7 +28,6 @@ See Also:
     runtools.runcore.db.sqlite: SQLite implementation.
 """
 
-import importlib
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any, Iterable, Iterator
@@ -37,37 +36,31 @@ from runtools.runcore.err import RuntoolsException
 from runtools.runcore.job import InstanceID, JobRun
 from runtools.runcore.matching import SortOption
 
-_db_modules = {}
-
 
 def load_database_module(db_type):
-    """Load a database backend module by type name.
+    """Resolve the database backend module for a driver name.
 
-    Imports ``runtools.runcore.db.<db_type>`` directly. The module is expected to
-    expose four module-level functions: ``create()``, ``create_environment()``,
-    ``exists()``, and ``delete()``.
+    Each module exposes the driver contract (``create()``, ``create_environment()``, ``exists()``,
+    ``delete()``). Imported lazily per branch so an unused backend's optional deps (e.g. ``psycopg``
+    for postgres) are never imported.
 
     Args:
-        db_type: Database type identifier (e.g., "sqlite").
+        db_type: Database driver identifier (``"sqlite"`` | ``"postgres"``).
 
     Returns:
-        The loaded database module.
+        The database backend module.
 
     Raises:
-        DatabaseNotFoundError: If no matching module is found.
+        DatabaseNotFoundError: If ``db_type`` is not a known backend.
     """
-    module = _db_modules.get(db_type)
-    if module:
-        return module
-    module_name = f"runtools.runcore.db.{db_type}"
-    try:
-        module = importlib.import_module(module_name)
-    except ModuleNotFoundError as e:
-        if e.name == module_name:
-            raise DatabaseNotFoundError(db_type)
-        raise
-    _db_modules[db_type] = module
-    return module
+    match db_type:
+        case "sqlite":
+            from runtools.runcore.db import sqlite
+            return sqlite
+        case "postgres":
+            from runtools.runcore.db import postgres
+            return postgres
+    raise DatabaseNotFoundError(db_type)
 
 
 class DatabaseNotFoundError(RuntoolsException):
