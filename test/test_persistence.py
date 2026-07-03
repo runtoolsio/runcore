@@ -1,16 +1,11 @@
 import pytest
 
-from runtools.runcore import db
 from runtools.runcore.db.persister import RunStatePersister
 from runtools.runcore.job import (
     InstanceLifecycleEvent, InstanceObservableNotifications, InstancePhaseEvent, InstanceStatusEvent,
 )
 from runtools.runcore.run import Stage, TerminationStatus
 from runtools.runcore.test.job import fake_job_run
-
-
-def test_load_sqlite():
-    assert db.load_database_module('sqlite')
 
 
 class FakeDB:

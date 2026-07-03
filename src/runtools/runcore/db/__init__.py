@@ -9,8 +9,6 @@ Key Components:
     EnvironmentDatabase: ABC combining ConfigStorage and RunStorage over a single backing store.
     ConfigStorage: Protocol for environment configuration (config table).
     RunStorage: Protocol for job run history (runs table).
-Factory Functions:
-    load_database_module: Resolves the built-in database backend module for a driver name.
 
 Driver Module Contract:
     Each driver module must expose four module-level functions:
@@ -35,39 +33,6 @@ from typing import Any, Iterable, Iterator
 from runtools.runcore.err import RuntoolsException
 from runtools.runcore.job import InstanceID, JobRun
 from runtools.runcore.matching import SortOption
-
-
-def load_database_module(db_type):
-    """Resolve the database backend module for a driver name.
-
-    Each module exposes the driver contract (``create()``, ``create_environment()``, ``exists()``,
-    ``delete()``). Imported lazily per branch so an unused backend's optional deps (e.g. ``psycopg``
-    for postgres) are never imported.
-
-    Args:
-        db_type: Database driver identifier (``"sqlite"`` | ``"postgres"``).
-
-    Returns:
-        The database backend module.
-
-    Raises:
-        DatabaseNotFoundError: If ``db_type`` is not a known backend.
-    """
-    match db_type:
-        case "sqlite":
-            from runtools.runcore.db import sqlite
-            return sqlite
-        case "postgres":
-            from runtools.runcore.db import postgres
-            return postgres
-    raise DatabaseNotFoundError(db_type)
-
-
-class DatabaseNotFoundError(RuntoolsException):
-
-    def __init__(self, module_):
-        super().__init__(f'Cannot find database module {module_}. Ensure this module is installed '
-                         f'or check that the provided database driver is correct.')
 
 
 class IncompatibleSchemaError(RuntoolsException):
@@ -103,7 +68,7 @@ class ConfigStorage(ABC):
     def load_config(self, env_id: str) -> dict[str, Any]:
         """Load environment config as a dict ready for Pydantic validation.
 
-        Returns a dict with 'id' (injected) and all stored config keys with parsed values.
+        Returns a dict of all stored config keys with parsed values.
         """
 
     @abstractmethod
@@ -111,7 +76,7 @@ class ConfigStorage(ABC):
         """Replace all stored config keys.
 
         Performs a full replace (delete + insert). The dict should contain
-        top-level config keys with JSON-serializable values (excluding id).
+        top-level config keys with JSON-serializable values.
         """
 
 

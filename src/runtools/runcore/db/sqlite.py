@@ -55,7 +55,7 @@ def create_environment(entry, config) -> None:
     """
     _resolve_path(entry).parent.mkdir(parents=True, exist_ok=True)
     with create(entry) as db:
-        db.save_config(entry.id, config.model_dump(mode='json', exclude={'id'}))
+        db.save_config(entry.id, config.model_dump(mode='json'))
 
 
 def create(entry, **kwargs):
@@ -557,10 +557,7 @@ class SQLite(EnvironmentDatabase):
     def load_config(self, env_id: str) -> dict:
         """Load environment config as a dict with parsed JSON values."""
         c = self._conn.execute("SELECT key, value FROM config")
-        config_dict = {"id": env_id}
-        for key, value_json in c.fetchall():
-            config_dict[key] = json.loads(value_json)
-        return config_dict
+        return {key: json.loads(value_json) for key, value_json in c.fetchall()}
 
     @override
     @ensure_open

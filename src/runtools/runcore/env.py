@@ -1,12 +1,12 @@
 import logging
 from enum import StrEnum
 from pathlib import Path
-from typing import Optional, Literal, Annotated, Union, Dict, Set, Iterable, List
+from typing import Optional, Dict, Set, Iterable, List, assert_never
 
-from pydantic import BaseModel, ConfigDict, Field, Discriminator
+from pydantic import BaseModel, ConfigDict, Field
 
 from runtools.runcore import paths
-from runtools.runcore.db import load_database_module
+from runtools.runcore.db import EnvironmentDatabase
 from runtools.runcore.err import RuntoolsException
 from runtools.runcore.output import OutputConfig
 from runtools.runcore.util import files
@@ -14,47 +14,12 @@ from runtools.runcore.util import files
 log = logging.getLogger(__name__)
 
 BUILTIN_LOCAL = 'local'
-_SQLITE_DRIVER = 'sqlite'
 
 
-class TransportType(StrEnum):
-    IN_PROCESS = 'in_process'
-    UNIX_SOCKET = 'unix_socket'
-    DB_POLLING = 'db_polling'
-
-
-class InProcessTransportConfig(BaseModel):
-    """No transport boundary — node and clients live in the same process."""
-    model_config = ConfigDict(frozen=True)
-
-    type: Literal["in_process"] = TransportType.IN_PROCESS
-
-
-class UnixSocketTransportConfig(BaseModel):
-    """Process boundary over Unix domain sockets."""
-    model_config = ConfigDict(frozen=True)
-
-    type: Literal["unix_socket"] = TransportType.UNIX_SOCKET
-    root_dir: Optional[Path] = Field(
-        default=None,
-        description="Transport root: holds component dirs, socket files, and liveness lock files. "
-                    "Uses default if None."
-    )
-
-
-class DbPollingTransportConfig(BaseModel):
-    """Shared-database transport (polling): clients observe runs by polling the environment database
-    rather than contacting producing nodes. Backend-agnostic — the DB driver is chosen by the
-    EnvironmentEntry, independently of this transport."""
-    model_config = ConfigDict(frozen=True)
-
-    type: Literal["db_polling"] = TransportType.DB_POLLING
-
-
-TransportConfig = Annotated[
-    Union[InProcessTransportConfig, UnixSocketTransportConfig, DbPollingTransportConfig],
-    Discriminator("type")
-]
+class EnvironmentKind(StrEnum):
+    """Curated backend bundle selecting storage, live transport, and coordination together."""
+    LOCAL = 'local'        # sqlite + unix-socket directory + file locks
+    POSTGRES = 'postgres'  # postgres + polling directory (observe-only until the producer slice)
 
 
 class RetentionConfig(BaseModel):
@@ -66,26 +31,42 @@ class RetentionConfig(BaseModel):
                     "(0 = remove all). None means no default — prune requires an explicit --keep-days.")
 
 
-class EnvironmentConfig(BaseModel):
-    """Runtime configuration of a named environment.
+class _EnvironmentConfigBase(BaseModel):
+    """Settings shared by all environment kinds.
 
-    Transport selects process topology, communication mechanism, and coordination primitives.
-    Persistence is not part of this config — the DB must be opened (via EnvironmentEntry)
-    before this config can be loaded from it.
+    Identity and kind live on the EnvironmentEntry — the config is pure behaviour,
+    discriminated externally by ``entry.kind`` at load. Persistence is not part of this
+    config — the DB must be opened (via EnvironmentEntry) before this config can be
+    loaded from it.
     """
     model_config = ConfigDict(frozen=True)
 
-    id: str = Field(description="Environment identifier")
-    transport: TransportConfig = Field(description="Transport selecting topology and coordination")
     output: OutputConfig = Field(default_factory=OutputConfig, description="Output configuration")
     retention: RetentionConfig = Field(default_factory=RetentionConfig,
                                        description="Retention configuration for finished runs")
     plugins: Dict[str, dict] = Field(default_factory=dict, description="Plugin name to config mapping")
 
-    @classmethod
-    def default_local(cls, env_id: str) -> "EnvironmentConfig":
-        """Out-of-the-box preset: unix_socket transport, default output and retention."""
-        return cls(id=env_id, transport=UnixSocketTransportConfig())
+
+class LocalEnvironmentConfig(_EnvironmentConfigBase):
+    """Configuration of a ``local`` environment (sqlite + unix-socket directory)."""
+
+    root_dir: Optional[Path] = Field(
+        default=None,
+        description="Transport root: holds component dirs, socket files, and liveness lock files. "
+                    "Uses default if None."
+    )
+
+
+class PostgresEnvironmentConfig(_EnvironmentConfigBase):
+    """Configuration of a ``postgres`` environment (postgres + polling directory)."""
+
+
+EnvironmentConfig = LocalEnvironmentConfig | PostgresEnvironmentConfig
+
+_CONFIG_TYPES = {
+    EnvironmentKind.LOCAL: LocalEnvironmentConfig,
+    EnvironmentKind.POSTGRES: PostgresEnvironmentConfig,
+}
 
 
 # --- Environment entry ---
@@ -97,8 +78,8 @@ class EnvironmentEntry(BaseModel):
     or programmatically by the user.
     """
     id: str
-    driver: str
-    location: Optional[str] = Field(default=None, description="Driver-specific location of the backing store")
+    kind: EnvironmentKind = EnvironmentKind.LOCAL
+    location: Optional[str] = Field(default=None, description="Kind-specific location of the backing store")
 
     @property
     def is_builtin_local(self) -> bool:
@@ -125,7 +106,7 @@ def lookup(env_id: str) -> EnvironmentEntry:
         EnvironmentNotFoundError: If env_id is not built-in local and not in the registry.
     """
     if env_id == BUILTIN_LOCAL:
-        return EnvironmentEntry(id=BUILTIN_LOCAL, driver=_SQLITE_DRIVER)
+        return EnvironmentEntry(id=BUILTIN_LOCAL, kind=EnvironmentKind.LOCAL)
     registry = _load_registry()
     if env_id not in registry:
         raise EnvironmentNotFoundError(f"Environment '{env_id}' not found in registry", {env_id})
@@ -167,7 +148,7 @@ def load_registry() -> Dict[str, EnvironmentEntry]:
 
 def available_environments() -> list[EnvironmentEntry]:
     """Return all available environments: built-in local + registered."""
-    entries = [EnvironmentEntry(id=BUILTIN_LOCAL, driver=_SQLITE_DRIVER)]
+    entries = [EnvironmentEntry(id=BUILTIN_LOCAL, kind=EnvironmentKind.LOCAL)]
     entries.extend(EnvironmentEntry(id=eid, **data) for eid, data in _load_registry().items())
     return entries
 
@@ -194,13 +175,31 @@ def resolve_env_id(env_id: Optional[str] = None) -> str:
 
 # --- DB layer ---
 
-def _create_env_db(entry: EnvironmentEntry):
+def _db_module(kind: EnvironmentKind):
+    """Resolve the database backend module for an environment kind.
+
+    Each module exposes the driver contract (``create()``, ``create_environment()``, ``exists()``,
+    ``delete()``). Imported lazily per branch so an unused backend's optional deps (e.g. ``psycopg``
+    for postgres) are never imported.
+    """
+    match kind:
+        case EnvironmentKind.LOCAL:
+            from runtools.runcore.db import sqlite
+            return sqlite
+        case EnvironmentKind.POSTGRES:
+            from runtools.runcore.db import postgres
+            return postgres
+        case _:
+            assert_never(kind)  # new kind added but not wired here
+
+
+def _create_env_db(entry: EnvironmentEntry) -> EnvironmentDatabase:
     """Create an EnvironmentDatabase instance from an entry (unopened).
 
     Raises:
         EnvironmentNotFoundError: If the backing store does not exist.
     """
-    driver = load_database_module(entry.driver)
+    driver = _db_module(entry.kind)
     if not driver.exists(entry):
         raise EnvironmentNotFoundError(
             f"Database for environment '{entry.id}' not found", {entry.id})
@@ -214,39 +213,22 @@ def ensure_environment(entry: EnvironmentEntry):
     """
     if not entry.is_builtin_local:
         return
-    driver = load_database_module(entry.driver)
+    driver = _db_module(entry.kind)
     if not driver.exists(entry):
-        driver.create_environment(entry, EnvironmentConfig.default_local(entry.id))
-
-
-def _open_environment(entry: EnvironmentEntry):
-    """Open an environment's database and load its config. Returns (env_db, config) tuple.
-
-    The DB is returned already opened. The caller owns the DB lifecycle (must close it).
-    On failure during config loading, the DB is closed before raising.
-    """
-    env_db = _create_env_db(entry)
-    env_db.open()
-    try:
-        config_dict = env_db.load_config(entry.id)
-        config = EnvironmentConfig.model_validate(config_dict)
-    except BaseException:
-        env_db.close()
-        raise
-    return env_db, config
+        driver.create_environment(entry, LocalEnvironmentConfig())
 
 
 def load_env_config(entry: EnvironmentEntry) -> EnvironmentConfig:
     """Load environment config from DB. Returns defaults for missing keys."""
     with _create_env_db(entry) as db:
         config_dict = db.load_config(entry.id)
-        return EnvironmentConfig.model_validate(config_dict)
+        return _CONFIG_TYPES[entry.kind].model_validate(config_dict)
 
 
 def save_env_config(entry: EnvironmentEntry, config: EnvironmentConfig):
     """Save environment config to the DB."""
     with _create_env_db(entry) as db:
-        db.save_config(entry.id, config.model_dump(mode='json', exclude={'id'}))
+        db.save_config(entry.id, config.model_dump(mode='json'))
 
 
 # --- Lifecycle ---
@@ -266,9 +248,9 @@ def create_environment(entry: EnvironmentEntry, config: EnvironmentConfig):
     if entry.id in registry:
         raise EnvironmentAlreadyExistsError(entry.id)
 
-    load_database_module(entry.driver).create_environment(entry, config)
+    _db_module(entry.kind).create_environment(entry, config)
 
-    entry_data = {"driver": entry.driver}
+    entry_data = {"kind": entry.kind.value}
     if entry.location:
         entry_data["location"] = entry.location
     registry[entry.id] = entry_data
@@ -299,7 +281,7 @@ def delete_environment(env_id: str, *, delete_db: bool = True):
 
     if delete_db:
         entry = EnvironmentEntry(id=env_id, **entry_data)
-        load_database_module(entry.driver).delete(entry)
+        _db_module(entry.kind).delete(entry)
 
     _save_registry(registry)
     log.debug("Environment deleted", extra={"env": env_id})

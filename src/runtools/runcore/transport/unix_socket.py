@@ -22,7 +22,6 @@ from runtools.runcore.client import (
     _job_runs_retval_mapper,
     _no_retval_mapper,
 )
-from runtools.runcore.env import UnixSocketTransportConfig
 from runtools.runcore.err import run_isolated_collect_exceptions
 from runtools.runcore.job import InstanceID, JobInstance, JobInstanceMetadata, JobRun
 from runtools.runcore.matching import JobRunCriteria
@@ -596,12 +595,11 @@ class UnixSocketInstanceDirectory(EventDrivenInstanceDirectoryBase):
 # Factory
 # ---------------------------------------------------------------------------
 
-def create_instance_directory(env_id: str,
-                              transport_config: UnixSocketTransportConfig) -> UnixSocketInstanceDirectory:
+def create_instance_directory(env_id: str, root_dir: Optional[Path] = None) -> UnixSocketInstanceDirectory:
     """Create the Unix socket directory for an environment."""
     # Sweep stale components before allocating our own — no need to scan past our live lock.
-    clean_stale_component_dirs(resolve_env_dir(env_id, transport_config.root_dir))
-    layout = StandardUnixSocketConnectorLayout.create(env_id, transport_config.root_dir)
+    clean_stale_component_dirs(resolve_env_dir(env_id, root_dir))
+    layout = StandardUnixSocketConnectorLayout.create(env_id, root_dir)
     rpc_client = UnixSocketRpcClient(layout.server_sockets_provider)
     discovery = UnixSocketInstanceDiscovery(rpc_client)
     event_receiver = UnixSocketEventReceiver(layout.listener_events_socket_path)

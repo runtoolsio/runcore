@@ -104,7 +104,7 @@ def create_environment(entry, config) -> None:
     db._open_pool()
     try:
         db._provision()
-        db.save_config(entry.id, config.model_dump(mode='json', exclude={'id'}))
+        db.save_config(entry.id, config.model_dump(mode='json'))
     finally:
         db.close()
 
@@ -556,10 +556,7 @@ class PostgreSQL(EnvironmentDatabase):
         """Load environment config as a dict with parsed JSON values."""
         with self._pool.connection() as conn, conn.cursor() as cur:
             cur.execute("SELECT key, value FROM config")
-            config = {"id": env_id}
-            for key, value in cur.fetchall():
-                config[key] = value  # JSONB already deserialized
-            return config
+            return dict(cur.fetchall())  # JSONB already deserialized
 
     @override
     @ensure_open

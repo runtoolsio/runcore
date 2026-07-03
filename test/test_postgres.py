@@ -11,7 +11,7 @@ import pytest
 
 from runtools.runcore.db import EnvironmentStoreNotProvisionedError, IncompatibleSchemaError, postgres
 from runtools.runcore.db.postgres import PostgreSQL, SCHEMA_VERSION
-from runtools.runcore.env import EnvironmentConfig, EnvironmentEntry
+from runtools.runcore.env import EnvironmentEntry, PostgresEnvironmentConfig
 from runtools.runcore.job import DuplicateInstanceError, InstanceID
 from runtools.runcore.matching import JobRunCriteria, LifecycleCriterion, MetadataCriterion, PhaseCriterion
 from runtools.runcore.run import Stage, TerminationStatus
@@ -50,12 +50,12 @@ def pg_dsn():
 
 def _provision(entry):
     """Admin-side provisioning (DDL + seed config) — open() is validate-only now."""
-    postgres.create_environment(entry, EnvironmentConfig.default_local(entry.id))
+    postgres.create_environment(entry, PostgresEnvironmentConfig())
 
 
 @pytest.fixture
 def sut(pg_dsn):
-    entry = EnvironmentEntry(id="test_env", driver="postgres", location=pg_dsn)
+    entry = EnvironmentEntry(id="test_env", kind="postgres", location=pg_dsn)
     postgres.delete(entry)  # reset schema between tests (and clean up any prior leftovers)
     _provision(entry)
     db = postgres.create(entry)
@@ -92,7 +92,7 @@ def test_schema_version_mismatch_raises(sut, pg_dsn):
     with sut._pool.connection() as conn:
         conn.execute("UPDATE schema_info SET version = 999")
     sut.close()
-    reopened = postgres.create(EnvironmentEntry(id="test_env", driver="postgres", location=pg_dsn))
+    reopened = postgres.create(EnvironmentEntry(id="test_env", kind="postgres", location=pg_dsn))
     with pytest.raises(IncompatibleSchemaError):
         reopened.open()
 
@@ -101,7 +101,7 @@ def test_schema_version_mismatch_raises(sut, pg_dsn):
 
 def test_open_unprovisioned_raises(pg_dsn):
     """open() must not provision — an unprovisioned env raises rather than silently creating it."""
-    entry = EnvironmentEntry(id="unprov_env", driver="postgres", location=pg_dsn)
+    entry = EnvironmentEntry(id="unprov_env", kind="postgres", location=pg_dsn)
     postgres.delete(entry)
     db = postgres.create(entry)
     try:
@@ -117,7 +117,7 @@ def test_open_unprovisioned_raises(pg_dsn):
 # --- environment isolation (schema-per-env on a shared database) ---
 
 def test_exists_false_before_create_true_after(pg_dsn):
-    entry = EnvironmentEntry(id="ex_env", driver="postgres", location=pg_dsn)
+    entry = EnvironmentEntry(id="ex_env", kind="postgres", location=pg_dsn)
     postgres.delete(entry)
     try:
         assert not postgres.exists(entry)
@@ -128,8 +128,8 @@ def test_exists_false_before_create_true_after(pg_dsn):
 
 
 def test_two_envs_same_dsn_are_isolated(pg_dsn):
-    a = EnvironmentEntry(id="env_a", driver="postgres", location=pg_dsn)
-    b = EnvironmentEntry(id="env_b", driver="postgres", location=pg_dsn)
+    a = EnvironmentEntry(id="env_a", kind="postgres", location=pg_dsn)
+    b = EnvironmentEntry(id="env_b", kind="postgres", location=pg_dsn)
     for e in (a, b):
         postgres.delete(e)
         _provision(e)
@@ -165,8 +165,8 @@ def test_schema_name_bounded_and_collision_free_for_long_ids():
 
 def test_long_id_envs_are_isolated(pg_dsn):
     base = "y" * 60
-    a = EnvironmentEntry(id=base + "_a", driver="postgres", location=pg_dsn)
-    b = EnvironmentEntry(id=base + "_b", driver="postgres", location=pg_dsn)
+    a = EnvironmentEntry(id=base + "_a", kind="postgres", location=pg_dsn)
+    b = EnvironmentEntry(id=base + "_b", kind="postgres", location=pg_dsn)
     for e in (a, b):
         postgres.delete(e)
         _provision(e)
@@ -185,8 +185,8 @@ def test_long_id_envs_are_isolated(pg_dsn):
 
 
 def test_delete_one_env_leaves_the_other(pg_dsn):
-    a = EnvironmentEntry(id="env_a", driver="postgres", location=pg_dsn)
-    b = EnvironmentEntry(id="env_b", driver="postgres", location=pg_dsn)
+    a = EnvironmentEntry(id="env_a", kind="postgres", location=pg_dsn)
+    b = EnvironmentEntry(id="env_b", kind="postgres", location=pg_dsn)
     for e in (a, b):
         postgres.delete(e)
         _provision(e)
@@ -206,8 +206,8 @@ def test_open_works_without_ddl_privilege(pg_dsn):
     from psycopg import conninfo, errors, sql
 
     role, pw = "rt_readonly_test", "rt_pw"
-    entry = EnvironmentEntry(id="role_env", driver="postgres", location=pg_dsn)
-    other = EnvironmentEntry(id="role_env_other", driver="postgres", location=pg_dsn)
+    entry = EnvironmentEntry(id="role_env", kind="postgres", location=pg_dsn)
+    other = EnvironmentEntry(id="role_env_other", kind="postgres", location=pg_dsn)
 
     # Admin: try to create a login role with no CREATE on the database. Skip if we can't.
     try:
@@ -242,8 +242,8 @@ def test_open_works_without_ddl_privilege(pg_dsn):
         postgres.delete(other)
         with pytest.raises(errors.InsufficientPrivilege):
             postgres.create_environment(
-                EnvironmentEntry(id=other.id, driver="postgres", location=limited_dsn),
-                EnvironmentConfig.default_local(other.id))
+                EnvironmentEntry(id=other.id, kind="postgres", location=limited_dsn),
+                PostgresEnvironmentConfig())
     finally:
         postgres.delete(entry)
         postgres.delete(other)
@@ -502,12 +502,10 @@ def test_remove_runs(sut):
 
 
 def test_config_round_trip(sut):
-    sut.save_config('test_env', {'transport': {'type': 'unix_socket'}, 'plugins': ['p1']})
+    sut.save_config('test_env', {'retention': {'keep_days': 7}, 'plugins': ['p1']})
 
     config = sut.load_config('test_env')
-    assert config['id'] == 'test_env'
-    assert config['transport'] == {'type': 'unix_socket'}
-    assert config['plugins'] == ['p1']
+    assert config == {'retention': {'keep_days': 7}, 'plugins': ['p1']}
 
 
 # --- init / duplicates ---

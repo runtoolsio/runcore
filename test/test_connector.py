@@ -1,11 +1,11 @@
-"""Connector composition — the ``_create`` transport dispatch."""
+"""Connector composition — the polling directory over the environment database."""
 import pytest
 
-from runtools.runcore.connector import _create
+from runtools.runcore.connector import compose
 from runtools.runcore.db import sqlite
-from runtools.runcore.env import DbPollingTransportConfig, EnvironmentConfig
 from runtools.runcore.run import TerminationStatus
 from runtools.runcore.test.job import fake_job_run
+from runtools.runcore.transport.db import PollingInstanceDirectory
 from runtools.runcore.util import utc_now
 
 BASE = utc_now().replace(microsecond=0)
@@ -25,9 +25,9 @@ def env_db():
 
 def test_db_transport_observes_active_runs(env_db):
     _seed_active(env_db, fake_job_run('j1', created_at=BASE, term_status=None))
-    config = EnvironmentConfig(id='test_env', transport=DbPollingTransportConfig())
 
-    with _create(env_db, config) as connector:  # opens the polling directory — first poll seeds the view
+    # Opening the connector opens the polling directory — first poll seeds the view
+    with compose('test_env', env_db, PollingInstanceDirectory(env_db), ()) as connector:
         assert [r.job_id for r in connector.get_active_runs()] == ['j1']
 
 
@@ -37,6 +37,5 @@ def test_db_transport_excludes_ended_runs(env_db):
     env_db.init_run(iid.job_id, iid.run_id, created_at=BASE)
     env_db.store_runs(fake_job_run('done', created_at=BASE, term_status=TerminationStatus.COMPLETED))
 
-    config = EnvironmentConfig(id='test_env', transport=DbPollingTransportConfig())
-    with _create(env_db, config) as connector:
+    with compose('test_env', env_db, PollingInstanceDirectory(env_db), ()) as connector:
         assert [r.job_id for r in connector.get_active_runs()] == ['running']
