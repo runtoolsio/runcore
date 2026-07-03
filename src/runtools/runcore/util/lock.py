@@ -5,15 +5,47 @@ TODO: Move to runjob?
 
 import logging
 import random
+import re
 import time
 import weakref
 from threading import RLock
+from typing import Protocol, runtime_checkable
 
 import portalocker
 
+from runtools.runcore import paths
 from runtools.runcore.err import InvalidStateError
 
 log = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class Lock(Protocol):
+    """A named exclusive mutex. Non-reentrant; not shareable between threads."""
+
+    def acquire(self): ...
+
+    def release(self): ...
+
+    def __enter__(self): ...
+
+    def __exit__(self, exc_type, exc_val, exc_tb): ...
+
+
+@runtime_checkable
+class LockProvider(Protocol):
+    """Provides named exclusive locks for job coordination within one environment.
+
+    Guarantees:
+     - Env scope: the same ``lock_id`` names the same lock for every process attached to
+       the environment; different environments never contend.
+     - IDs are arbitrary strings; encoding them to the backing medium (file name,
+       advisory key) is the implementation's responsibility.
+     - Crash release: a lock held by a dead process is released by the medium
+       (flock: kernel, advisory: session end) without any cleanup sweep.
+    """
+
+    def lock(self, lock_id: str) -> Lock: ...
 
 
 class FileLock:
@@ -81,34 +113,37 @@ class FileLock:
         self.release()
 
 
-def default_file_lock_factory(lock_dir, *, timeout=10, max_check_time=0.05):
-    def factory(lock_id):
-        return FileLock(lock_dir / f"{lock_id}.lock", timeout=timeout, max_check_time=max_check_time)
+class FileLockProvider:
+    """File-based LockProvider: one lock file per lock ID under an env-scoped directory.
 
-    return factory
-
-
-class MemoryLockFactory:
-    """
-    Factory class that produces and manages reentrant locks.
-    Locks are shared by ID and cleaned up when no longer referenced.
+    Lock IDs are sanitized to safe file names; a sanitization collision over-locks
+    (false contention), never under-locks.
     """
 
-    def __init__(self, *, timeout=2.0):
+    def __init__(self, env_id, *, timeout=10, max_check_time=0.05):
+        self._lock_dir = paths.lock_dir(create=True) / env_id
+        self._lock_dir.mkdir(exist_ok=True)
+        self._timeout = timeout
+        self._max_check_time = max_check_time
+
+    def lock(self, lock_id: str) -> FileLock:
+        safe_id = re.sub(r'[^\w.-]', '_', lock_id)
+        return FileLock(self._lock_dir / f"{safe_id}.lock",
+                        timeout=self._timeout, max_check_time=self._max_check_time)
+
+
+class MemoryLockProvider:
+    """In-memory LockProvider: reentrant locks shared by ID within the process.
+
+    Locks are cleaned up when no longer referenced. Process scope satisfies the env-scope
+    guarantee only for in-process environments, which is their sole use.
+    """
+
+    def __init__(self):
         self._locks = weakref.WeakValueDictionary()
         self._dict_lock = RLock()
-        self.timeout = timeout
 
-    def __call__(self, lock_id):
-        """
-        Get or create a lock for the given ID.
-
-        Args:
-            lock_id: Identifier for the lock
-
-        Returns:
-            threading.RLock: A reentrant lock instance
-        """
+    def lock(self, lock_id: str) -> RLock:
         with self._dict_lock:
             # First try to get the lock - keep a strong reference
             lock = self._locks.get(lock_id)
@@ -116,11 +151,3 @@ class MemoryLockFactory:
                 lock = RLock()
                 self._locks[lock_id] = lock
             return lock
-
-
-def default_memory_lock_factory():
-    """
-    Creates a lock factory instance.
-
-    """
-    return MemoryLockFactory()
