@@ -40,7 +40,8 @@ class LockProvider(Protocol):
      - Env scope: the same ``lock_id`` names the same lock for every process attached to
        the environment; different environments never contend.
      - IDs are arbitrary strings; encoding them to the backing medium (file name,
-       advisory key) is the implementation's responsibility.
+       advisory key) is the implementation's responsibility. The ``mutex-`` and ``eq-``
+       prefixes are reserved for framework coordination locks.
      - Crash release: a lock held by a dead process is released by the medium
        (flock: kernel, advisory: session end) without any cleanup sweep.
     """
