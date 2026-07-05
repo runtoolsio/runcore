@@ -12,13 +12,14 @@ already exist; this driver manages the schema (tables) within it, not the databa
 import hashlib
 import logging
 import re
+import time
 from datetime import timezone
 from functools import wraps
 from typing import Iterator, List, override
 
 import psycopg
 from psycopg import sql
-from psycopg.errors import UniqueViolation
+from psycopg.errors import LockNotAvailable, UniqueViolation
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
@@ -35,6 +36,7 @@ from runtools.runcore.output import OutputLocation
 from runtools.runcore.run import TerminationStatus, Outcome, PhaseRun, Fault
 from runtools.runcore.status import Status
 from runtools.runcore.util import utc_now
+from runtools.runcore.util.lock import LockAcquireTimeoutError
 
 log = logging.getLogger(__name__)
 
@@ -112,6 +114,154 @@ def create_environment(entry, config) -> None:
 def create(entry, **kwargs) -> 'PostgreSQL':
     """Create a (not yet opened) Postgres database handle for ``entry``."""
     return PostgreSQL(_dsn(entry), entry.id, **kwargs)
+
+
+# --- Coordination: session-level advisory locks ---
+
+def _advisory_key(env_id: str, lock_id: str) -> int:
+    """Stable 64-bit advisory key namespaced by environment.
+
+    Advisory lock space is per database (not per schema), so the env ID is part of the
+    key. The hash must be stable across processes (Python's ``hash()`` is per-process
+    salted), and the components are length-prefixed so their boundary is unambiguous —
+    IDs are arbitrary strings, so ``('a:b', 'c')`` must not key like ``('a', 'b:c')``.
+    A key collision over-locks (false contention), never under-locks.
+    """
+    hasher = hashlib.blake2b(digest_size=8)
+    for part in ("runtools", env_id, lock_id):
+        encoded = part.encode()
+        hasher.update(len(encoded).to_bytes(4, "big"))
+        hasher.update(encoded)
+    return int.from_bytes(hasher.digest(), signed=True)
+
+
+class AdvisoryLock:
+    """A Postgres session-level advisory lock; its dedicated connection is the lock token.
+
+    Acquiring opens the connection, releasing closes it — session end releases the
+    server-side lock, so release cannot fail halfway or leak. Crash release comes for
+    free: a dead holder's session drops and Postgres frees the lock. Non-reentrant;
+    not shareable between threads.
+    """
+
+    def __init__(self, dsn, lock_id, key, *, timeout=10):
+        self.lock_id = lock_id
+        self._dsn = dsn
+        self._key = key
+        self._timeout = timeout
+        self._conn = None
+        self._start_time = None
+
+    def acquire(self):
+        """Block until the lock is held, waiting server-side up to the timeout.
+
+        Raises:
+            InvalidStateError: If the lock has already been acquired.
+            LockAcquireTimeoutError: If the lock cannot be acquired within the timeout.
+        """
+        if self._conn:
+            raise InvalidStateError("Lock is already acquired")
+
+        timeout_ms = int(self._timeout * 1000)
+        if timeout_ms <= 0:
+            # Postgres treats lock_timeout = 0 as *disabled* (infinite wait), so a zero
+            # timeout must become a non-blocking attempt instead
+            if not self.try_acquire():
+                raise LockAcquireTimeoutError(f"Advisory lock '{self.lock_id}' is held elsewhere (no-wait)")
+            return
+
+        conn = psycopg.connect(self._dsn, autocommit=True)
+        start_time = time.time()
+        try:
+            conn.execute("SELECT set_config('lock_timeout', %s, false)", (str(timeout_ms),))
+            conn.execute("SELECT pg_advisory_lock(%s)", (self._key,))
+        except LockNotAvailable:
+            conn.close()
+            raise LockAcquireTimeoutError(f"Advisory lock '{self.lock_id}' not acquired within {self._timeout}s")
+        except BaseException:
+            conn.close()
+            raise
+
+        self._conn = conn
+        self._start_time = start_time
+        wait_time_ms = (time.time() - start_time) * 1000
+        log.debug("Lock acquired", extra={"lock": self.lock_id, "wait_ms": round(wait_time_ms, 2)})
+
+    def try_acquire(self) -> bool:
+        """Attempt to acquire without waiting.
+
+        Returns:
+            bool: True if acquired, False if the lock is held elsewhere.
+
+        Raises:
+            InvalidStateError: If the lock has already been acquired.
+        """
+        if self._conn:
+            raise InvalidStateError("Lock is already acquired")
+
+        conn = psycopg.connect(self._dsn, autocommit=True)
+        try:
+            acquired = conn.execute("SELECT pg_try_advisory_lock(%s)", (self._key,)).fetchone()[0]
+        except BaseException:
+            conn.close()
+            raise
+        if not acquired:
+            conn.close()
+            return False
+
+        self._conn = conn
+        self._start_time = time.time()
+        log.debug("Lock acquired", extra={"lock": self.lock_id, "wait_ms": 0})
+        return True
+
+    def release(self):
+        """Release the lock by closing its connection.
+
+        Raises:
+            InvalidStateError: If the lock hasn't been acquired.
+        """
+        if not self._conn:
+            raise InvalidStateError("Lock is not acquired")
+
+        if self._conn.closed:
+            log.warning("Lock connection died while held; mutual exclusion may have been broken",
+                        extra={"lock": self.lock_id})
+        self._conn.close()
+        self._conn = None
+
+        lock_time_ms = (time.time() - self._start_time) * 1000
+        log.debug("Lock released", extra={"lock": self.lock_id, "locked_ms": round(lock_time_ms, 2)})
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.release()
+
+
+class AdvisoryLockProvider:
+    """Postgres-backed LockProvider using session-level advisory locks.
+
+    Locks are server-held, so every process connected to the environment's database
+    contends on the same keys — cross-machine coordination with no shared filesystem.
+    Each held lock pins its own dedicated connection, deliberately separate from the
+    environment pool: the session is the lock owner, and pooled connections are shared,
+    reused, and not cleared of advisory locks on return.
+    """
+
+    def __init__(self, dsn: str, env_id: str, *, timeout=10):
+        self._dsn = dsn
+        self._env_id = env_id
+        self._timeout = timeout
+
+    def lock(self, lock_id: str) -> AdvisoryLock:
+        return AdvisoryLock(self._dsn, lock_id, _advisory_key(self._env_id, lock_id), timeout=self._timeout)
+
+
+def create_lock_provider(entry, *, timeout=10) -> AdvisoryLockProvider:
+    """Create the advisory-lock LockProvider for an environment entry."""
+    return AdvisoryLockProvider(_dsn(entry), entry.id, timeout=timeout)
 
 
 # --- Dialect: Postgres uses %s placeholders and aware-UTC timestamps ---

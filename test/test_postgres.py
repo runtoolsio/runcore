@@ -7,16 +7,19 @@ Docker is unavailable and no DSN is given — Postgres is a first-class backend,
 """
 import os
 
+import psycopg
 import pytest
 
 from runtools.runcore.db import EnvironmentStoreNotProvisionedError, IncompatibleSchemaError, postgres
-from runtools.runcore.db.postgres import PostgreSQL, SCHEMA_VERSION
+from runtools.runcore.db.postgres import AdvisoryLockProvider, PostgreSQL, SCHEMA_VERSION
 from runtools.runcore.env import EnvironmentEntry, PostgresEnvironmentConfig
+from runtools.runcore.err import InvalidStateError
 from runtools.runcore.job import DuplicateInstanceError, InstanceID
 from runtools.runcore.matching import JobRunCriteria, LifecycleCriterion, MetadataCriterion, PhaseCriterion
 from runtools.runcore.run import Stage, TerminationStatus
 from runtools.runcore.test.job import fake_job_run
 from runtools.runcore.util import MatchingStrategy
+from runtools.runcore.util.lock import LockAcquireTimeoutError, LockProvider
 
 POSTGRES_IMAGE = "postgres:16-alpine"
 
@@ -520,3 +523,86 @@ def test_auto_increment_allocates_sequential_ordinals(sut):
     created = fake_job_run('j1', 'r1').lifecycle.created_at
     ids = [sut.init_run('j1', 'r1', created_at=created, auto_increment=True) for _ in range(3)]
     assert [iid.ordinal for iid in ids] == [1, 2, 3]
+
+
+# --- advisory locks ---
+
+def test_advisory_key_stable_and_namespaced():
+    key = postgres._advisory_key('env_a', 'mutex-job')
+    assert key == postgres._advisory_key('env_a', 'mutex-job')
+    assert key != postgres._advisory_key('env_b', 'mutex-job')
+    assert key != postgres._advisory_key('env_a', 'mutex-other')
+    assert -2 ** 63 <= key < 2 ** 63
+
+
+def test_advisory_key_component_boundary_unambiguous():
+    assert postgres._advisory_key('a:b', 'c') != postgres._advisory_key('a', 'b:c')
+
+
+def test_advisory_provider_conforms_to_lock_provider():
+    assert isinstance(AdvisoryLockProvider('postgresql://unused', 'env'), LockProvider)
+
+
+def test_advisory_lock_excludes_across_sessions(pg_dsn):
+    contender = AdvisoryLockProvider(pg_dsn, 'env_a', timeout=0.2)
+
+    with AdvisoryLockProvider(pg_dsn, 'env_a').lock('mutex-job'):
+        with pytest.raises(LockAcquireTimeoutError):
+            contender.lock('mutex-job').acquire()
+
+    with contender.lock('mutex-job'):  # released above -> acquirable again
+        pass
+
+
+def test_advisory_lock_isolates_environments(pg_dsn):
+    with AdvisoryLockProvider(pg_dsn, 'env_a').lock('mutex-job'):
+        with AdvisoryLockProvider(pg_dsn, 'env_b', timeout=0.2).lock('mutex-job'):
+            pass  # same lock ID, different env -> no contention
+
+
+def test_advisory_lock_released_when_holder_session_dies(pg_dsn):
+    dead_holder = psycopg.connect(pg_dsn, autocommit=True)
+    dead_holder.execute("SELECT pg_advisory_lock(%s)", (postgres._advisory_key('env_a', 'mutex-crash'),))
+    dead_holder.close()  # simulated crash: session end must free the lock without any unlock
+
+    with AdvisoryLockProvider(pg_dsn, 'env_a', timeout=1).lock('mutex-crash'):
+        pass
+
+
+def test_advisory_lock_zero_timeout_fails_fast_instead_of_waiting_forever(pg_dsn):
+    no_wait = AdvisoryLockProvider(pg_dsn, 'env_a', timeout=0)
+
+    with AdvisoryLockProvider(pg_dsn, 'env_a').lock('mutex-nowait'):
+        with pytest.raises(LockAcquireTimeoutError):
+            no_wait.lock('mutex-nowait').acquire()
+
+    with no_wait.lock('mutex-nowait'):  # uncontended -> zero timeout still acquires
+        pass
+
+
+def test_advisory_try_acquire_claims_without_waiting(pg_dsn):
+    provider = AdvisoryLockProvider(pg_dsn, 'env_a')
+    held = provider.lock('mutex-claim')
+    assert held.try_acquire() is True
+    try:
+        assert provider.lock('mutex-claim').try_acquire() is False
+        with pytest.raises(InvalidStateError):
+            held.try_acquire()
+    finally:
+        held.release()
+
+    with provider.lock('mutex-claim'):  # released -> claimable again
+        pass
+
+
+def test_advisory_lock_state_guards(pg_dsn):
+    lock = AdvisoryLockProvider(pg_dsn, 'env_a').lock('mutex-guard')
+    with pytest.raises(InvalidStateError):
+        lock.release()
+
+    lock.acquire()
+    try:
+        with pytest.raises(InvalidStateError):
+            lock.acquire()
+    finally:
+        lock.release()

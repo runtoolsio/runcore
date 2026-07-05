@@ -8,15 +8,17 @@ import random
 import re
 import time
 import weakref
-from threading import RLock
+from threading import Lock as ThreadLock, RLock
 from typing import Protocol, runtime_checkable
 
-import portalocker
-
 from runtools.runcore import paths
-from runtools.runcore.err import InvalidStateError
+from runtools.runcore.err import InvalidStateError, RuntoolsException
 
 log = logging.getLogger(__name__)
+
+
+class LockAcquireTimeoutError(RuntoolsException):
+    """A lock could not be acquired within its timeout."""
 
 
 @runtime_checkable
@@ -24,6 +26,10 @@ class Lock(Protocol):
     """A named exclusive mutex. Non-reentrant; not shareable between threads."""
 
     def acquire(self): ...
+
+    def try_acquire(self) -> bool:
+        """Attempt to acquire without waiting. True if acquired, False if held elsewhere."""
+        ...
 
     def release(self): ...
 
@@ -83,12 +89,39 @@ class FileLock:
         if self._file_lock:
             raise InvalidStateError("Lock is already acquired")
 
+        import portalocker  # lazy: a runjob (node-side) dependency; consumers of the seam alone don't need it
+
         self._file_lock = portalocker.Lock(self.lock_file, timeout=self.timeout, check_interval=self._check_interval())
 
         self._start_time = time.time()
         self._file_lock.acquire()
         wait_time_ms = (time.time() - self._start_time) * 1000
         log.debug("Lock acquired", extra={"file": str(self.lock_file), "wait_ms": round(wait_time_ms, 2)})
+
+    def try_acquire(self) -> bool:
+        """Attempt to acquire without waiting.
+
+        Returns:
+            bool: True if acquired, False if the lock is held elsewhere.
+
+        Raises:
+            InvalidStateError: If the lock has already been acquired.
+        """
+        if self._file_lock:
+            raise InvalidStateError("Lock is already acquired")
+
+        import portalocker  # lazy: a runjob (node-side) dependency; consumers of the seam alone don't need it
+
+        file_lock = portalocker.Lock(self.lock_file, timeout=0, fail_when_locked=True)
+        try:
+            file_lock.acquire()
+        except portalocker.exceptions.BaseLockException:
+            return False
+
+        self._file_lock = file_lock
+        self._start_time = time.time()
+        log.debug("Lock acquired", extra={"file": str(self.lock_file), "wait_ms": 0})
+        return True
 
     def release(self):
         """
@@ -133,22 +166,70 @@ class FileLockProvider:
                         timeout=self._timeout, max_check_time=self._max_check_time)
 
 
-class MemoryLockProvider:
-    """In-memory LockProvider: reentrant locks shared by ID within the process.
+class MemoryLock:
+    """In-memory Lock over a per-ID lock shared within the process.
 
-    Locks are cleaned up when no longer referenced. Process scope satisfies the env-scope
-    guarantee only for in-process environments, which is their sole use.
+    Non-reentrant, matching the file and advisory implementations — a same-thread re-claim
+    of a held ID fails (``try_acquire``) or blocks (``acquire``), so in-process environments
+    reproduce the claim semantics of the other kinds.
+    """
+
+    def __init__(self, shared_lock: ThreadLock):
+        self._lock = shared_lock
+        self._acquired = False
+
+    def acquire(self):
+        if self._acquired:
+            raise InvalidStateError("Lock is already acquired")
+        self._lock.acquire()
+        self._acquired = True
+
+    def try_acquire(self) -> bool:
+        """Attempt to acquire without waiting.
+
+        Returns:
+            bool: True if acquired, False if the lock is held elsewhere.
+
+        Raises:
+            InvalidStateError: If the lock has already been acquired.
+        """
+        if self._acquired:
+            raise InvalidStateError("Lock is already acquired")
+        if self._lock.acquire(blocking=False):
+            self._acquired = True
+            return True
+        return False
+
+    def release(self):
+        if not self._acquired:
+            raise InvalidStateError("Lock is not acquired")
+        self._acquired = False
+        self._lock.release()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.release()
+
+
+class MemoryLockProvider:
+    """In-memory LockProvider: locks shared by ID within the process.
+
+    Underlying locks are cleaned up when no longer referenced. Process scope satisfies the
+    env-scope guarantee only for in-process environments, which is their sole use.
     """
 
     def __init__(self):
         self._locks = weakref.WeakValueDictionary()
         self._dict_lock = RLock()
 
-    def lock(self, lock_id: str) -> RLock:
+    def lock(self, lock_id: str) -> MemoryLock:
         with self._dict_lock:
-            # First try to get the lock - keep a strong reference
+            # First try to get the underlying lock - keep a strong reference
             lock = self._locks.get(lock_id)
             if lock is None:
-                lock = RLock()
+                lock = ThreadLock()
                 self._locks[lock_id] = lock
-            return lock
+            return MemoryLock(lock)
