@@ -19,7 +19,7 @@ BUILTIN_LOCAL = 'local'
 class EnvironmentKind(StrEnum):
     """Curated backend bundle selecting storage, live transport, and coordination together."""
     LOCAL = 'local'        # sqlite + unix-socket directory + file locks
-    POSTGRES = 'postgres'  # postgres + polling directory (observe-only until the producer slice)
+    POSTGRES = 'postgres'  # postgres + polling directory + advisory locks
 
 
 class RetentionConfig(BaseModel):
