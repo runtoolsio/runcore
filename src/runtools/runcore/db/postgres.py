@@ -25,12 +25,12 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
 from runtools.runcore.db import (EnvironmentDatabase, EnvironmentStoreNotProvisionedError, IncompatibleSchemaError,
-                                 RunVersion)
+                                 RunVersion, Signal)
 from runtools.runcore.db.sql import (build_job_stats, build_order_by, build_where_clause, Dialect, last_run_ids,
                                      LAST_PER_JOB_SQL, matching_pks)
 from runtools.runcore.err import InvalidStateError
-from runtools.runcore.job import (JobStats, JobRun, JobInstanceMetadata, InstanceID, DuplicateInstanceError,
-                                   normalize_tags)
+from runtools.runcore.job import (ControlRequest, JobStats, JobRun, JobInstanceMetadata, InstanceID,
+                                  DuplicateInstanceError, normalize_tags)
 from runtools.runcore.matching import SortOption
 from runtools.runcore.output import OutputLocation
 from runtools.runcore.run import TerminationStatus, Outcome, PhaseRun, Fault
@@ -291,7 +291,7 @@ _SELECT_RUNS = (
 _RUN_UPDATE_SQL = (
     "UPDATE runs SET user_params=%s, features=%s, created=%s, started=%s, ended=%s, exec_time=%s, "
     "root_phase=%s, output_locations=%s, termination_status=%s, faults=%s, status=%s, warnings=%s, "
-    "state_updated_at=%s, updated_at=%s "
+    "control_requests=%s, state_updated_at=%s, updated_at=%s "
     "WHERE job_id=%s AND run_id=%s AND ordinal=%s"
 )
 
@@ -312,7 +312,8 @@ def _to_job_run(row) -> JobRun:
     output_locations = tuple(OutputLocation.deserialize(loc) for loc in (row['output_locations'] or ()))
     faults = tuple(Fault.deserialize(f) for f in (row['faults'] or ()))
     status = Status.deserialize(row['status']) if row['status'] else None
-    return JobRun(_to_metadata(row), root_phase, output_locations, faults, status)
+    control_requests = tuple(ControlRequest.deserialize(c) for c in (row['control_requests'] or ()))
+    return JobRun(_to_metadata(row), root_phase, output_locations, faults, status, control_requests)
 
 
 def _run_update_params(r: JobRun):
@@ -331,6 +332,7 @@ def _run_update_params(r: JobRun):
         Jsonb([f.serialize() for f in r.faults]) if r.faults else None,
         Jsonb(r.status.serialize()) if r.status else None,
         len(r.status.warnings) if r.status else None,
+        Jsonb([c.serialize() for c in r.control_requests]) if r.control_requests else None,
         _bind_dt(r.last_updated),  # state_updated_at: domain freshness (newer-wins guard)
         _bind_dt(utc_now()),       # updated_at: row write time
         r.metadata.job_id,
@@ -377,6 +379,7 @@ CREATE TABLE IF NOT EXISTS runs (
     faults JSONB,
     status JSONB,
     warnings INTEGER,
+    control_requests JSONB,
     state_updated_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL,
     heartbeat_at TIMESTAMPTZ,
@@ -395,6 +398,18 @@ CREATE TABLE IF NOT EXISTS run_tags (
     FOREIGN KEY (job_id, run_id, ordinal) REFERENCES runs (job_id, run_id, ordinal) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS run_tags_tag_idx ON run_tags (tag);
+CREATE TABLE IF NOT EXISTS signals (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    job_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL,
+    phase_id TEXT,
+    op TEXT NOT NULL,
+    args JSONB,
+    requested_by TEXT,
+    requested_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS signals_instance_idx ON signals (job_id, run_id, ordinal);
 CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS schema_info (version INTEGER NOT NULL);
 """
@@ -611,6 +626,42 @@ class PostgreSQL(EnvironmentDatabase):
                 "UPDATE runs SET heartbeat_at = now() "
                 "WHERE job_id = %s AND run_id = %s AND ordinal = %s AND ended IS NULL",
                 ids)
+
+    @override
+    @ensure_open
+    def write_signal(self, instance_id, op, *, phase_id=None, args=(), requested_by=None):
+        """See `SignalStorage.write_signal`."""
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO signals (job_id, run_id, ordinal, phase_id, op, args, requested_by, requested_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, now())",
+                (instance_id.job_id, instance_id.run_id, instance_id.ordinal, phase_id, op,
+                 Jsonb(list(args)) if args else None, requested_by))
+
+    @override
+    @ensure_open
+    def read_signals(self, instance_ids):
+        """See `SignalStorage.read_signals`."""
+        ids = [(i.job_id, i.run_id, i.ordinal) for i in instance_ids]
+        if not ids:
+            return []
+        placeholders = ", ".join(["(%s, %s, %s)"] * len(ids))
+        rows = self._fetch(
+            f"SELECT * FROM signals WHERE (job_id, run_id, ordinal) IN ({placeholders}) ORDER BY id",
+            [value for iid in ids for value in iid])
+        return [Signal(r['id'], InstanceID(r['job_id'], r['run_id'], r['ordinal']), r['phase_id'], r['op'],
+                       tuple(r['args'] or ()), r['requested_by'], _read_dt(r['requested_at']))
+                for r in rows]
+
+    @override
+    @ensure_open
+    def delete_signals(self, signal_ids):
+        """See `SignalStorage.delete_signals`."""
+        ids = list(signal_ids)
+        if not ids:
+            return
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            cur.executemany("DELETE FROM signals WHERE id = %s", [(i,) for i in ids])
 
     @override
     @ensure_open

@@ -12,12 +12,12 @@ from threading import Lock
 from typing import List, Iterator, override
 
 from runtools.runcore import paths
-from runtools.runcore.db import EnvironmentDatabase, IncompatibleSchemaError, RunVersion
+from runtools.runcore.db import EnvironmentDatabase, IncompatibleSchemaError, RunVersion, Signal
 from runtools.runcore.db.sql import (build_job_stats, build_order_by, build_where_clause, Dialect, last_run_ids,
                                      LAST_PER_JOB_SQL, matching_pks)
 from runtools.runcore.err import InvalidStateError
-from runtools.runcore.job import (JobStats, JobRun, JobInstanceMetadata, InstanceID, DuplicateInstanceError,
-                                  normalize_tags)
+from runtools.runcore.job import (ControlRequest, JobStats, JobRun, JobInstanceMetadata, InstanceID,
+                                  DuplicateInstanceError, normalize_tags)
 from runtools.runcore.matching import SortOption
 from runtools.runcore.output import OutputLocation
 from runtools.runcore.run import TerminationStatus, Outcome, PhaseRun, Fault
@@ -132,7 +132,9 @@ def _to_job_run(r) -> JobRun:
     )
     faults = tuple(Fault.deserialize(f) for f in json.loads(r['faults'])) if r['faults'] else ()
     status = Status.deserialize(json.loads(r['status'])) if r['status'] else None
-    return JobRun(metadata, root_phase, output_locations, faults, status)
+    control_requests = (tuple(ControlRequest.deserialize(c) for c in json.loads(r['control_requests']))
+                        if r['control_requests'] else ())
+    return JobRun(metadata, root_phase, output_locations, faults, status, control_requests)
 
 
 _SELECT_RUNS = (
@@ -157,7 +159,7 @@ def _full_ts(dt):
 _RUN_UPDATE_SQL = (
     "UPDATE runs SET user_params=?, features=?, created=?, started=?, ended=?, exec_time=?, "
     "root_phase=?, output_locations=?, termination_status=?, faults=?, status=?, warnings=?, "
-    "state_updated_at=?, updated_at=? "
+    "control_requests=?, state_updated_at=?, updated_at=? "
     "WHERE job_id=? AND run_id=? AND ordinal=?"
 )
 
@@ -176,6 +178,7 @@ def _run_update_values(r: JobRun):
             json.dumps([f.serialize() for f in r.faults]) if r.faults else None,
             json.dumps(r.status.serialize()) if r.status else None,
             len(r.status.warnings) if r.status else None,
+            json.dumps([c.serialize() for c in r.control_requests]) if r.control_requests else None,
             _full_ts(r.last_updated),  # state_updated_at: domain freshness (newer-wins guard)
             _full_ts(utc_now()),       # updated_at: write-time cursor (changes on every accepted write)
             r.metadata.job_id,
@@ -237,6 +240,7 @@ class SQLite(EnvironmentDatabase):
                      faults TEXT CHECK (faults IS NULL OR json_valid(faults)),
                      status TEXT CHECK (status IS NULL OR json_valid(status)),
                      warnings INT,
+                     control_requests TEXT CHECK (control_requests IS NULL OR json_valid(control_requests)),
                      state_updated_at TIMESTAMP,
                      updated_at TIMESTAMP NOT NULL,
                      heartbeat_at TIMESTAMP,
@@ -264,6 +268,20 @@ class SQLite(EnvironmentDatabase):
                      )
                      ''')
         c.execute('CREATE INDEX run_tags_tag_idx ON run_tags (tag)')
+
+        c.execute('''CREATE TABLE signals (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     job_id TEXT NOT NULL,
+                     run_id TEXT NOT NULL,
+                     ordinal INTEGER NOT NULL,
+                     phase_id TEXT,
+                     op TEXT NOT NULL,
+                     args TEXT CHECK (args IS NULL OR json_valid(args)),
+                     requested_by TEXT,
+                     requested_at TIMESTAMP NOT NULL
+                     )
+                     ''')
+        c.execute('CREATE INDEX signals_instance_idx ON signals (job_id, run_id, ordinal)')
 
         c.execute('CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
         c.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')
@@ -501,6 +519,48 @@ class SQLite(EnvironmentDatabase):
         self._conn.executemany(
             "UPDATE runs SET heartbeat_at = ? WHERE job_id = ? AND run_id = ? AND ordinal = ? AND ended IS NULL",
             [(heartbeat, j, r, o) for j, r, o in ids])
+        self._conn.commit()
+
+    @override
+    @ensure_open
+    def write_signal(self, instance_id, op, *, phase_id=None, args=(), requested_by=None):
+        """See `SignalStorage.write_signal`."""
+        self._conn.execute(
+            "INSERT INTO signals (job_id, run_id, ordinal, phase_id, op, args, requested_by, requested_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (instance_id.job_id, instance_id.run_id, instance_id.ordinal, phase_id, op,
+             json.dumps(list(args)) if args else None, requested_by, format_dt_sql(utc_now())))
+        self._conn.commit()
+
+    @override
+    @ensure_open
+    def read_signals(self, instance_ids):
+        """See `SignalStorage.read_signals`."""
+        ids = [(i.job_id, i.run_id, i.ordinal) for i in instance_ids]
+        if not ids:
+            return []
+        placeholders = ", ".join(["(?, ?, ?)"] * len(ids))
+        cursor = self._conn.cursor()
+        cursor.row_factory = sqlite3.Row
+        cursor.execute(
+            f"SELECT * FROM signals WHERE (job_id, run_id, ordinal) IN ({placeholders}) ORDER BY id",
+            [value for iid in ids for value in iid])
+        try:
+            return [Signal(r['id'], InstanceID(r['job_id'], r['run_id'], r['ordinal']), r['phase_id'], r['op'],
+                           tuple(json.loads(r['args'])) if r['args'] else (), r['requested_by'],
+                           parse_dt_sql(r['requested_at']))
+                    for r in cursor.fetchall()]
+        finally:
+            cursor.close()
+
+    @override
+    @ensure_open
+    def delete_signals(self, signal_ids):
+        """See `SignalStorage.delete_signals`."""
+        ids = list(signal_ids)
+        if not ids:
+            return
+        self._conn.executemany("DELETE FROM signals WHERE id = ?", [(i,) for i in ids])
         self._conn.commit()
 
     @override

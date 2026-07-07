@@ -574,6 +574,45 @@ class JobInstance(abc.ABC):
 
 
 @dataclass(frozen=True)
+class ControlRequest:
+    """A remote control operation applied to the instance — the run's durable record.
+
+    Written by the owning node at the apply point (single-writer preserved) and retained with
+    the run's history; the in-flight command row it originates from is deleted on apply
+    (signals design — transport doc point 5).
+    """
+    op: str
+    applied_at: datetime.datetime
+    phase_id: Optional[str] = None
+    args: Tuple = ()
+    requested_by: Optional[str] = None
+    requested_at: Optional[datetime.datetime] = None
+
+    def serialize(self) -> Dict[str, Any]:
+        d = {"op": self.op, "applied_at": format_dt_iso(self.applied_at)}
+        if self.phase_id:
+            d["phase_id"] = self.phase_id
+        if self.args:
+            d["args"] = list(self.args)
+        if self.requested_by:
+            d["requested_by"] = self.requested_by
+        if self.requested_at:
+            d["requested_at"] = format_dt_iso(self.requested_at)
+        return d
+
+    @classmethod
+    def deserialize(cls, as_dict: Dict[str, Any]) -> 'ControlRequest':
+        return cls(
+            op=as_dict['op'],
+            applied_at=util.parse_datetime(as_dict['applied_at']),
+            phase_id=as_dict.get('phase_id'),
+            args=tuple(as_dict.get('args', ())),
+            requested_by=as_dict.get('requested_by'),
+            requested_at=util.parse_datetime(as_dict['requested_at']) if as_dict.get('requested_at') else None,
+        )
+
+
+@dataclass(frozen=True)
 class JobRun:
     """
     Immutable snapshot of job instance
@@ -583,6 +622,7 @@ class JobRun:
     output_locations: Tuple[OutputLocation, ...] = ()
     faults: Tuple[Fault, ...] = ()
     status: Optional[Status] = None
+    control_requests: Tuple[ControlRequest, ...] = ()
 
     @property
     def lifecycle(self) -> RunLifecycle:
@@ -598,6 +638,7 @@ class JobRun:
             ),
             faults=tuple(Fault.deserialize(f) for f in as_dict.get('faults', ())),
             status=Status.deserialize(as_dict['status']) if as_dict.get('status') else None,
+            control_requests=tuple(ControlRequest.deserialize(c) for c in as_dict.get('control_requests', ())),
         )
 
     def serialize(self) -> Dict[str, Any]:
@@ -611,6 +652,8 @@ class JobRun:
             d["faults"] = [f.serialize() for f in self.faults]
         if self.status:
             d["status"] = self.status.serialize()
+        if self.control_requests:
+            d["control_requests"] = [c.serialize() for c in self.control_requests]
         return d
 
     @property
@@ -641,7 +684,7 @@ class JobRun:
     def last_updated(self) -> datetime.datetime:
         """
         Returns:
-            datetime.datetime: The most recent timestamp across the phase tree and status.
+            datetime.datetime: The most recent timestamp across the phase tree, status and control requests.
         """
         timestamps = [phase.lifecycle.last_transition_at for phase in self.search_phases()]
         if self.status:
@@ -651,6 +694,9 @@ class JobRun:
                 timestamps.append(self.status.result.timestamp)
             timestamps += (warn.timestamp for warn in self.status.warnings)
             timestamps += (op.updated_at for op in self.status.operations)
+        # Applied control requests are state: without this, a snapshot differing only in them would
+        # fail the newer-wins guard and consumers would never see the control activity
+        timestamps += (c.applied_at for c in self.control_requests)
         return max(timestamps)
 
     def is_newer_than(self, other: 'JobRun') -> bool:

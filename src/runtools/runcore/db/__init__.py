@@ -27,6 +27,7 @@ See Also:
 """
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Iterable, Iterator, NamedTuple, Optional
 
@@ -204,8 +205,55 @@ class RunStorage(ABC):
         """Remove job runs matching the specified criteria."""
 
 
-class EnvironmentDatabase(ConfigStorage, RunStorage, ABC):
-    """The environment's database — a single store implementing both ConfigStorage and RunStorage.
+@dataclass(frozen=True)
+class Signal:
+    """An in-flight remote control command from the signals mailbox (design point 5).
+
+    Consumer-written, node-applied, deleted on apply — the durable record of applied control
+    lives on the run itself (``JobRun.control_requests``).
+    """
+    signal_id: int
+    instance_id: InstanceID
+    phase_id: Optional[str]
+    op: str
+    args: tuple
+    requested_by: Optional[str]
+    requested_at: datetime
+
+
+class SignalStorage(ABC):
+    """Remote control mailbox stored in the database (design point 5).
+
+    Consumers insert command rows; the owning node reads the rows for its instances, applies
+    them at its control surface, and deletes them. Duplicate signals are permitted — remote
+    control ops are idempotent by contract, so re-application is harmless.
+    """
+
+    @abstractmethod
+    def write_signal(self, instance_id: InstanceID, op: str, *,
+                     phase_id: Optional[str] = None, args: Iterable = (),
+                     requested_by: Optional[str] = None):
+        """Insert an in-flight command row for the given instance.
+
+        Args:
+            instance_id: Target instance.
+            op: control_api operation name; instance-level when phase_id is None (e.g. ``stop``).
+            phase_id: Target phase for phase ops; None for instance-level ops.
+            args: JSON-serializable positional arguments of the operation.
+            requested_by: Optional requester identity for the audit record.
+        """
+
+    @abstractmethod
+    def read_signals(self, instance_ids: Iterable[InstanceID]) -> list[Signal]:
+        """Return the pending command rows for the given instances, oldest first."""
+
+    @abstractmethod
+    def delete_signals(self, signal_ids: Iterable[int]):
+        """Remove applied (or rejected-and-logged) command rows by their surrogate ids."""
+
+
+class EnvironmentDatabase(ConfigStorage, RunStorage, SignalStorage, ABC):
+    """The environment's database — a single store implementing config, run and signal storage.
 
     Lifecycle:
         Call :meth:`open` before any read/write operations, and :meth:`close` when done.

@@ -10,12 +10,13 @@ from datetime import timedelta
 
 import psycopg
 import pytest
+from dataclasses import replace
 
 from runtools.runcore.db import EnvironmentStoreNotProvisionedError, IncompatibleSchemaError, postgres
 from runtools.runcore.db.postgres import AdvisoryLockProvider, PostgreSQL, SCHEMA_VERSION
 from runtools.runcore.env import EnvironmentEntry, PostgresEnvironmentConfig
 from runtools.runcore.err import InvalidStateError
-from runtools.runcore.job import DuplicateInstanceError, InstanceID
+from runtools.runcore.job import ControlRequest, DuplicateInstanceError, InstanceID
 from runtools.runcore.matching import JobRunCriteria, LifecycleCriterion, MetadataCriterion, PhaseCriterion
 from runtools.runcore.run import Stage, TerminationStatus
 from runtools.runcore.test.job import fake_job_run
@@ -647,3 +648,35 @@ def test_heartbeat_touch_skips_ended_runs(sut):
     sut.touch_heartbeats([iid])
 
     assert _read_heartbeat(sut, iid) == heartbeat_at_end
+
+
+# --- signals + control requests ---
+
+def test_signal_write_read_delete_round_trip(sut):
+    a = InstanceID('sig_job', 'r1', 1)
+    b = InstanceID('other_job', 'r1', 1)
+    sut.write_signal(a, 'stop', args=('user_stop',), requested_by='taro@host')
+    sut.write_signal(a, 'approve', phase_id='approval_gate')
+    sut.write_signal(b, 'stop')
+
+    signals = sut.read_signals([a])
+    assert [(s.op, s.phase_id, s.args) for s in signals] == \
+           [('stop', None, ('user_stop',)), ('approve', 'approval_gate', ())]
+    assert signals[0].requested_by == 'taro@host'
+    assert signals[0].requested_at is not None
+
+    sut.delete_signals([s.signal_id for s in signals])
+    assert sut.read_signals([a]) == []
+    assert [s.op for s in sut.read_signals([b])] == ['stop']  # untargeted rows untouched
+
+
+def test_control_requests_persist_with_run(sut):
+    applied_at = utc_now().replace(microsecond=0)
+    request = ControlRequest('stop', applied_at, args=('user_stop',),
+                             requested_by='taro@host', requested_at=applied_at - timedelta(seconds=1))
+    run = replace(fake_job_run('ctl', 'r1', term_status=TerminationStatus.STOPPED),
+                  control_requests=(request,))
+    _init_and_store(sut, run)
+
+    [restored] = sut.read_runs()
+    assert restored.control_requests == (request,)
