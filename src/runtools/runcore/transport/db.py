@@ -13,7 +13,7 @@ import logging
 from threading import Event, Thread, current_thread
 from typing import Optional, cast
 
-from runtools.runcore.db import RunStorage
+from runtools.runcore.db import HEARTBEAT_INTERVAL, RunStorage
 from runtools.runcore.job import InstanceNotifications, InstanceObservableNotifications, JobRun, NotificationBinding
 from runtools.runcore.matching import JobRunCriteria
 from runtools.runcore.proxy import JobInstanceProxyBase, SnapshotJobInstanceProxy
@@ -23,6 +23,7 @@ log = logging.getLogger(__name__)
 
 DEFAULT_ACTIVE_POLL_INTERVAL = 0.25  # Seconds between polls while instances are active
 DEFAULT_IDLE_POLL_INTERVAL = 2.0     # Seconds between polls while the view is empty
+HEARTBEAT_STALE_AFTER = 3 * HEARTBEAT_INTERVAL  # Seconds without a heartbeat before a run counts as lost
 
 
 class DbInstanceDiscovery:
@@ -78,13 +79,29 @@ class PollingInstanceDirectory(InstanceDirectoryBase):
     def reconcile(self) -> None:
         """Run one poll and reconcile the view. Driven solely by the poll loop (single-threaded); a
         future doorbell should wake the loop, not call this concurrently."""
-        versions = dict(self._db.active_run_versions())
-        changed = [iid for iid, cursor in versions.items() if self._seen_versions.get(iid) != cursor]
+        versions = {v.instance_id: v for v in self._db.active_run_versions()}
+        changed = [iid for iid, version in versions.items() if self._seen_versions.get(iid) != version.cursor]
         for run in self._deep_read(changed):
             self._apply(run)
         for instance_id in self._seen_versions.keys() - versions.keys():
             self._evict_absent(instance_id)
-        self._seen_versions = versions
+        self._seen_versions = {iid: version.cursor for iid, version in versions.items()}
+        self._update_liveness(versions)
+
+    def _update_liveness(self, versions) -> None:
+        """Interpret heartbeat ages: a stale heartbeat marks the proxy lost — never mutates storage.
+
+        Runs after admit/evict so every proxy in the view gets the verdict of the same scan.
+        """
+        for instance_id, version in versions.items():
+            proxy = self._snapshot_proxy(instance_id)
+            if proxy is None:
+                continue
+            lost = version.heartbeat_age is not None and version.heartbeat_age > HEARTBEAT_STALE_AFTER
+            if lost and not proxy.is_lost:
+                log.warning("Instance lost: heartbeat stale",
+                            extra={"instance": str(instance_id), "age_s": round(version.heartbeat_age, 1)})
+            proxy.update_liveness(version.heartbeat_age, lost)
 
     def _poll_loop(self) -> None:
         while not self._stop.wait(self._poll_interval()):

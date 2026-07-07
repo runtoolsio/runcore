@@ -3,6 +3,8 @@
 Driven by calling ``reconcile()`` directly (the public on-demand poll) rather than the background
 thread, so polls are deterministic. Backed by a real in-memory SQLite store.
 """
+from datetime import timedelta
+
 import pytest
 
 from runtools.runcore.db import sqlite
@@ -146,3 +148,44 @@ def test_open_seeds_then_close_stops(directory, db):
         assert [i.id.job_id for i in directory.get_instances()] == ['j1']
     finally:
         directory.close()
+
+
+def _backdate_heartbeat(db, minutes):
+    db._conn.execute("UPDATE runs SET heartbeat_at = ?",
+                     ((utc_now() - timedelta(minutes=minutes)).strftime('%Y-%m-%d %H:%M:%S.%f'),))
+    db._conn.commit()
+
+
+def test_stale_heartbeat_marks_instance_lost(directory, db):
+    run = fake_job_run('j1', created_at=BASE, term_status=None)
+    _seed_active(db, run)
+    _backdate_heartbeat(db, minutes=5)  # a node that died without finalizing stops touching
+
+    directory.reconcile()
+
+    proxy = directory.get_instance(run.metadata.instance_id)
+    assert proxy.is_lost
+    assert proxy.heartbeat_age > 60
+
+
+def test_fresh_heartbeat_keeps_instance_alive(directory, db):
+    run = fake_job_run('j1', created_at=BASE, term_status=None)
+    _seed_active(db, run)  # init_run baselines the heartbeat at creation
+
+    directory.reconcile()
+
+    proxy = directory.get_instance(run.metadata.instance_id)
+    assert not proxy.is_lost
+    assert proxy.heartbeat_age is not None
+
+
+def test_lost_instance_stays_in_view(directory, db):
+    # Interpret, never mutate: a lost run remains visible and attributable, not evicted
+    run = fake_job_run('j1', created_at=BASE, term_status=None)
+    _seed_active(db, run)
+    _backdate_heartbeat(db, minutes=5)
+
+    directory.reconcile()
+    directory.reconcile()
+
+    assert [i.id.job_id for i in directory.get_instances()] == ['j1']

@@ -613,7 +613,7 @@ def test_active_run_versions_lists_materialized_active_runs(sut):
     _init_active(sut, fake_job_run('j1', term_status=None))
     _init_active(sut, fake_job_run('j2', term_status=None))
 
-    assert {iid.job_id for iid, _ in sut.active_run_versions()} == {'j1', 'j2'}
+    assert {iid.job_id for iid, *_ in sut.active_run_versions()} == {'j1', 'j2'}
 
 
 def test_active_run_versions_excludes_ended(sut):
@@ -637,9 +637,9 @@ def test_active_run_versions_cursor_changes_on_every_accepted_write(sut):
     sut.init_run('j1', 'r1', created_at=run.lifecycle.created_at)
 
     sut.store_active_runs(run)
-    [(_, before)] = sut.active_run_versions()
+    [(_, before, _)] = sut.active_run_versions()
     sut.store_active_runs(run)  # equal last_updated, still accepted by the <= guard
-    [(_, after)] = sut.active_run_versions()
+    [(_, after, _)] = sut.active_run_versions()
 
     assert before != after
 
@@ -669,12 +669,12 @@ def test_heartbeat_touch_advances_liveness_without_moving_cursor(sut):
     iid = sut.init_run('hb', 'r1', created_at=run.lifecycle.created_at)
     sut.store_active_runs(run)
     baseline = _read_heartbeat(sut, iid)
-    [(_, cursor_before)] = sut.active_run_versions()
+    [(_, cursor_before, _)] = sut.active_run_versions()
 
     sut.touch_heartbeats([iid])
 
     assert _read_heartbeat(sut, iid) > baseline
-    [(_, cursor_after)] = sut.active_run_versions()
+    [(_, cursor_after, _)] = sut.active_run_versions()
     assert cursor_after == cursor_before  # liveness must not trigger consumer deep reads
 
 

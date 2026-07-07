@@ -480,10 +480,12 @@ class SQLite(EnvironmentDatabase):
         cursor = self._conn.cursor()
         cursor.row_factory = sqlite3.Row
         cursor.execute(
-            "SELECT job_id, run_id, ordinal, updated_at FROM runs "
+            "SELECT job_id, run_id, ordinal, updated_at, "
+            "(julianday('now') - julianday(heartbeat_at)) * 86400.0 AS heartbeat_age FROM runs "
             "WHERE ended IS NULL AND root_phase IS NOT NULL")
         try:
-            return [(InstanceID(r['job_id'], r['run_id'], r['ordinal']), r['updated_at'])
+            return [RunVersion(InstanceID(r['job_id'], r['run_id'], r['ordinal']), r['updated_at'],
+                               r['heartbeat_age'])
                     for r in cursor.fetchall()]
         finally:
             cursor.close()

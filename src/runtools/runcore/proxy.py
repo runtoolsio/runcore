@@ -290,7 +290,29 @@ class SnapshotJobInstanceProxy(JobInstanceProxyBase):
     applies the newer-wins guard, replaces the cached snapshot, and emits the synthesized state
     events to its own notification hub (where a directory's aggregate fans in). Control and output
     are not wired on snapshot transports yet.
+
+    The directory also pushes liveness (:meth:`update_liveness`) — a snapshot transport cannot tell
+    a quiet run from a dead producer, so the heartbeat verdict is part of the proxy's view.
     """
+
+    def __init__(self, initial: JobRun, output_buffer_depth: int = 100):
+        super().__init__(initial, output_buffer_depth)
+        self._heartbeat_age: Optional[float] = None
+        self._lost = False
+
+    @property
+    def heartbeat_age(self) -> Optional[float]:
+        """Seconds since the producing node last attested this run's liveness; None when unknown."""
+        return self._heartbeat_age
+
+    @property
+    def is_lost(self) -> bool:
+        """True when the heartbeat is stale — the producing node likely died; the state may be frozen."""
+        return self._lost
+
+    def update_liveness(self, heartbeat_age: Optional[float], lost: bool) -> None:
+        self._heartbeat_age = heartbeat_age
+        self._lost = lost
 
     def update_from_snapshot(self, curr: JobRun) -> None:
         """Apply a freshly read snapshot and emit the state events it implies.

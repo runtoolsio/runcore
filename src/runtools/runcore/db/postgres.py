@@ -516,10 +516,12 @@ class PostgreSQL(EnvironmentDatabase):
 
     def _insert_run(self, job_id, run_id, ordinal, user_params, created, tags):
         with self._pool.connection() as conn, conn.cursor() as cur:
+            # heartbeat_at is written in *server* time — heartbeat ages are computed against now()
+            # at read, so one clock measures both edges and node/consumer skew cancels
             cur.execute(
                 "INSERT INTO runs (job_id, run_id, ordinal, user_params, created, updated_at, heartbeat_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                (job_id, run_id, ordinal, user_params, created, created, created))
+                "VALUES (%s, %s, %s, %s, %s, %s, now())",
+                (job_id, run_id, ordinal, user_params, created, created))
             if tags:
                 cur.executemany(
                     "INSERT INTO run_tags (job_id, run_id, ordinal, tag) VALUES (%s, %s, %s, %s)",
@@ -590,9 +592,11 @@ class PostgreSQL(EnvironmentDatabase):
         # updated_at::text → opaque str cursor; a bare TIMESTAMPTZ would read back as a datetime.
         # See RunVersion for why write-time is the cursor and the invariant it relies on.
         rows = self._fetch(
-            "SELECT job_id, run_id, ordinal, updated_at::text AS version FROM runs "
+            "SELECT job_id, run_id, ordinal, updated_at::text AS version, "
+            "EXTRACT(EPOCH FROM now() - heartbeat_at)::float AS heartbeat_age FROM runs "
             "WHERE ended IS NULL AND root_phase IS NOT NULL", ())
-        return [(InstanceID(r['job_id'], r['run_id'], r['ordinal']), r['version']) for r in rows]
+        return [RunVersion(InstanceID(r['job_id'], r['run_id'], r['ordinal']), r['version'], r['heartbeat_age'])
+                for r in rows]
 
     @override
     @ensure_open
@@ -601,12 +605,12 @@ class PostgreSQL(EnvironmentDatabase):
         ids = [(i.job_id, i.run_id, i.ordinal) for i in instance_ids]
         if not ids:
             return
-        heartbeat = _bind_dt(utc_now())
+        # Server time, matching the read-side now() age computation — see _insert_run
         with self._pool.connection() as conn, conn.cursor() as cur:
             cur.executemany(
-                "UPDATE runs SET heartbeat_at = %s "
+                "UPDATE runs SET heartbeat_at = now() "
                 "WHERE job_id = %s AND run_id = %s AND ordinal = %s AND ended IS NULL",
-                [(heartbeat, j, r, o) for j, r, o in ids])
+                ids)
 
     @override
     @ensure_open

@@ -28,7 +28,7 @@ See Also:
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, Iterable, Iterator
+from typing import Any, Iterable, Iterator, NamedTuple, Optional
 
 from runtools.runcore.err import RuntoolsException
 from runtools.runcore.job import InstanceID, JobRun
@@ -80,13 +80,28 @@ class ConfigStorage(ABC):
         """
 
 
-RunVersion = tuple[InstanceID, str]
-"""(instance, opaque version cursor) for change detection. The cursor is the row's write-time
-``updated_at`` rendered as an opaque string — it changes on every accepted write (even when domain
-freshness ties), so a poller compares it for equality to find changed instances. This relies on
-writes to a given row being >1µs apart, which holds under single-writer-per-instance + per-statement
-commit; if that invariant is ever relaxed (multi-writer per row), switch to a monotonic counter.
-Never parsed, ordered, or treated as a datetime (its representation is backend-specific)."""
+HEARTBEAT_INTERVAL = 15.0
+"""Seconds between liveness touches of a node's active runs (see :meth:`RunStorage.touch_heartbeats`).
+Readers treat a heartbeat older than a few multiples of this as a lost run."""
+
+
+class RunVersion(NamedTuple):
+    """Change-detection and liveness row for one materialized active run.
+
+    ``cursor`` is the row's write-time ``updated_at`` rendered as an opaque string — it changes on
+    every accepted write (even when domain freshness ties), so a poller compares it for equality to
+    find changed instances. This relies on writes to a given row being >1µs apart, which holds under
+    single-writer-per-instance + per-statement commit; if that invariant is ever relaxed
+    (multi-writer per row), switch to a monotonic counter. Never parsed, ordered, or treated as a
+    datetime (its representation is backend-specific).
+
+    ``heartbeat_age`` is seconds since the run's last liveness touch, computed on the storage's own
+    clock at read time — write and read share one clock, so node/consumer skew cancels. None when
+    the row predates heartbeats.
+    """
+    instance_id: InstanceID
+    cursor: str
+    heartbeat_age: Optional[float]
 
 
 class RunStorage(ABC):
