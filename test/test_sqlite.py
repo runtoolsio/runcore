@@ -79,7 +79,8 @@ def test_last(sut):
 def test_last_picks_newest_among_matching_runs(sut):
     # j1's newest run lacks the tag; an older one has it. last=True must return the older match,
     # not nothing — criteria apply before the per-job last selection.
-    older, newer = fake_job_run('j1', 'old', offset_min=1), fake_job_run('j1', 'new', offset_min=2)
+    older = fake_job_run('j1', 'old', offset_min=1, tags=('keep',))
+    newer = fake_job_run('j1', 'new', offset_min=2)
     sut.init_run('j1', 'old', created_at=older.lifecycle.created_at, tags=('keep',))
     sut.init_run('j1', 'new', created_at=newer.lifecycle.created_at)
     sut.store_runs(older, newer)
@@ -362,13 +363,13 @@ def test_tags_round_trip_with_no_tags(sut):
 
 
 def test_init_run_normalizes_tags(sut):
-    """init_run accepts raw user input and normalizes (lowercase, strip #, dedupe)."""
+    """init_run accepts raw user input and normalizes (lowercase, strip #, dedupe) into the
+    tag junction — the SQL-filter projection; document tags come from the run snapshot."""
     sut.init_run('j1', 'r1', created_at=utc_now(),
                  tags=('#Assistant', 'ENV/prod', 'assistant'))
-    sut.store_runs(fake_job_run('j1', 'r1'))
 
-    [restored] = sut.read_runs()
-    assert restored.metadata.tags == ('assistant', 'env/prod')
+    stored = {tag for (tag,) in sut._conn.execute("SELECT tag FROM run_tags").fetchall()}
+    assert stored == {'assistant', 'env/prod'}
 
 
 def test_tags_filter_all(sut):

@@ -60,14 +60,14 @@ def matching_pks(rows, run_match, to_job_run: Callable, to_metadata: Callable) -
     """(job_id, run_id, ordinal) of ``rows`` satisfying the *full* ``run_match``.
 
     For criteria the SQL prefilter only approximates (phase, PARTIAL/FN_MATCH): rows with a
-    snapshot match as full JobRuns; init-only rows (no ``root_phase``) match on metadata only,
+    snapshot match as full JobRuns; init-only rows (no ``run`` document) match on metadata only,
     since they can't satisfy a phase criterion. ``to_job_run``/``to_metadata`` deserialize a row
-    (per-backend). ``rows`` must expose ``root_phase``/``job_id``/``run_id``/``ordinal`` by key.
+    (per-backend). ``rows`` must expose ``run``/``job_id``/``run_id``/``ordinal`` by key.
     """
     has_phase = bool(getattr(run_match, 'phase_criteria', ()))
     pks = []
     for r in rows:
-        ok = run_match(to_job_run(r)) if r['root_phase'] is not None \
+        ok = run_match(to_job_run(r)) if r['run'] is not None \
             else (not has_phase and matches_metadata(run_match, to_metadata(r)))
         if ok:
             pks.append((r['job_id'], r['run_id'], r['ordinal']))

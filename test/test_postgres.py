@@ -327,7 +327,8 @@ def test_last_breaks_timestamp_ties(sut):
 def test_last_picks_newest_among_matching_runs(sut):
     # j1's newest run lacks the tag; an older one has it. last=True must return the older match,
     # not "nothing" (the newest-overall run is excluded by the criteria).
-    older, newer = fake_job_run('j1', 'old', offset_min=1), fake_job_run('j1', 'new', offset_min=2)
+    older = fake_job_run('j1', 'old', offset_min=1, tags=('keep',))
+    newer = fake_job_run('j1', 'new', offset_min=2)
     sut.init_run('j1', 'old', created_at=older.lifecycle.created_at, tags=('keep',))
     sut.init_run('j1', 'new', created_at=newer.lifecycle.created_at)
     sut.store_runs(older, newer)
@@ -350,7 +351,7 @@ def test_remove_runs_applies_phase_criteria(sut):
 
 
 def test_tag_match(sut):
-    r1, r2 = fake_job_run('j1'), fake_job_run('j2')
+    r1, r2 = fake_job_run('j1', tags=('nightly',)), fake_job_run('j2', tags=('adhoc',))
     sut.init_run('j1', 'r1', created_at=r1.lifecycle.created_at, tags=('nightly',))
     sut.init_run('j2', 'r1', created_at=r2.lifecycle.created_at, tags=('adhoc',))
     sut.store_runs(r1, r2)

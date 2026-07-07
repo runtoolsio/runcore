@@ -29,12 +29,10 @@ from runtools.runcore.db import (EnvironmentDatabase, EnvironmentStoreNotProvisi
 from runtools.runcore.db.sql import (build_job_stats, build_order_by, build_where_clause, Dialect, last_run_ids,
                                      LAST_PER_JOB_SQL, matching_pks)
 from runtools.runcore.err import InvalidStateError
-from runtools.runcore.job import (ControlRequest, JobStats, JobRun, JobInstanceMetadata, InstanceID,
+from runtools.runcore.job import (JobStats, JobRun, JobInstanceMetadata, InstanceID,
                                   DuplicateInstanceError, normalize_tags)
 from runtools.runcore.matching import SortOption
-from runtools.runcore.output import OutputLocation
-from runtools.runcore.run import TerminationStatus, Outcome, PhaseRun, Fault
-from runtools.runcore.status import Status
+from runtools.runcore.run import TerminationStatus, Outcome
 from runtools.runcore.util import utc_now
 from runtools.runcore.util.lock import LockAcquireTimeoutError
 
@@ -289,50 +287,43 @@ _SELECT_RUNS = (
 )
 
 _RUN_UPDATE_SQL = (
-    "UPDATE runs SET user_params=%s, features=%s, created=%s, started=%s, ended=%s, exec_time=%s, "
-    "root_phase=%s, output_locations=%s, termination_status=%s, faults=%s, status=%s, warnings=%s, "
-    "control_requests=%s, state_updated_at=%s, updated_at=%s "
+    "UPDATE runs SET run=%s, created=%s, started=%s, ended=%s, exec_time=%s, termination_status=%s, "
+    "warnings=%s, state_updated_at=%s, updated_at=%s "
     "WHERE job_id=%s AND run_id=%s AND ordinal=%s"
 )
 
 
 def _to_metadata(row) -> JobInstanceMetadata:
-    """Build JobInstanceMetadata from a runs row — available even for init-only rows."""
+    """Identity metadata for init-only rows (no ``run`` document yet): PK fields + tags — the
+    fields criteria can match. Params/features live only in the document."""
     return JobInstanceMetadata(
         InstanceID(row['job_id'], row['run_id'], row['ordinal']),
-        row['user_params'] or {},
-        features=tuple(row['features'] or ()),
+        {},
         tags=tuple(row['tags'] or ()),
     )
 
 
 def _to_job_run(row) -> JobRun:
-    """Build a JobRun from a runs row. JSONB columns are already Python objects."""
-    root_phase = PhaseRun.deserialize(row['root_phase'])
-    output_locations = tuple(OutputLocation.deserialize(loc) for loc in (row['output_locations'] or ()))
-    faults = tuple(Fault.deserialize(f) for f in (row['faults'] or ()))
-    status = Status.deserialize(row['status']) if row['status'] else None
-    control_requests = tuple(ControlRequest.deserialize(c) for c in (row['control_requests'] or ()))
-    return JobRun(_to_metadata(row), root_phase, output_locations, faults, status, control_requests)
+    """Deserialize the whole-run document of a runs row (see the document + projections note
+    on the runs DDL). JSONB reads back as a Python dict."""
+    return JobRun.deserialize(row['run'])
 
 
 def _run_update_params(r: JobRun):
-    """SET values plus (job_id, run_id, ordinal) keys for :data:`_RUN_UPDATE_SQL`."""
+    """SET values plus (job_id, run_id, ordinal) keys for :data:`_RUN_UPDATE_SQL`.
+
+    The whole run is stored as one document; the discrete values are query projections
+    derived from it (criteria SQL, sorts, stats) and must never be read back into a JobRun.
+    """
     term = r.lifecycle.termination
     return (
-        Jsonb(dict(r.metadata.user_params)) if r.metadata.user_params else None,
-        Jsonb(list(r.metadata.features)) if r.metadata.features else None,
+        Jsonb(r.serialize()),
         _bind_dt(r.lifecycle.created_at),
         _bind_dt(r.lifecycle.started_at) if r.lifecycle.started_at else None,
         _bind_dt(term.terminated_at) if term else None,
         round(r.lifecycle.total_run_time.total_seconds(), 3) if r.lifecycle.total_run_time else None,
-        Jsonb(r.root_phase.serialize()),
-        Jsonb([loc.serialize() for loc in r.output_locations]) if r.output_locations else None,
         term.status.value if term else None,
-        Jsonb([f.serialize() for f in r.faults]) if r.faults else None,
-        Jsonb(r.status.serialize()) if r.status else None,
         len(r.status.warnings) if r.status else None,
-        Jsonb([c.serialize() for c in r.control_requests]) if r.control_requests else None,
         _bind_dt(r.last_updated),  # state_updated_at: domain freshness (newer-wins guard)
         _bind_dt(utc_now()),       # updated_at: row write time
         r.metadata.job_id,
@@ -363,23 +354,21 @@ def ensure_open(f):
 
 
 _SCHEMA_DDL = f"""
+-- Document + projections: `run` holds the whole serialized JobRun (the wire format is the
+-- storage format; NULL = init-only row); the discrete columns are query projections derived
+-- from it at write (criteria SQL, sorts, stats) plus the persistence machinery's own
+-- timestamps. Never read a JobRun from projections.
 CREATE TABLE IF NOT EXISTS runs (
     job_id TEXT NOT NULL,
     run_id TEXT NOT NULL,
     ordinal INTEGER NOT NULL DEFAULT 1,
-    user_params JSONB,
-    features JSONB,
+    run JSONB,
     created TIMESTAMPTZ NOT NULL,
     started TIMESTAMPTZ,
     ended TIMESTAMPTZ,
     exec_time DOUBLE PRECISION,
-    root_phase JSONB,
-    output_locations JSONB,
     termination_status INTEGER,
-    faults JSONB,
-    status JSONB,
     warnings INTEGER,
-    control_requests JSONB,
     state_updated_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL,
     heartbeat_at TIMESTAMPTZ,
@@ -506,13 +495,12 @@ class PostgreSQL(EnvironmentDatabase):
     def init_run(self, job_id, run_id, user_params=None, *,
                  created_at, tags=(), auto_increment=False, max_retries=5):
         """See `RunStorage.init_run`."""
-        params = Jsonb(dict(user_params)) if user_params else None
         created = _bind_dt(created_at)
         normalized_tags = normalize_tags(tags) if tags else ()
 
         if not auto_increment:
             try:
-                self._insert_run(job_id, run_id, 1, params, created, normalized_tags)
+                self._insert_run(job_id, run_id, 1, created, normalized_tags)
             except UniqueViolation:
                 raise DuplicateInstanceError(InstanceID(job_id, run_id, 1))
             return InstanceID(job_id, run_id, 1)
@@ -523,20 +511,20 @@ class PostgreSQL(EnvironmentDatabase):
                             (job_id, run_id))
                 ordinal = cur.fetchone()[0]
             try:
-                self._insert_run(job_id, run_id, ordinal, params, created, normalized_tags)
+                self._insert_run(job_id, run_id, ordinal, created, normalized_tags)
             except UniqueViolation:
                 continue  # Lost the race for this ordinal — recompute and retry
             return InstanceID(job_id, run_id, ordinal)
         raise RuntimeError(f"Failed to allocate ordinal for ({job_id}, {run_id}) after {max_retries} retries")
 
-    def _insert_run(self, job_id, run_id, ordinal, user_params, created, tags):
+    def _insert_run(self, job_id, run_id, ordinal, created, tags):
         with self._pool.connection() as conn, conn.cursor() as cur:
             # heartbeat_at is written in *server* time — heartbeat ages are computed against now()
             # at read, so one clock measures both edges and node/consumer skew cancels
             cur.execute(
-                "INSERT INTO runs (job_id, run_id, ordinal, user_params, created, updated_at, heartbeat_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s, now())",
-                (job_id, run_id, ordinal, user_params, created, created))
+                "INSERT INTO runs (job_id, run_id, ordinal, created, updated_at, heartbeat_at) "
+                "VALUES (%s, %s, %s, %s, %s, now())",
+                (job_id, run_id, ordinal, created, created))
             if tags:
                 cur.executemany(
                     "INSERT INTO run_tags (job_id, run_id, ordinal, tag) VALUES (%s, %s, %s, %s)",
@@ -592,9 +580,9 @@ class PostgreSQL(EnvironmentDatabase):
     def read_active_runs(self, run_match=None) -> list[JobRun]:
         """See `RunStorage.read_active_runs`."""
         where, params, _ = build_where_clause(run_match, _PG_DIALECT, alias='h')  # post-filtered below
-        # ended IS NULL → active; root_phase IS NOT NULL → the persister has written a real
+        # ended IS NULL → active; run IS NOT NULL → the persister has written a real
         # snapshot, so skip init-only rows that _to_job_run cannot deserialize.
-        guard = "h.ended IS NULL AND h.root_phase IS NOT NULL"
+        guard = "h.ended IS NULL AND h.run IS NOT NULL"
         sql = _SELECT_RUNS + ((where + " AND " + guard) if where else (" WHERE " + guard))
         runs = [_to_job_run(row) for row in self._fetch(sql, params)]
         # Re-apply the full criteria for predicates SQL can't express (e.g. phase).
@@ -609,7 +597,7 @@ class PostgreSQL(EnvironmentDatabase):
         rows = self._fetch(
             "SELECT job_id, run_id, ordinal, updated_at::text AS version, "
             "EXTRACT(EPOCH FROM now() - heartbeat_at)::float AS heartbeat_age FROM runs "
-            "WHERE ended IS NULL AND root_phase IS NOT NULL", ())
+            "WHERE ended IS NULL AND run IS NOT NULL", ())
         return [RunVersion(InstanceID(r['job_id'], r['run_id'], r['ordinal']), r['version'], r['heartbeat_age'])
                 for r in rows]
 

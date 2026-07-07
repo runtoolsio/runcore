@@ -16,12 +16,10 @@ from runtools.runcore.db import EnvironmentDatabase, IncompatibleSchemaError, Ru
 from runtools.runcore.db.sql import (build_job_stats, build_order_by, build_where_clause, Dialect, last_run_ids,
                                      LAST_PER_JOB_SQL, matching_pks)
 from runtools.runcore.err import InvalidStateError
-from runtools.runcore.job import (ControlRequest, JobStats, JobRun, JobInstanceMetadata, InstanceID,
+from runtools.runcore.job import (JobStats, JobRun, JobInstanceMetadata, InstanceID,
                                   DuplicateInstanceError, normalize_tags)
 from runtools.runcore.matching import SortOption
-from runtools.runcore.output import OutputLocation
-from runtools.runcore.run import TerminationStatus, Outcome, PhaseRun, Fault
-from runtools.runcore.status import Status
+from runtools.runcore.run import TerminationStatus, Outcome
 from runtools.runcore.util import format_dt_sql, parse_dt_sql, utc_now
 
 log = logging.getLogger(__name__)
@@ -107,7 +105,8 @@ def _build_where_clause(run_match, alias=""):
 
 
 def _to_metadata(r) -> JobInstanceMetadata:
-    """Reconstruct JobInstanceMetadata from a runs row — available even for init-only rows.
+    """Identity metadata for init-only rows (no ``run`` document yet): PK fields + tags — the
+    fields criteria can match. Params/features live only in the document.
 
     Uses the optional ``tags`` synthetic column (a ``json_group_array(tag)`` over run_tags); rows
     without it read back as having no tags, so callers needing tag fidelity must include the
@@ -116,25 +115,15 @@ def _to_metadata(r) -> JobInstanceMetadata:
     tags_raw = r['tags'] if 'tags' in r.keys() else None
     return JobInstanceMetadata(
         InstanceID(r['job_id'], r['run_id'], r['ordinal']),
-        json.loads(r['user_params']) if r['user_params'] else {},
-        features=tuple(json.loads(r['features'])) if r['features'] else (),
+        {},
         tags=tuple(json.loads(tags_raw)) if tags_raw else (),
     )
 
 
 def _to_job_run(r) -> JobRun:
-    """Convert a sqlite3.Row from the history table into a JobRun."""
-    metadata = _to_metadata(r)
-    root_phase = PhaseRun.deserialize(json.loads(r['root_phase']))
-    output_locations = (
-        tuple(OutputLocation.deserialize(loc) for loc in json.loads(r['output_locations']))
-        if r['output_locations'] else ()
-    )
-    faults = tuple(Fault.deserialize(f) for f in json.loads(r['faults'])) if r['faults'] else ()
-    status = Status.deserialize(json.loads(r['status'])) if r['status'] else None
-    control_requests = (tuple(ControlRequest.deserialize(c) for c in json.loads(r['control_requests']))
-                        if r['control_requests'] else ())
-    return JobRun(metadata, root_phase, output_locations, faults, status, control_requests)
+    """Deserialize the whole-run document of a runs row (see the document + projections note
+    on the runs DDL)."""
+    return JobRun.deserialize(json.loads(r['run']))
 
 
 _SELECT_RUNS = (
@@ -157,28 +146,25 @@ def _full_ts(dt):
 
 
 _RUN_UPDATE_SQL = (
-    "UPDATE runs SET user_params=?, features=?, created=?, started=?, ended=?, exec_time=?, "
-    "root_phase=?, output_locations=?, termination_status=?, faults=?, status=?, warnings=?, "
-    "control_requests=?, state_updated_at=?, updated_at=? "
+    "UPDATE runs SET run=?, created=?, started=?, ended=?, exec_time=?, termination_status=?, "
+    "warnings=?, state_updated_at=?, updated_at=? "
     "WHERE job_id=? AND run_id=? AND ordinal=?"
 )
 
 
 def _run_update_values(r: JobRun):
-    """SET-clause values plus the (job_id, run_id, ordinal) keys for :data:`_RUN_UPDATE_SQL`."""
-    return (json.dumps(dict(r.metadata.user_params)) if r.metadata.user_params else None,
-            json.dumps(list(r.metadata.features)) if r.metadata.features else None,
+    """SET-clause values plus the (job_id, run_id, ordinal) keys for :data:`_RUN_UPDATE_SQL`.
+
+    The whole run is stored as one document; the discrete values are query projections
+    derived from it (criteria SQL, sorts, stats) and must never be read back into a JobRun.
+    """
+    return (json.dumps(r.serialize()),
             format_dt_sql(r.lifecycle.created_at),
             format_dt_sql(r.lifecycle.started_at) if r.lifecycle.started_at else None,
             format_dt_sql(r.lifecycle.termination.terminated_at) if r.lifecycle.termination else None,
             round(r.lifecycle.total_run_time.total_seconds(), 3) if r.lifecycle.total_run_time else None,
-            json.dumps(r.root_phase.serialize()),
-            json.dumps([l.serialize() for l in r.output_locations]) if r.output_locations else None,
             r.lifecycle.termination.status.value if r.lifecycle.termination else None,
-            json.dumps([f.serialize() for f in r.faults]) if r.faults else None,
-            json.dumps(r.status.serialize()) if r.status else None,
             len(r.status.warnings) if r.status else None,
-            json.dumps([c.serialize() for c in r.control_requests]) if r.control_requests else None,
             _full_ts(r.last_updated),  # state_updated_at: domain freshness (newer-wins guard)
             _full_ts(utc_now()),       # updated_at: write-time cursor (changes on every accepted write)
             r.metadata.job_id,
@@ -223,24 +209,21 @@ class SQLite(EnvironmentDatabase):
             c.close()
             return
 
-        # Fresh schema
+        # Fresh schema — document + projections: `run` holds the whole serialized JobRun (the wire
+        # format is the storage format; NULL = init-only row); the discrete columns are query
+        # projections derived from it at write (criteria SQL, sorts, stats) plus the persistence
+        # machinery's own timestamps. Never read a JobRun from projections.
         c.execute('''CREATE TABLE runs (
                      job_id TEXT NOT NULL,
                      run_id TEXT NOT NULL,
                      ordinal INTEGER NOT NULL DEFAULT 1,
-                     user_params TEXT CHECK (user_params IS NULL OR json_valid(user_params)),
-                     features TEXT CHECK (features IS NULL OR json_valid(features)),
+                     run TEXT CHECK (run IS NULL OR json_valid(run)),
                      created TIMESTAMP NOT NULL,
                      started TIMESTAMP,
                      ended TIMESTAMP,
                      exec_time REAL,
-                     root_phase TEXT CHECK (root_phase IS NULL OR json_valid(root_phase)),
-                     output_locations TEXT CHECK (output_locations IS NULL OR json_valid(output_locations)),
                      termination_status INT,
-                     faults TEXT CHECK (faults IS NULL OR json_valid(faults)),
-                     status TEXT CHECK (status IS NULL OR json_valid(status)),
                      warnings INT,
-                     control_requests TEXT CHECK (control_requests IS NULL OR json_valid(control_requests)),
                      state_updated_at TIMESTAMP,
                      updated_at TIMESTAMP NOT NULL,
                      heartbeat_at TIMESTAMP,
@@ -294,7 +277,6 @@ class SQLite(EnvironmentDatabase):
     def init_run(self, job_id, run_id, user_params=None, *,
                  created_at, tags=(), auto_increment=False, max_retries=5):
         """See `RunStorage.init_run`."""
-        params_json = json.dumps(dict(user_params)) if user_params else None
         created_str = format_dt_sql(created_at)
         # Normalize once up-front. Idempotent — safe even if caller pre-normalized.
         normalized_tags = normalize_tags(tags) if tags else ()
@@ -302,9 +284,9 @@ class SQLite(EnvironmentDatabase):
         if not auto_increment:
             try:
                 self._conn.execute(
-                    "INSERT INTO runs (job_id, run_id, ordinal, user_params, created, updated_at, heartbeat_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (job_id, run_id, 1, params_json, created_str, created_str, created_str))
+                    "INSERT INTO runs (job_id, run_id, ordinal, created, updated_at, heartbeat_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (job_id, run_id, 1, created_str, created_str, created_str))
             except sqlite3.IntegrityError:
                 raise DuplicateInstanceError(InstanceID(job_id, run_id, 1))
             self._insert_tags(job_id, run_id, 1, normalized_tags)
@@ -318,9 +300,9 @@ class SQLite(EnvironmentDatabase):
         for _ in range(max_retries):
             try:
                 self._conn.execute(
-                    "INSERT INTO runs (job_id, run_id, ordinal, user_params, created, updated_at, heartbeat_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (job_id, run_id, ordinal, params_json, created_str, created_str, created_str))
+                    "INSERT INTO runs (job_id, run_id, ordinal, created, updated_at, heartbeat_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (job_id, run_id, ordinal, created_str, created_str, created_str))
             except sqlite3.IntegrityError:
                 ordinal += 1
                 continue
@@ -475,9 +457,9 @@ class SQLite(EnvironmentDatabase):
         """See `RunStorage.read_active_runs`."""
         statement = _SELECT_RUNS
         where_clause, where_params, _ = _build_where_clause(run_match, alias='h')  # post-filtered below
-        # ended IS NULL → active; root_phase IS NOT NULL → the persister has written a real
+        # ended IS NULL → active; run IS NOT NULL → the persister has written a real
         # snapshot, so skip init-only rows that _to_job_run cannot deserialize.
-        guard = "h.ended IS NULL AND h.root_phase IS NOT NULL"
+        guard = "h.ended IS NULL AND h.run IS NOT NULL"
         statement += (where_clause + " AND " + guard) if where_clause else (" WHERE " + guard)
 
         cursor = self._conn.cursor()
@@ -500,7 +482,7 @@ class SQLite(EnvironmentDatabase):
         cursor.execute(
             "SELECT job_id, run_id, ordinal, updated_at, "
             "(julianday('now') - julianday(heartbeat_at)) * 86400.0 AS heartbeat_age FROM runs "
-            "WHERE ended IS NULL AND root_phase IS NOT NULL")
+            "WHERE ended IS NULL AND run IS NOT NULL")
         try:
             return [RunVersion(InstanceID(r['job_id'], r['run_id'], r['ordinal']), r['updated_at'],
                                r['heartbeat_age'])

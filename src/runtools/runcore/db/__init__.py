@@ -118,7 +118,8 @@ class RunStorage(ABC):
         Args:
             job_id: Job identifier.
             run_id: Run identifier within the logical run.
-            user_params: Optional user-defined parameters serialized into the row.
+            user_params: Optional user-defined parameters. Stored in the full run document once
+                the first snapshot is persisted; init-only rows keep only identity/projection data.
             created_at: Canonical creation timestamp. Keyword-only so it can't be
                 confused with ``user_params``. Caller is the source of truth —
                 typically ``root_phase.created_at`` from which ``lifecycle.created_at``
@@ -161,9 +162,9 @@ class RunStorage(ABC):
         """Return a change-detection cursor for each materialized active run.
 
         Cheap poll primitive: scans (instance, updated_at) only, without deserializing full
-        snapshots. Includes non-ended rows carrying a real snapshot (root_phase set), skips
-        init-only rows. Compare the opaque cursor for equality against a prior scan to find changed
-        instances, then deep-read those via :meth:`read_active_runs`.
+        snapshots. Includes non-ended rows carrying a real run document (``run IS NOT NULL``),
+        skips init-only rows. Compare the opaque cursor for equality against a prior scan to find
+        changed instances, then deep-read those via :meth:`read_active_runs`.
         """
 
     @abstractmethod
