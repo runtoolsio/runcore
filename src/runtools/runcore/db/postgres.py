@@ -379,6 +379,7 @@ CREATE TABLE IF NOT EXISTS runs (
     warnings INTEGER,
     state_updated_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL,
+    heartbeat_at TIMESTAMPTZ,
     PRIMARY KEY (job_id, run_id, ordinal)
 );
 CREATE INDEX IF NOT EXISTS runs_ended_idx ON runs (ended);
@@ -516,9 +517,9 @@ class PostgreSQL(EnvironmentDatabase):
     def _insert_run(self, job_id, run_id, ordinal, user_params, created, tags):
         with self._pool.connection() as conn, conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO runs (job_id, run_id, ordinal, user_params, created, updated_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s)",
-                (job_id, run_id, ordinal, user_params, created, created))
+                "INSERT INTO runs (job_id, run_id, ordinal, user_params, created, updated_at, heartbeat_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (job_id, run_id, ordinal, user_params, created, created, created))
             if tags:
                 cur.executemany(
                     "INSERT INTO run_tags (job_id, run_id, ordinal, tag) VALUES (%s, %s, %s, %s)",
@@ -592,6 +593,20 @@ class PostgreSQL(EnvironmentDatabase):
             "SELECT job_id, run_id, ordinal, updated_at::text AS version FROM runs "
             "WHERE ended IS NULL AND root_phase IS NOT NULL", ())
         return [(InstanceID(r['job_id'], r['run_id'], r['ordinal']), r['version']) for r in rows]
+
+    @override
+    @ensure_open
+    def touch_heartbeats(self, instance_ids):
+        """See `RunStorage.touch_heartbeats`."""
+        ids = [(i.job_id, i.run_id, i.ordinal) for i in instance_ids]
+        if not ids:
+            return
+        heartbeat = _bind_dt(utc_now())
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            cur.executemany(
+                "UPDATE runs SET heartbeat_at = %s "
+                "WHERE job_id = %s AND run_id = %s AND ordinal = %s AND ended IS NULL",
+                [(heartbeat, j, r, o) for j, r, o in ids])
 
     @override
     @ensure_open

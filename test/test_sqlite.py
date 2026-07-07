@@ -650,3 +650,40 @@ def test_read_runs_post_filters_phase_criteria(sut):
     # Same backstop on the history path: an unrepresented phase criterion must not leak.
     no_such_phase = JobRunCriteria.builder().phase(PhaseCriterion(phase_id='does-not-exist')).build()
     assert sut.read_runs(no_such_phase) == []
+
+
+def _read_heartbeat(sut, iid):
+    row = sut._conn.execute(
+        "SELECT heartbeat_at FROM runs WHERE job_id = ? AND run_id = ? AND ordinal = ?",
+        (iid.job_id, iid.run_id, iid.ordinal)).fetchone()
+    return row[0]
+
+
+def test_heartbeat_baseline_set_at_init(sut):
+    iid = sut.init_run('hb', 'r1', created_at=utc_now())
+    assert _read_heartbeat(sut, iid) is not None
+
+
+def test_heartbeat_touch_advances_liveness_without_moving_cursor(sut):
+    run = fake_job_run('hb', 'r1', created_at=utc_now() - timedelta(minutes=1), term_status=None)
+    iid = sut.init_run('hb', 'r1', created_at=run.lifecycle.created_at)
+    sut.store_active_runs(run)
+    baseline = _read_heartbeat(sut, iid)
+    [(_, cursor_before)] = sut.active_run_versions()
+
+    sut.touch_heartbeats([iid])
+
+    assert _read_heartbeat(sut, iid) > baseline
+    [(_, cursor_after)] = sut.active_run_versions()
+    assert cursor_after == cursor_before  # liveness must not trigger consumer deep reads
+
+
+def test_heartbeat_touch_skips_ended_runs(sut):
+    run = fake_job_run('done', 'r1', term_status=TerminationStatus.COMPLETED)
+    iid = run.metadata.instance_id
+    _init_and_store(sut, run)
+    heartbeat_at_end = _read_heartbeat(sut, iid)
+
+    sut.touch_heartbeats([iid])
+
+    assert _read_heartbeat(sut, iid) == heartbeat_at_end

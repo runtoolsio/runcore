@@ -239,6 +239,7 @@ class SQLite(EnvironmentDatabase):
                      warnings INT,
                      state_updated_at TIMESTAMP,
                      updated_at TIMESTAMP NOT NULL,
+                     heartbeat_at TIMESTAMP,
                      PRIMARY KEY (job_id, run_id, ordinal)
                      )
                      ''')
@@ -283,9 +284,9 @@ class SQLite(EnvironmentDatabase):
         if not auto_increment:
             try:
                 self._conn.execute(
-                    "INSERT INTO runs (job_id, run_id, ordinal, user_params, created, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (job_id, run_id, 1, params_json, created_str, created_str))
+                    "INSERT INTO runs (job_id, run_id, ordinal, user_params, created, updated_at, heartbeat_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (job_id, run_id, 1, params_json, created_str, created_str, created_str))
             except sqlite3.IntegrityError:
                 raise DuplicateInstanceError(InstanceID(job_id, run_id, 1))
             self._insert_tags(job_id, run_id, 1, normalized_tags)
@@ -299,9 +300,9 @@ class SQLite(EnvironmentDatabase):
         for _ in range(max_retries):
             try:
                 self._conn.execute(
-                    "INSERT INTO runs (job_id, run_id, ordinal, user_params, created, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (job_id, run_id, ordinal, params_json, created_str, created_str))
+                    "INSERT INTO runs (job_id, run_id, ordinal, user_params, created, updated_at, heartbeat_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (job_id, run_id, ordinal, params_json, created_str, created_str, created_str))
             except sqlite3.IntegrityError:
                 ordinal += 1
                 continue
@@ -486,6 +487,19 @@ class SQLite(EnvironmentDatabase):
                     for r in cursor.fetchall()]
         finally:
             cursor.close()
+
+    @override
+    @ensure_open
+    def touch_heartbeats(self, instance_ids):
+        """See `RunStorage.touch_heartbeats`."""
+        ids = [(i.job_id, i.run_id, i.ordinal) for i in instance_ids]
+        if not ids:
+            return
+        heartbeat = format_dt_sql(utc_now())
+        self._conn.executemany(
+            "UPDATE runs SET heartbeat_at = ? WHERE job_id = ? AND run_id = ? AND ordinal = ? AND ended IS NULL",
+            [(heartbeat, j, r, o) for j, r, o in ids])
+        self._conn.commit()
 
     @override
     @ensure_open

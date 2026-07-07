@@ -6,6 +6,7 @@ the schema each test, so a provided DSN must point at a throwaway database. The 
 Docker is unavailable and no DSN is given — Postgres is a first-class backend, not an optional one.
 """
 import os
+from datetime import timedelta
 
 import psycopg
 import pytest
@@ -19,6 +20,7 @@ from runtools.runcore.matching import JobRunCriteria, LifecycleCriterion, Metada
 from runtools.runcore.run import Stage, TerminationStatus
 from runtools.runcore.test.job import fake_job_run
 from runtools.runcore.util import MatchingStrategy
+from runtools.runcore.util.dt import utc_now
 from runtools.runcore.util.lock import LockAcquireTimeoutError, LockProvider
 
 POSTGRES_IMAGE = "postgres:16-alpine"
@@ -606,3 +608,42 @@ def test_advisory_lock_state_guards(pg_dsn):
             lock.acquire()
     finally:
         lock.release()
+
+
+# --- heartbeats ---
+
+def _read_heartbeat(sut, iid):
+    with sut._pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT heartbeat_at FROM runs WHERE job_id = %s AND run_id = %s AND ordinal = %s",
+                    (iid.job_id, iid.run_id, iid.ordinal))
+        return cur.fetchone()[0]
+
+
+def test_heartbeat_baseline_set_at_init(sut):
+    iid = sut.init_run('hb', 'r1', created_at=fake_job_run('hb', 'r1').lifecycle.created_at)
+    assert _read_heartbeat(sut, iid) is not None
+
+
+def test_heartbeat_touch_advances_liveness_without_moving_cursor(sut):
+    run = fake_job_run('hb', 'r1', created_at=utc_now() - timedelta(minutes=1), term_status=None)
+    iid = sut.init_run('hb', 'r1', created_at=run.lifecycle.created_at)
+    sut.store_active_runs(run)
+    baseline = _read_heartbeat(sut, iid)
+    [(_, cursor_before)] = sut.active_run_versions()
+
+    sut.touch_heartbeats([iid])
+
+    assert _read_heartbeat(sut, iid) > baseline
+    [(_, cursor_after)] = sut.active_run_versions()
+    assert cursor_after == cursor_before  # liveness must not trigger consumer deep reads
+
+
+def test_heartbeat_touch_skips_ended_runs(sut):
+    run = fake_job_run('done', 'r1', term_status=TerminationStatus.COMPLETED)
+    iid = sut.init_run('done', 'r1', created_at=run.lifecycle.created_at)
+    sut.store_runs(run)
+    heartbeat_at_end = _read_heartbeat(sut, iid)
+
+    sut.touch_heartbeats([iid])
+
+    assert _read_heartbeat(sut, iid) == heartbeat_at_end

@@ -172,6 +172,19 @@ class RunStorage(ABC):
         """
 
     @abstractmethod
+    def touch_heartbeats(self, instance_ids: Iterable[InstanceID]):
+        """Refresh the liveness timestamp of still-active runs.
+
+        Sets ``heartbeat_at`` for the given instances' non-ended rows; ended rows are
+        ignored. Must NOT move the ``updated_at`` change-detection cursor — liveness is
+        orthogonal to state freshness, and bumping the cursor would make every consumer
+        deep-read unchanged rows on each heartbeat.
+
+        Args:
+            instance_ids: Instances whose heartbeat to refresh.
+        """
+
+    @abstractmethod
     def remove_runs(self, run_match) -> list[InstanceID]:
         """Remove job runs matching the specified criteria."""
 
