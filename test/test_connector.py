@@ -3,6 +3,7 @@ import pytest
 
 from runtools.runcore.connector import compose
 from runtools.runcore.db import sqlite
+from runtools.runcore.proxy import SnapshotJobInstanceProxy
 from runtools.runcore.run import TerminationStatus
 from runtools.runcore.test.job import fake_job_run
 from runtools.runcore.transport.db import PollingInstanceDirectory
@@ -17,6 +18,10 @@ def _seed_active(db, run):
     db.store_active_runs(run)
 
 
+def _directory(env_db):
+    return PollingInstanceDirectory(env_db, lambda run: SnapshotJobInstanceProxy(run, env_db))
+
+
 @pytest.fixture
 def env_db():
     with sqlite.create_memory('test_env') as database:
@@ -27,7 +32,7 @@ def test_db_transport_observes_active_runs(env_db):
     _seed_active(env_db, fake_job_run('j1', created_at=BASE, term_status=None))
 
     # Opening the connector opens the polling directory — first poll seeds the view
-    with compose('test_env', env_db, PollingInstanceDirectory(env_db), ()) as connector:
+    with compose('test_env', env_db, _directory(env_db), ()) as connector:
         assert [r.job_id for r in connector.get_active_runs()] == ['j1']
 
 
@@ -37,5 +42,5 @@ def test_db_transport_excludes_ended_runs(env_db):
     env_db.init_run(iid.job_id, iid.run_id, created_at=BASE)
     env_db.store_runs(fake_job_run('done', created_at=BASE, term_status=TerminationStatus.COMPLETED))
 
-    with compose('test_env', env_db, PollingInstanceDirectory(env_db), ()) as connector:
+    with compose('test_env', env_db, _directory(env_db), ()) as connector:
         assert [r.job_id for r in connector.get_active_runs()] == ['running']

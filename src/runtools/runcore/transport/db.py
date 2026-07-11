@@ -11,9 +11,9 @@ view current by polling the store and synthesizing events through snapshot-fed p
 
 import logging
 from threading import Event, Thread, current_thread
-from typing import Optional, cast
+from typing import Callable, Optional, cast
 
-from runtools.runcore.db import HEARTBEAT_INTERVAL, RunStorage
+from runtools.runcore.db import HEARTBEAT_STALE_AFTER, RunStorage
 from runtools.runcore.job import InstanceNotifications, InstanceObservableNotifications, JobRun, NotificationBinding
 from runtools.runcore.matching import JobRunCriteria
 from runtools.runcore.proxy import JobInstanceProxyBase, SnapshotJobInstanceProxy
@@ -23,7 +23,6 @@ log = logging.getLogger(__name__)
 
 DEFAULT_ACTIVE_POLL_INTERVAL = 0.25  # Seconds between polls while instances are active
 DEFAULT_IDLE_POLL_INTERVAL = 2.0     # Seconds between polls while the view is empty
-HEARTBEAT_STALE_AFTER = 3 * HEARTBEAT_INTERVAL  # Seconds without a heartbeat before a run counts as lost
 
 
 class DbInstanceDiscovery:
@@ -53,13 +52,17 @@ class PollingInstanceDirectory(InstanceDirectoryBase):
     are the event source and the directory aggregate fans in from them.
 
     Polling cadence adapts: fast while instances are active, slow while the view is empty.
+
+    ``proxy_factory`` builds the proxy for each admitted instance — which capabilities a proxy
+    gets (e.g. its command channel) is composition-site wiring, not this directory's concern.
     """
 
-    def __init__(self, db: RunStorage, *,
+    def __init__(self, db: RunStorage, proxy_factory: Callable[[JobRun], SnapshotJobInstanceProxy], *,
                  active_interval: float = DEFAULT_ACTIVE_POLL_INTERVAL,
                  idle_interval: float = DEFAULT_IDLE_POLL_INTERVAL):
         super().__init__()
         self._db = db
+        self._proxy_factory = proxy_factory
         self._notifications = InstanceObservableNotifications()
         self._active_interval = active_interval
         self._idle_interval = idle_interval
@@ -156,7 +159,7 @@ class PollingInstanceDirectory(InstanceDirectoryBase):
         return self._notifications.bind_to(proxy.notifications)  # aggregate <- proxy: the proxy is the source
 
     def _create_proxy(self, initial: JobRun) -> SnapshotJobInstanceProxy:
-        return SnapshotJobInstanceProxy(initial)
+        return self._proxy_factory(initial)
 
     def _close_resources(self) -> None:
         self._stop.set()  # the loop exits after its current pass even without a join

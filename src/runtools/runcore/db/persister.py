@@ -43,12 +43,14 @@ class RunStatePersister:
         notifications.add_observer_lifecycle(self._mark_dirty)
         notifications.add_observer_phase(self._mark_dirty)
         notifications.add_observer_status(self._mark_dirty)
+        notifications.add_observer_control(self._mark_dirty)
 
     def detach(self, notifications: InstanceNotifications) -> None:
         """Stop observing the instance (its state is no longer tracked)."""
         notifications.remove_observer_lifecycle(self._mark_dirty)
         notifications.remove_observer_phase(self._mark_dirty)
         notifications.remove_observer_status(self._mark_dirty)
+        notifications.remove_observer_control(self._mark_dirty)
 
     def flush(self) -> None:
         """Write the coalesced active snapshots, clearing each only after it lands.

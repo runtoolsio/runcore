@@ -395,7 +395,6 @@ CREATE TABLE IF NOT EXISTS signals (
     phase_id TEXT,
     op TEXT NOT NULL,
     args JSONB,
-    requested_by TEXT,
     requested_at TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX IF NOT EXISTS signals_instance_idx ON signals (job_id, run_id, ordinal);
@@ -590,6 +589,16 @@ class PostgreSQL(EnvironmentDatabase):
 
     @override
     @ensure_open
+    def read_instance_ids(self, run_match=None):
+        """See `RunStorage.read_instance_ids`."""
+        where, params, complete = build_where_clause(run_match, _PG_DIALECT, alias='h')
+        if complete:
+            rows = self._fetch("SELECT h.job_id, h.run_id, h.ordinal FROM runs h" + where, params)
+            return [InstanceID(r['job_id'], r['run_id'], r['ordinal']) for r in rows]
+        return [InstanceID(*pk) for pk in self._matching_pks(where, params, run_match)]
+
+    @override
+    @ensure_open
     def active_run_versions(self) -> List[RunVersion]:
         """See `RunStorage.active_run_versions`."""
         # updated_at::text → opaque str cursor; a bare TIMESTAMPTZ would read back as a datetime.
@@ -617,28 +626,34 @@ class PostgreSQL(EnvironmentDatabase):
 
     @override
     @ensure_open
-    def write_signal(self, instance_id, op, *, phase_id=None, args=(), requested_by=None):
-        """See `SignalStorage.write_signal`."""
+    def send_signal(self, instance_id, op, *, phase_id=None, args=()):
+        """See `SignalSender.send_signal`."""
         with self._pool.connection() as conn, conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO signals (job_id, run_id, ordinal, phase_id, op, args, requested_by, requested_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, now())",
+                "INSERT INTO signals (job_id, run_id, ordinal, phase_id, op, args, requested_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, now())",
                 (instance_id.job_id, instance_id.run_id, instance_id.ordinal, phase_id, op,
-                 Jsonb(list(args)) if args else None, requested_by))
+                 Jsonb(list(args)) if args else None))
 
     @override
     @ensure_open
-    def read_signals(self, instance_ids):
+    def read_signals(self, instance_ids=None, *, older_than=None):
         """See `SignalStorage.read_signals`."""
-        ids = [(i.job_id, i.run_id, i.ordinal) for i in instance_ids]
-        if not ids:
-            return []
-        placeholders = ", ".join(["(%s, %s, %s)"] * len(ids))
-        rows = self._fetch(
-            f"SELECT * FROM signals WHERE (job_id, run_id, ordinal) IN ({placeholders}) ORDER BY id",
-            [value for iid in ids for value in iid])
+        conditions, params = [], []
+        if instance_ids is not None:
+            ids = [(i.job_id, i.run_id, i.ordinal) for i in instance_ids]
+            if not ids:
+                return []
+            conditions.append("(job_id, run_id, ordinal) IN (" + ", ".join(["(%s, %s, %s)"] * len(ids)) + ")")
+            params += [value for iid in ids for value in iid]
+        if older_than is not None:
+            conditions.append("requested_at < now() - make_interval(secs => %s)")
+            params.append(older_than)
+        where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+
+        rows = self._fetch(f"SELECT * FROM signals{where} ORDER BY id", params)
         return [Signal(r['id'], InstanceID(r['job_id'], r['run_id'], r['ordinal']), r['phase_id'], r['op'],
-                       tuple(r['args'] or ()), r['requested_by'], _read_dt(r['requested_at']))
+                       tuple(r['args'] or ()), _read_dt(r['requested_at']))
                 for r in rows]
 
     @override

@@ -9,6 +9,7 @@ import pytest
 
 from runtools.runcore.db import sqlite
 from runtools.runcore.matching import JobRunCriteria
+from runtools.runcore.proxy import SnapshotJobInstanceProxy
 from runtools.runcore.run import Stage, TerminationStatus
 from runtools.runcore.test.job import fake_job_run
 from runtools.runcore.transport.db import PollingInstanceDirectory
@@ -25,7 +26,7 @@ def db():
 
 @pytest.fixture
 def directory(db):
-    sut = PollingInstanceDirectory(db)
+    sut = PollingInstanceDirectory(db, lambda run: SnapshotJobInstanceProxy(run, db))
     yield sut
     sut.close()  # idempotent; the poll thread is never started in these tests
 
@@ -189,3 +190,25 @@ def test_lost_instance_stays_in_view(directory, db):
     directory.reconcile()
 
     assert [i.id.job_id for i in directory.get_instances()] == ['j1']
+
+
+def test_control_request_synthesizes_control_event(directory, db):
+    control_events = []
+
+    class ControlRecorder:
+        def instance_control_update(self, event):
+            control_events.append(event)
+
+    run = fake_job_run('j1', created_at=BASE, term_status=None)
+    _seed_active(db, run)
+    directory.reconcile()  # admit silently
+    directory.notifications.add_observer_control(ControlRecorder())
+
+    from dataclasses import replace
+    from runtools.runcore.job import ControlRequest
+    request = ControlRequest('approve', BASE + timedelta(minutes=10), phase_id='gate')
+    db.store_active_runs(replace(run, control_requests=(request,)))  # applied_at drives last_updated
+    directory.reconcile()
+
+    [event] = control_events
+    assert event.request == request

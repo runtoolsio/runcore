@@ -31,6 +31,7 @@ from runtools.runcore.err import run_isolated_collect_exceptions
 from runtools.runcore.job import InstanceNotifications, JobInstance, InstanceLifecycleObserver, InstanceLifecycleEvent, \
     JobRun, InstanceID
 from runtools.runcore.matching import JobRunCriteria, SortOption
+from runtools.runcore.proxy import SnapshotJobInstanceProxy
 from runtools.runcore.transport import InstanceDirectory
 from runtools.runcore.transport.db import PollingInstanceDirectory
 
@@ -369,7 +370,7 @@ def _connect_postgres(entry: EnvironmentEntry) -> EnvironmentConnector:
     try:
         config = PostgresEnvironmentConfig.model_validate(env_db.load_config(entry.id))
         output_backends = output.create_backends(entry.id, config.output.storages)
-        directory = PollingInstanceDirectory(env_db)  # env_db is the RunStorage it polls
+        directory = PollingInstanceDirectory(env_db, lambda run: SnapshotJobInstanceProxy(run, env_db))
         return compose(entry.id, env_db, directory, output_backends)
     except BaseException:
         env_db.close()

@@ -573,20 +573,45 @@ class JobInstance(abc.ABC):
         """Register observers here to receive events from this instance."""
 
 
+STOP_OP = 'stop'
+"""The sole instance-level control op (``phase_id`` None) — a cross-process protocol token:
+written by consumer proxies into the signals mailbox and matched at the node's apply point.
+Phase-level ops are an open set (any ``control_api`` method name) and stay literal."""
+
+
+class SignalSender(ABC):
+    """Consumer-side command channel of the signals mailbox (design point 5).
+
+    The capability to post a control envelope for an instance — the narrowest grant a remote
+    control writer needs; how the envelope is stored and delivered is the implementor's concern.
+    """
+
+    @abstractmethod
+    def send_signal(self, instance_id: InstanceID, op: str, *,
+                    phase_id: Optional[str] = None, args: Iterable = ()):
+        """Post an in-flight command for the given instance.
+
+        Args:
+            instance_id: Target instance.
+            op: control_api operation name; instance-level when phase_id is None (e.g. ``stop``).
+            phase_id: Target phase for phase ops; None for instance-level ops.
+            args: JSON-serializable positional arguments of the operation.
+        """
+
+
 @dataclass(frozen=True)
 class ControlRequest:
-    """A remote control operation applied to the instance — the run's durable record.
+    """A control operation accepted at the instance's apply point — the run's durable record.
 
-    Written by the owning node at the apply point (single-writer preserved) and retained with
-    the run's history; the in-flight command row it originates from is deleted on apply
-    (signals design — transport doc point 5).
+    Written by the owning node at the apply point (single-writer preserved), appended just before
+    the op is invoked so a run the op immediately finalizes still carries the record, and retained
+    with the run's history; for signal-delivered commands, the in-flight row it originates from is
+    deleted on apply (signals design — transport doc point 5).
     """
     op: str
     applied_at: datetime.datetime
     phase_id: Optional[str] = None
     args: Tuple = ()
-    requested_by: Optional[str] = None
-    requested_at: Optional[datetime.datetime] = None
 
     def serialize(self) -> Dict[str, Any]:
         d = {"op": self.op, "applied_at": format_dt_iso(self.applied_at)}
@@ -594,10 +619,6 @@ class ControlRequest:
             d["phase_id"] = self.phase_id
         if self.args:
             d["args"] = list(self.args)
-        if self.requested_by:
-            d["requested_by"] = self.requested_by
-        if self.requested_at:
-            d["requested_at"] = format_dt_iso(self.requested_at)
         return d
 
     @classmethod
@@ -607,8 +628,6 @@ class ControlRequest:
             applied_at=util.parse_datetime(as_dict['applied_at']),
             phase_id=as_dict.get('phase_id'),
             args=tuple(as_dict.get('args', ())),
-            requested_by=as_dict.get('requested_by'),
-            requested_at=util.parse_datetime(as_dict['requested_at']) if as_dict.get('requested_at') else None,
         )
 
 
@@ -889,16 +908,18 @@ class InstanceOutputObserver(abc.ABC):
         pass
 
 
-class ControlAction(Enum):
-    STOP_REQUESTED = "stop_requested"
-
-
 @dataclass(frozen=True)
 class InstanceControlEvent:
+    """A control operation was applied to the instance.
+
+    The live-lane notification of the applied :class:`ControlRequest`; the durable record is
+    the run's ``control_requests`` (design point 5), from which snapshot transports synthesize
+    this event.
+    """
     EVENT_TYPE = "instance_control_update"
 
     job_run: JobRun
-    action: ControlAction
+    request: ControlRequest
     timestamp: datetime.datetime
 
     @property
@@ -918,7 +939,7 @@ class InstanceControlEvent:
             },
             "event": {
                 "job_run": self.job_run.serialize(),
-                "action": self.action.value,
+                "request": self.request.serialize(),
                 "timestamp": format_dt_iso(self.timestamp),
             },
         }
@@ -927,7 +948,7 @@ class InstanceControlEvent:
     def deserialize(cls, as_dict: Dict[str, Any]) -> 'InstanceControlEvent':
         return cls(
             job_run=JobRun.deserialize(as_dict['job_run']),
-            action=ControlAction(as_dict['action']),
+            request=ControlRequest.deserialize(as_dict['request']),
             timestamp=util.parse_datetime(as_dict['timestamp']),
         )
 

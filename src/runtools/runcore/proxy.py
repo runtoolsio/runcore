@@ -6,8 +6,8 @@ from typing import Callable, List, Optional, Tuple, override
 
 from runtools.runcore.job import (
     JobRun, JobInstance, InstanceNotifications, InstanceObservableNotifications,
-    InstanceLifecycleEvent, InstanceOutputEvent, InstancePhaseEvent, InstanceStatusEvent,
-    NotificationBinding,
+    InstanceControlEvent, InstanceLifecycleEvent, InstanceOutputEvent, InstancePhaseEvent, InstanceStatusEvent,
+    NotificationBinding, SignalSender, STOP_OP,
 )
 from runtools.runcore.matching import MetadataCriterion
 from runtools.runcore.output import Mode, Output, OutputLine
@@ -198,7 +198,7 @@ class PhaseControlProxy:
         return method_proxy
 
 
-_InstanceStateEvent = InstanceLifecycleEvent | InstancePhaseEvent | InstanceStatusEvent
+_InstanceStateEvent = InstanceLifecycleEvent | InstancePhaseEvent | InstanceStatusEvent | InstanceControlEvent
 """A state-carrying instance event — lifecycle, phase, or status (the events a directory routes
 through ``_on_state_event``). Excludes output and control, which carry no run snapshot."""
 
@@ -249,6 +249,11 @@ def _synthesize_events(prev: Optional[JobRun], curr: JobRun) -> List[_InstanceSt
         timestamp = _status_timestamp(curr.status) or curr.lifecycle.last_transition_at
         events.append(InstanceStatusEvent(curr, timestamp))
 
+    # control_requests is append-only (single writer), so the new entries are the suffix
+    prev_request_count = len(prev.control_requests) if prev else 0
+    for request in curr.control_requests[prev_request_count:]:
+        events.append(InstanceControlEvent(curr, request, request.applied_at))
+
     events.sort(key=lambda event: event.timestamp)
     return events
 
@@ -288,15 +293,16 @@ class SnapshotJobInstanceProxy(JobInstanceProxyBase):
     A snapshot transport (polling a database, presence keys, etc.) pushes fresh snapshots via
     :meth:`update_from_snapshot` instead of binding the proxy to an upstream event source. The proxy
     applies the newer-wins guard, replaces the cached snapshot, and emits the synthesized state
-    events to its own notification hub (where a directory's aggregate fans in). Control and output
-    are not wired on snapshot transports yet.
+    events to its own notification hub (where a directory's aggregate fans in). Control is posted
+    through the signal sender; output is not yet supported on snapshot transports.
 
     The directory also pushes liveness (:meth:`update_liveness`) — a snapshot transport cannot tell
     a quiet run from a dead producer, so the heartbeat verdict is part of the proxy's view.
     """
 
-    def __init__(self, initial: JobRun, output_buffer_depth: int = 100):
+    def __init__(self, initial: JobRun, signal_sender: SignalSender, output_buffer_depth: int = 100):
         super().__init__(initial, output_buffer_depth)
+        self._signals = signal_sender
         self._heartbeat_age: Optional[float] = None
         self._lost = False
 
@@ -339,14 +345,18 @@ class SnapshotJobInstanceProxy(JobInstanceProxyBase):
             self._notifications.lifecycle_notification.observer_proxy.instance_lifecycle_update(event)
         elif isinstance(event, InstancePhaseEvent):
             self._notifications.phase_notification.observer_proxy.instance_phase_update(event)
+        elif isinstance(event, InstanceControlEvent):
+            self._notifications.control_notification.observer_proxy.instance_control_update(event)
         else:
             self._notifications.status_notification.observer_proxy.instance_status_update(event)
 
     def stop(self, stop_reason=StopReason.STOPPED):
-        raise NotImplementedError("Control is not yet supported on snapshot transports")
+        """Post a stop signal for the owning node to apply (design point 5) — fire-and-forget;
+        the outcome is observed through the ordinary state lane."""
+        self._signals.send_signal(self._job_run.instance_id, STOP_OP, args=(stop_reason.name,))
 
     def _exec_phase_op(self, phase_id: str, op_name: str, *op_args):
-        raise NotImplementedError("Phase control is not yet supported on snapshot transports")
+        self._signals.send_signal(self._job_run.instance_id, op_name, phase_id=phase_id, args=op_args)
 
     def _fetch_output_tail(self, mode: Mode, max_lines: int) -> List[OutputLine]:
         raise NotImplementedError("Output is not yet supported on snapshot transports")

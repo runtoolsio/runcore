@@ -6,6 +6,7 @@ networked/concurrent deployments use the Postgres driver.
 import json
 import logging
 import sqlite3
+from datetime import timedelta
 from functools import wraps
 from pathlib import Path
 from threading import Lock
@@ -124,6 +125,12 @@ def _to_job_run(r) -> JobRun:
     """Deserialize the whole-run document of a runs row (see the document + projections note
     on the runs DDL)."""
     return JobRun.deserialize(json.loads(r['run']))
+
+
+def _to_signal(r) -> Signal:
+    """Convert a sqlite3.Row from the signals table into a Signal."""
+    return Signal(r['id'], InstanceID(r['job_id'], r['run_id'], r['ordinal']), r['phase_id'], r['op'],
+                  tuple(json.loads(r['args'])) if r['args'] else (), parse_dt_sql(r['requested_at']))
 
 
 _SELECT_RUNS = (
@@ -260,7 +267,6 @@ class SQLite(EnvironmentDatabase):
                      phase_id TEXT,
                      op TEXT NOT NULL,
                      args TEXT CHECK (args IS NULL OR json_valid(args)),
-                     requested_by TEXT,
                      requested_at TIMESTAMP NOT NULL
                      )
                      ''')
@@ -475,6 +481,17 @@ class SQLite(EnvironmentDatabase):
 
     @override
     @ensure_open
+    def read_instance_ids(self, run_match=None):
+        """See `RunStorage.read_instance_ids`."""
+        where_clause, where_params, complete = _build_where_clause(run_match, alias='h')
+        if complete:
+            cursor = self._conn.execute(
+                "SELECT h.job_id, h.run_id, h.ordinal FROM runs h" + where_clause, where_params)
+            return [InstanceID(j, r, o) for j, r, o in cursor.fetchall()]
+        return [InstanceID(*pk) for pk in self._matching_pks(where_clause, where_params, run_match)]
+
+    @override
+    @ensure_open
     def active_run_versions(self) -> List[RunVersion]:
         """See `RunStorage.active_run_versions`."""
         cursor = self._conn.cursor()
@@ -505,33 +522,36 @@ class SQLite(EnvironmentDatabase):
 
     @override
     @ensure_open
-    def write_signal(self, instance_id, op, *, phase_id=None, args=(), requested_by=None):
-        """See `SignalStorage.write_signal`."""
+    def send_signal(self, instance_id, op, *, phase_id=None, args=()):
+        """See `SignalSender.send_signal`."""
         self._conn.execute(
-            "INSERT INTO signals (job_id, run_id, ordinal, phase_id, op, args, requested_by, requested_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO signals (job_id, run_id, ordinal, phase_id, op, args, requested_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (instance_id.job_id, instance_id.run_id, instance_id.ordinal, phase_id, op,
-             json.dumps(list(args)) if args else None, requested_by, format_dt_sql(utc_now())))
+             json.dumps(list(args)) if args else None, format_dt_sql(utc_now())))
         self._conn.commit()
 
     @override
     @ensure_open
-    def read_signals(self, instance_ids):
+    def read_signals(self, instance_ids=None, *, older_than=None):
         """See `SignalStorage.read_signals`."""
-        ids = [(i.job_id, i.run_id, i.ordinal) for i in instance_ids]
-        if not ids:
-            return []
-        placeholders = ", ".join(["(?, ?, ?)"] * len(ids))
+        conditions, params = [], []
+        if instance_ids is not None:
+            ids = [(i.job_id, i.run_id, i.ordinal) for i in instance_ids]
+            if not ids:
+                return []
+            conditions.append("(job_id, run_id, ordinal) IN (" + ", ".join(["(?, ?, ?)"] * len(ids)) + ")")
+            params += [value for iid in ids for value in iid]
+        if older_than is not None:
+            conditions.append("requested_at < ?")
+            params.append(format_dt_sql(utc_now() - timedelta(seconds=older_than)))
+        where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+
         cursor = self._conn.cursor()
         cursor.row_factory = sqlite3.Row
-        cursor.execute(
-            f"SELECT * FROM signals WHERE (job_id, run_id, ordinal) IN ({placeholders}) ORDER BY id",
-            [value for iid in ids for value in iid])
+        cursor.execute(f"SELECT * FROM signals{where} ORDER BY id", params)
         try:
-            return [Signal(r['id'], InstanceID(r['job_id'], r['run_id'], r['ordinal']), r['phase_id'], r['op'],
-                           tuple(json.loads(r['args'])) if r['args'] else (), r['requested_by'],
-                           parse_dt_sql(r['requested_at']))
-                    for r in cursor.fetchall()]
+            return [_to_signal(r) for r in cursor.fetchall()]
         finally:
             cursor.close()
 

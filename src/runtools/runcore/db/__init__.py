@@ -32,7 +32,7 @@ from datetime import datetime
 from typing import Any, Iterable, Iterator, NamedTuple, Optional
 
 from runtools.runcore.err import RuntoolsException
-from runtools.runcore.job import InstanceID, JobRun
+from runtools.runcore.job import InstanceID, JobRun, SignalSender
 from runtools.runcore.matching import SortOption
 
 
@@ -84,6 +84,10 @@ class ConfigStorage(ABC):
 HEARTBEAT_INTERVAL = 15.0
 """Seconds between liveness touches of a node's active runs (see :meth:`RunStorage.touch_heartbeats`).
 Readers treat a heartbeat older than a few multiples of this as a lost run."""
+
+HEARTBEAT_STALE_AFTER = 3 * HEARTBEAT_INTERVAL
+"""Seconds without a heartbeat before a run's owner counts as dead — the shared liveness policy:
+consumer proxies report the run lost, and the signal sweep treats its pending commands as orphaned."""
 
 
 class RunVersion(NamedTuple):
@@ -158,6 +162,17 @@ class RunStorage(ABC):
         """
 
     @abstractmethod
+    def read_instance_ids(self, run_match=None) -> list[InstanceID]:
+        """Return the IDs of runs matching the criteria, without reading run documents.
+
+        The identity-projection query: same criteria semantics as the full reads, but selecting
+        identity only — so init-only rows participate (matched via identity/tags and the
+        lifecycle projections; they cannot satisfy phase criteria). E.g. a caller checking
+        whether pending signals still have live targets expresses "non-ended" as lifecycle
+        criteria (stage CREATED or RUNNING).
+        """
+
+    @abstractmethod
     def active_run_versions(self) -> list[RunVersion]:
         """Return a change-detection cursor for each materialized active run.
 
@@ -218,35 +233,32 @@ class Signal:
     phase_id: Optional[str]
     op: str
     args: tuple
-    requested_by: Optional[str]
     requested_at: datetime
 
 
-class SignalStorage(ABC):
+class SignalStorage(SignalSender, ABC):
     """Remote control mailbox stored in the database (design point 5).
 
-    Consumers insert command rows; the owning node reads the rows for its instances, applies
-    them at its control surface, and deletes them. Duplicate signals are permitted — remote
-    control ops are idempotent by contract, so re-application is harmless.
+    Consumers post command rows (the :class:`SignalSender` side); the owning node reads the rows
+    for its instances, applies them at its control surface, and deletes them. Duplicate signals
+    are permitted — remote control ops are idempotent by contract, so re-application is harmless.
     """
 
     @abstractmethod
-    def write_signal(self, instance_id: InstanceID, op: str, *,
-                     phase_id: Optional[str] = None, args: Iterable = (),
-                     requested_by: Optional[str] = None):
-        """Insert an in-flight command row for the given instance.
+    def read_signals(self, instance_ids: Optional[Iterable[InstanceID]] = None, *,
+                     older_than: Optional[float] = None) -> list[Signal]:
+        """Return the pending command rows matching the given filters, oldest first.
+
+        The age filter is the primitive behind orphan sweeping — deciding which aged rows
+        actually *are* orphans is the caller's policy (it needs the run view, which is not
+        this storage's domain).
 
         Args:
-            instance_id: Target instance.
-            op: control_api operation name; instance-level when phase_id is None (e.g. ``stop``).
-            phase_id: Target phase for phase ops; None for instance-level ops.
-            args: JSON-serializable positional arguments of the operation.
-            requested_by: Optional requester identity for the audit record.
+            instance_ids: Restrict to these instances. None means all instances — note that
+                an (explicitly passed) empty iterable means, and returns, none.
+            older_than: Only rows older than this many seconds, on the storage's own clock
+                (matching the write side).
         """
-
-    @abstractmethod
-    def read_signals(self, instance_ids: Iterable[InstanceID]) -> list[Signal]:
-        """Return the pending command rows for the given instances, oldest first."""
 
     @abstractmethod
     def delete_signals(self, signal_ids: Iterable[int]):

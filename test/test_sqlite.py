@@ -8,7 +8,7 @@ from runtools.runcore.db import sqlite, IncompatibleSchemaError
 from runtools.runcore.db.sqlite import SCHEMA_VERSION
 from runtools.runcore.job import ControlRequest, DuplicateInstanceError, InstanceID
 from runtools.runcore.matching import criteria, JobRunCriteria, LifecycleCriterion, MetadataCriterion, PhaseCriterion
-from runtools.runcore.run import TerminationStatus, Outcome
+from runtools.runcore.run import Stage, TerminationStatus, Outcome
 from runtools.runcore.test.job import fake_job_run
 from runtools.runcore.util import MatchingStrategy
 from runtools.runcore.util.dt import TimeRange, DateTimeRange, utc_now
@@ -694,14 +694,13 @@ def test_heartbeat_touch_skips_ended_runs(sut):
 def test_signal_write_read_delete_round_trip(sut):
     a = InstanceID('sig_job', 'r1', 1)
     b = InstanceID('other_job', 'r1', 1)
-    sut.write_signal(a, 'stop', args=('user_stop',), requested_by='taro@host')
-    sut.write_signal(a, 'approve', phase_id='approval_gate')
-    sut.write_signal(b, 'stop')
+    sut.send_signal(a, 'stop', args=('user_stop',))
+    sut.send_signal(a, 'approve', phase_id='approval_gate')
+    sut.send_signal(b, 'stop')
 
     signals = sut.read_signals([a])
     assert [(s.op, s.phase_id, s.args) for s in signals] == \
            [('stop', None, ('user_stop',)), ('approve', 'approval_gate', ())]
-    assert signals[0].requested_by == 'taro@host'
     assert signals[0].requested_at is not None
 
     sut.delete_signals([s.signal_id for s in signals])
@@ -711,11 +710,30 @@ def test_signal_write_read_delete_round_trip(sut):
 
 def test_control_requests_persist_with_run(sut):
     applied_at = utc_now().replace(microsecond=0)
-    request = ControlRequest('stop', applied_at, args=('user_stop',),
-                             requested_by='taro@host', requested_at=applied_at - timedelta(seconds=1))
+    request = ControlRequest('stop', applied_at, args=('user_stop',))
     run = replace(fake_job_run('ctl', 'r1', term_status=TerminationStatus.STOPPED),
                   control_requests=(request,))
     _init_and_store(sut, run)
 
     [restored] = sut.read_runs()
     assert restored.control_requests == (request,)
+
+
+def test_read_signals_age_filter(sut):
+    sut.send_signal(InstanceID('old', 'r1', 1), 'stop')
+    sut.send_signal(InstanceID('fresh', 'r1', 1), 'stop')
+    backdated = (utc_now() - timedelta(minutes=5)).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+    sut._conn.execute("UPDATE signals SET requested_at = ? WHERE job_id = 'old'", (backdated,))
+
+    assert [s.instance_id.job_id for s in sut.read_signals(older_than=60)] == ['old']
+
+
+def test_read_instance_ids_with_non_ended_criteria_includes_init_only_rows(sut):
+    init_only = sut.init_run('pending', 'r1', created_at=utc_now())
+    ended_run = fake_job_run('done', 'r1', term_status=TerminationStatus.COMPLETED)
+    _init_and_store(sut, ended_run)
+
+    non_ended = JobRunCriteria(
+        lifecycle_criteria=(LifecycleCriterion(stage=Stage.CREATED), LifecycleCriterion(stage=Stage.RUNNING)))
+    assert sut.read_instance_ids(non_ended) == [init_only]  # admitted-not-ended counts; ended doesn't
+    assert sorted(i.job_id for i in sut.read_instance_ids()) == ['done', 'pending']  # no criteria -> all ids

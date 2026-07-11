@@ -595,16 +595,17 @@ class PhaseTransitionObserver(ABC):
 C = TypeVar('C')
 
 
-class _ControlProperty(property):
-    _expose_to_control = True
-
-
 def control_api(func):
+    """Mark a phase method as a control command exposed through :class:`PhaseControl`.
+
+    Commands are positional-only, fire-and-forget and return ``None`` — outcomes are observed
+    through snapshots and events. Properties are rejected: readable state is not part of the
+    command channel; expose it via the phase snapshot instead.
+    """
     if isinstance(func, property):
-        return _ControlProperty(func.fget, func.fset, func.fdel)
-    else:
-        func._expose_to_control = True
-        return func
+        raise TypeError("@control_api cannot decorate properties; expose readable state via the phase snapshot")
+    func._expose_to_control = True
+    return func
 
 
 class PhaseControl:
