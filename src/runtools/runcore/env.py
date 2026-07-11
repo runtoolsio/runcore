@@ -1,7 +1,8 @@
 import logging
+from contextlib import contextmanager
 from enum import StrEnum
 from pathlib import Path
-from typing import Optional, Dict, Set, Iterable, List, assert_never
+from typing import Optional, Dict, Set, Iterable, Iterator, List, TypeVar, assert_never
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -229,6 +230,27 @@ def save_env_config(entry: EnvironmentEntry, config: EnvironmentConfig):
     """Save environment config to the DB."""
     with _create_env_db(entry) as db:
         db.save_config(entry.id, config.model_dump(mode='json'))
+
+
+_C = TypeVar('_C', bound=_EnvironmentConfigBase)
+
+
+@contextmanager
+def open_configured_db(env_db: EnvironmentDatabase, env_id: str,
+                                config_type: type[_C]) -> Iterator[_C]:
+    """Open the environment's store and yield its validated config.
+
+    The shared open+load boilerplate of the per-kind connect functions — internal assembly
+    code, like ``connector.compose``. On success the store stays open (ownership passes to
+    the composed connector/node); any failure inside the block, config validation included,
+    closes it before re-raising.
+    """
+    env_db.open()
+    try:
+        yield config_type.model_validate(env_db.load_config(env_id))
+    except BaseException:
+        env_db.close()
+        raise
 
 
 # --- Lifecycle ---

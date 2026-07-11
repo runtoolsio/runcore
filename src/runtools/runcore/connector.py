@@ -26,7 +26,7 @@ from typing import Iterable, Optional, assert_never, override
 
 from runtools.runcore import output
 from runtools.runcore.env import EnvironmentKind, LocalEnvironmentConfig, PostgresEnvironmentConfig, \
-    EnvironmentEntry, EnvironmentNotFoundError, resolve_env_ref, ensure_environment
+    EnvironmentEntry, EnvironmentNotFoundError, resolve_env_ref, ensure_environment, open_configured_db
 from runtools.runcore.err import run_isolated_collect_exceptions
 from runtools.runcore.job import InstanceNotifications, JobInstance, InstanceLifecycleObserver, InstanceLifecycleEvent, \
     JobRun, InstanceID
@@ -347,34 +347,22 @@ def _connect_local(entry: EnvironmentEntry) -> EnvironmentConnector:
     if not sqlite.exists(entry):
         raise EnvironmentNotFoundError(f"Database for environment '{entry.id}' not found", {entry.id})
     env_db = sqlite.create(entry)
-    env_db.open()
-    try:
-        config = LocalEnvironmentConfig.model_validate(env_db.load_config(entry.id))
+    with open_configured_db(env_db, entry.id, LocalEnvironmentConfig) as config:
         # Build cheap, in-memory output backends first; the directory allocates a component
         # dir + flock and would leak if output construction failed after directory setup.
         output_backends = output.create_backends(entry.id, config.output.storages)
         directory = unix_socket.create_instance_directory(entry.id, config.root_dir)
         return compose(entry.id, env_db, directory, output_backends)
-    except BaseException:
-        env_db.close()
-        raise
 
 
 def _connect_postgres(entry: EnvironmentEntry) -> EnvironmentConnector:
     """Connector for a ``postgres`` environment: postgres + polling directory."""
     from runtools.runcore.db import postgres  # lazy — psycopg stays an optional dep
     env_db = postgres.create(entry)
-    # No exists pre-check: open() is validate-only (never DDL) and raises the more precise
-    # EnvironmentStoreNotProvisionedError for a missing store
-    env_db.open()
-    try:
-        config = PostgresEnvironmentConfig.model_validate(env_db.load_config(entry.id))
+    with open_configured_db(env_db, entry.id, PostgresEnvironmentConfig) as config:
         output_backends = output.create_backends(entry.id, config.output.storages)
         directory = PollingInstanceDirectory(env_db, lambda run: SnapshotJobInstanceProxy(run, env_db))
         return compose(entry.id, env_db, directory, output_backends)
-    except BaseException:
-        env_db.close()
-        raise
 
 
 def connect(env_ref: EnvironmentEntry | str | None = None) -> EnvironmentConnector:
