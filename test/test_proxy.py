@@ -6,7 +6,7 @@ import pytest
 from runtools.runcore.job import (
     InstanceLifecycleEvent, InstanceObservableNotifications, InstanceOutputEvent, InstanceStatusEvent,
 )
-from runtools.runcore.output import Mode, OutputLine
+from runtools.runcore.output import OutputLine
 from runtools.runcore.proxy import JobInstanceProxyBase
 from runtools.runcore.run import Stage, StopReason, TerminationStatus
 from runtools.runcore.status import Event, Status
@@ -24,7 +24,6 @@ class FakeProxy(JobInstanceProxyBase):
         self.stopped_with = None
         self.fetched_lines = []
         self.fetch_count = 0
-        self.fetched_mode = None
         self.fetched_max_lines = None
 
     def stop(self, stop_reason=StopReason.STOPPED):
@@ -34,12 +33,11 @@ class FakeProxy(JobInstanceProxyBase):
         self.executed_ops.append((phase_id, op_name, op_args))
         return 'done'
 
-    def _fetch_output_tail(self, mode, max_lines):
+    def _fetch_output_tail(self, max_lines):
         self.fetch_count += 1
-        self.fetched_mode = mode
         self.fetched_max_lines = max_lines
         if max_lines > 0:
-            return self.fetched_lines[:max_lines] if mode == Mode.HEAD else self.fetched_lines[-max_lines:]
+            return self.fetched_lines[-max_lines:]
         return self.fetched_lines
 
 
@@ -205,21 +203,6 @@ def test_output_default_tail_fetches_even_when_events_exist(base_ts, hub):
     assert proxy.fetched_max_lines == 0
 
 
-def test_output_head_read_fetches(base_ts, hub):
-    run = fake_job_run('j1', created_at=base_ts, term_status=None)
-    proxy = FakeProxy(run, hub)
-    proxy.fetched_lines = [OutputLine(f'l{o}', o) for o in range(1, 8)]
-
-    output = proxy.output
-    for ordinal in (5, 6, 7):
-        fire_output(hub, run, OutputLine(f'l{ordinal}', ordinal))
-
-    assert [line.ordinal for line in output.tail(Mode.HEAD, max_lines=2)] == [1, 2]
-    assert proxy.fetch_count == 1
-    assert proxy.fetched_mode == Mode.HEAD
-    assert proxy.fetched_max_lines == 2
-
-
 def test_output_fetch_results_are_not_cached(base_ts, hub):
     run = fake_job_run('j1', created_at=base_ts, term_status=None)
     proxy = FakeProxy(run, hub)
@@ -242,20 +225,6 @@ def test_output_buffer_trims_to_depth(base_ts, hub):
 
     assert [line.ordinal for line in output.tail(max_lines=3)] == [3, 4, 5]
     assert proxy.fetch_count == 0
-
-
-def test_output_tail_slices_by_mode(base_ts, hub):
-    run = fake_job_run('j1', created_at=base_ts, term_status=None)
-    proxy = FakeProxy(run, hub)
-    proxy.fetched_lines = [OutputLine(f'l{ordinal}', ordinal) for ordinal in (1, 2, 3)]
-
-    output = proxy.output
-    for ordinal in (1, 2, 3):
-        fire_output(hub, run, OutputLine(f'l{ordinal}', ordinal))
-
-    assert [line.ordinal for line in output.tail(max_lines=2)] == [2, 3]
-    assert [line.ordinal for line in output.tail(Mode.HEAD, max_lines=2)] == [1, 2]
-    assert proxy.fetch_count == 1
 
 
 def test_output_ignores_events_of_other_instances(base_ts, hub):

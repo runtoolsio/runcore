@@ -579,6 +579,30 @@ written by consumer proxies into the signals mailbox and matched at the node's a
 Phase-level ops are an open set (any ``control_api`` method name) and stay literal."""
 
 
+class OutputTailReader(ABC):
+    """Consumer-side read capability of the live output tail (design point 7).
+
+    The narrowest grant a remote tail reader (snapshot proxy) needs; how the tail is kept
+    is the implementor's concern.
+    """
+
+    @abstractmethod
+    def read_output_tail(self, instance_id: InstanceID, max_lines: int, *,
+                         after_ordinal: Optional[int] = None) -> list[OutputLine]:
+        """Return lines of the instance's live tail, oldest first.
+
+        Readers must tolerate a moving lower bound and ordinal gaps — the tail is a bounded
+        cache (pruned on write, truncated by crash recovery), not the durable output.
+
+        Args:
+            instance_id: Target instance.
+            max_lines: Most lines to return; non-positive means the whole available tail
+                (safe — the tail is bounded by the write-side cap, not by this limit).
+            after_ordinal: Only lines with a greater ordinal — the incremental read behind
+                follow-style tailing. None means the newest ``max_lines`` lines.
+        """
+
+
 class SignalSender(ABC):
     """Consumer-side command channel of the signals mailbox (design point 5).
 

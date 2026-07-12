@@ -10,7 +10,7 @@ from runtools.runcore.job import (
     NotificationBinding, SignalSender, STOP_OP,
 )
 from runtools.runcore.matching import MetadataCriterion
-from runtools.runcore.output import Mode, Output, OutputLine
+from runtools.runcore.output import Output, OutputLine
 from runtools.runcore.run import Stage, StopReason
 
 
@@ -86,7 +86,7 @@ class JobInstanceProxyBase(JobInstance):
         """Execute an operation on a phase of the remote instance."""
 
     @abstractmethod
-    def _fetch_output_tail(self, mode: Mode, max_lines: int) -> List[OutputLine]:
+    def _fetch_output_tail(self, max_lines: int) -> List[OutputLine]:
         """Fetch lines from the remote instance's tail buffer."""
 
     @property
@@ -109,7 +109,7 @@ class JobInstanceProxyBase(JobInstance):
 class _ProxyOutput(Output):
     """Bounded buffer of output events received since proxy construction.
 
-    TAIL reads covered by the buffer are served locally. Reads the buffer cannot
+    Tail reads covered by the buffer are served locally. Reads the buffer cannot
     prove complete are served directly from the remote instance; fetched lines are
     intentionally not merged into the event-fed buffer.
 
@@ -118,7 +118,7 @@ class _ProxyOutput(Output):
     :meth:`JobRun.is_newer_than` guard on state.
     """
 
-    def __init__(self, fetch_tail: Callable[[Mode, int], List[OutputLine]], max_lines: int):
+    def __init__(self, fetch_tail: Callable[[int], List[OutputLine]], max_lines: int):
         self._fetch_tail = fetch_tail
         self._max_lines = max_lines
         self._lines: List[OutputLine] = []
@@ -139,12 +139,12 @@ class _ProxyOutput(Output):
                 self._lines.insert(index, line)
             del self._lines[:-self._max_lines]
 
-    def tail(self, mode: Mode = Mode.TAIL, max_lines: int = 0):
+    def tail(self, max_lines: int = 0):
         with self._lock:
             lines = list(self._lines)
-        if mode == Mode.TAIL and 0 < max_lines <= len(lines):
+        if 0 < max_lines <= len(lines):
             return lines[-max_lines:]
-        return self._fetch_tail(mode, max_lines)
+        return self._fetch_tail(max_lines)
 
 
 class PhaseControlProxy:
@@ -358,5 +358,5 @@ class SnapshotJobInstanceProxy(JobInstanceProxyBase):
     def _exec_phase_op(self, phase_id: str, op_name: str, *op_args):
         self._signals.send_signal(self._job_run.instance_id, op_name, phase_id=phase_id, args=op_args)
 
-    def _fetch_output_tail(self, mode: Mode, max_lines: int) -> List[OutputLine]:
+    def _fetch_output_tail(self, max_lines: int) -> List[OutputLine]:
         raise NotImplementedError("Output is not yet supported on snapshot transports")

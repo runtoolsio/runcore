@@ -32,8 +32,9 @@ from datetime import datetime
 from typing import Any, Iterable, Iterator, NamedTuple, Optional
 
 from runtools.runcore.err import RuntoolsException
-from runtools.runcore.job import InstanceID, JobRun, SignalSender
+from runtools.runcore.job import InstanceID, JobRun, OutputTailReader, SignalSender
 from runtools.runcore.matching import SortOption
+from runtools.runcore.output import OutputLine
 
 
 class IncompatibleSchemaError(RuntoolsException):
@@ -265,8 +266,31 @@ class SignalStorage(SignalSender, ABC):
         """Remove applied (or rejected-and-logged) command rows by their surrogate ids."""
 
 
-class EnvironmentDatabase(ConfigStorage, RunStorage, SignalStorage, ABC):
-    """The environment's database — a single store implementing config, run and signal storage.
+class OutputTailStorage(OutputTailReader, ABC):
+    """Bounded per-instance live output tail stored in the database (design point 7).
+
+    A cache, not a second durable copy: the owning node appends its output lines coalesced
+    and prunes to a cap; rows are deleted when the run finalizes — complete output lives in
+    the output backends. Appends are idempotent per (instance, line ordinal), so a re-flushed
+    batch after a failed write is harmless.
+    """
+
+    @abstractmethod
+    def append_output(self, instance_id: InstanceID, lines: Iterable[OutputLine]):
+        """Insert a batch of tail lines for the given instance (duplicates ignored)."""
+
+    @abstractmethod
+    def prune_output_tail(self, instance_id: InstanceID, keep: int):
+        """Drop all but the newest ``keep`` lines of the instance's tail."""
+
+    @abstractmethod
+    def delete_output_tails(self, instance_ids: Iterable[InstanceID]):
+        """Remove the instances' tails entirely (run finalized, or swept as orphaned)."""
+
+
+class EnvironmentDatabase(ConfigStorage, RunStorage, SignalStorage, OutputTailStorage, ABC):
+    """The environment's database — a single store implementing config, run, signal, and
+    output-tail storage.
 
     Lifecycle:
         Call :meth:`open` before any read/write operations, and :meth:`close` when done.

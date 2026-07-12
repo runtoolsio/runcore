@@ -8,6 +8,7 @@ from runtools.runcore.db import sqlite, IncompatibleSchemaError
 from runtools.runcore.db.sqlite import SCHEMA_VERSION
 from runtools.runcore.job import ControlRequest, DuplicateInstanceError, InstanceID
 from runtools.runcore.matching import criteria, JobRunCriteria, LifecycleCriterion, MetadataCriterion, PhaseCriterion
+from runtools.runcore.output import OutputLine
 from runtools.runcore.run import Stage, TerminationStatus, Outcome
 from runtools.runcore.test.job import fake_job_run
 from runtools.runcore.util import MatchingStrategy
@@ -737,3 +738,65 @@ def test_read_instance_ids_with_non_ended_criteria_includes_init_only_rows(sut):
         lifecycle_criteria=(LifecycleCriterion(stage=Stage.CREATED), LifecycleCriterion(stage=Stage.RUNNING)))
     assert sut.read_instance_ids(non_ended) == [init_only]  # admitted-not-ended counts; ended doesn't
     assert sorted(i.job_id for i in sut.read_instance_ids()) == ['done', 'pending']  # no criteria -> all ids
+# --- output tail (design point 7) ---
+
+
+def _tail_line(n, message=None):
+    return OutputLine(message or f"line {n}", n, source='EXEC')
+
+
+def test_output_tail_returns_newest_lines_oldest_first(sut):
+    a = InstanceID('tail_job', 'r1', 1)
+    b = InstanceID('other_job', 'r1', 1)
+    sut.append_output(a, [_tail_line(1), _tail_line(2), _tail_line(3)])
+    sut.append_output(b, [_tail_line(1, 'other')])
+
+    tail = sut.read_output_tail(a, max_lines=2)
+    assert [(line.ordinal, line.message) for line in tail] == [(2, 'line 2'), (3, 'line 3')]
+    assert [line.message for line in sut.read_output_tail(b, max_lines=10)] == ['other']
+
+
+def test_output_tail_incremental_read(sut):
+    a = InstanceID('tail_job', 'r1', 1)
+    sut.append_output(a, [_tail_line(1), _tail_line(2), _tail_line(3)])
+
+    assert [line.ordinal for line in sut.read_output_tail(a, max_lines=10, after_ordinal=1)] == [2, 3]
+    assert sut.read_output_tail(a, max_lines=10, after_ordinal=3) == []
+
+
+def test_output_tail_reflushed_batch_is_harmless(sut):
+    a = InstanceID('tail_job', 'r1', 1)
+    batch = [_tail_line(1), _tail_line(2)]
+    sut.append_output(a, batch)
+    sut.append_output(a, batch + [_tail_line(3)])  # re-flush after a failed write, extended meanwhile
+
+    assert [line.ordinal for line in sut.read_output_tail(a, max_lines=10)] == [1, 2, 3]
+
+
+def test_output_tail_prune_keeps_newest(sut):
+    a = InstanceID('tail_job', 'r1', 1)
+    sut.append_output(a, [_tail_line(n) for n in range(1, 6)])
+
+    sut.prune_output_tail(a, keep=2)
+
+    assert [line.ordinal for line in sut.read_output_tail(a, max_lines=10)] == [4, 5]
+
+
+def test_output_tail_delete(sut):
+    a = InstanceID('tail_job', 'r1', 1)
+    b = InstanceID('other_job', 'r1', 1)
+    sut.append_output(a, [_tail_line(1)])
+    sut.append_output(b, [_tail_line(1)])
+
+    sut.delete_output_tails([a])
+
+    assert sut.read_output_tail(a, max_lines=10) == []
+    assert [line.ordinal for line in sut.read_output_tail(b, max_lines=10)] == [1]
+
+
+def test_output_tail_zero_max_lines_reads_whole_tail(sut):
+    a = InstanceID('tail_job', 'r1', 1)
+    sut.append_output(a, [_tail_line(n) for n in range(1, 4)])
+
+    assert [line.ordinal for line in sut.read_output_tail(a, max_lines=0)] == [1, 2, 3]
+    assert [line.ordinal for line in sut.read_output_tail(a, max_lines=0, after_ordinal=1)] == [2, 3]

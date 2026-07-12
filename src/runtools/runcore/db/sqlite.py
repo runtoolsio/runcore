@@ -20,6 +20,7 @@ from runtools.runcore.err import InvalidStateError
 from runtools.runcore.job import (JobStats, JobRun, JobInstanceMetadata, InstanceID,
                                   DuplicateInstanceError, normalize_tags)
 from runtools.runcore.matching import SortOption
+from runtools.runcore.output import OutputLine
 from runtools.runcore.run import TerminationStatus, Outcome
 from runtools.runcore.util import format_dt_sql, parse_dt_sql, utc_now
 
@@ -271,6 +272,16 @@ class SQLite(EnvironmentDatabase):
                      )
                      ''')
         c.execute('CREATE INDEX signals_instance_idx ON signals (job_id, run_id, ordinal)')
+
+        c.execute('''CREATE TABLE output_tail (
+                     job_id TEXT NOT NULL,
+                     run_id TEXT NOT NULL,
+                     ordinal INTEGER NOT NULL,
+                     line_ordinal INTEGER NOT NULL,
+                     line TEXT NOT NULL CHECK (json_valid(line)),
+                     PRIMARY KEY (job_id, run_id, ordinal, line_ordinal)
+                     )
+                     ''')
 
         c.execute('CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
         c.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')
@@ -564,6 +575,65 @@ class SQLite(EnvironmentDatabase):
             return
         self._conn.executemany("DELETE FROM signals WHERE id = ?", [(i,) for i in ids])
         self._conn.commit()
+
+    @override
+    @ensure_open
+    def append_output(self, instance_id, lines):
+        """See `OutputTailStorage.append_output`."""
+        rows = [(instance_id.job_id, instance_id.run_id, instance_id.ordinal,
+                 line.ordinal, json.dumps(line.serialize()))
+                for line in lines]
+        if not rows:
+            return
+        # OR IGNORE: a batch re-flushed after a failed write must be harmless (idempotent appends)
+        self._conn.executemany(
+            "INSERT OR IGNORE INTO output_tail (job_id, run_id, ordinal, line_ordinal, line) "
+            "VALUES (?, ?, ?, ?, ?)", rows)
+        self._conn.commit()
+
+    @override
+    @ensure_open
+    def prune_output_tail(self, instance_id, keep):
+        """See `OutputTailStorage.prune_output_tail`."""
+        iid = (instance_id.job_id, instance_id.run_id, instance_id.ordinal)
+        self._conn.execute(
+            "DELETE FROM output_tail WHERE job_id = ? AND run_id = ? AND ordinal = ? AND line_ordinal NOT IN ("
+            " SELECT line_ordinal FROM output_tail WHERE job_id = ? AND run_id = ? AND ordinal = ?"
+            " ORDER BY line_ordinal DESC LIMIT ?)",
+            iid + iid + (keep,))
+        self._conn.commit()
+
+    @override
+    @ensure_open
+    def delete_output_tails(self, instance_ids):
+        """See `OutputTailStorage.delete_output_tails`."""
+        ids = [(i.job_id, i.run_id, i.ordinal) for i in instance_ids]
+        if not ids:
+            return
+        self._conn.executemany("DELETE FROM output_tail WHERE job_id = ? AND run_id = ? AND ordinal = ?", ids)
+        self._conn.commit()
+
+    @override
+    @ensure_open
+    def read_output_tail(self, instance_id, max_lines, *, after_ordinal=None):
+        """See `OutputTailReader.read_output_tail`."""
+        iid = (instance_id.job_id, instance_id.run_id, instance_id.ordinal)
+        max_lines = max_lines if max_lines > 0 else -1  # sqlite: negative LIMIT = unlimited
+        cursor = self._conn.cursor()
+        try:
+            if after_ordinal is None:
+                cursor.execute(
+                    "SELECT line FROM output_tail WHERE job_id = ? AND run_id = ? AND ordinal = ?"
+                    " ORDER BY line_ordinal DESC LIMIT ?", iid + (max_lines,))
+                rows = list(reversed(cursor.fetchall()))  # newest N, returned oldest first
+            else:
+                cursor.execute(
+                    "SELECT line FROM output_tail WHERE job_id = ? AND run_id = ? AND ordinal = ?"
+                    " AND line_ordinal > ? ORDER BY line_ordinal LIMIT ?", iid + (after_ordinal, max_lines))
+                rows = cursor.fetchall()
+            return [OutputLine.deserialize(json.loads(r[0])) for r in rows]
+        finally:
+            cursor.close()
 
     @override
     @ensure_open

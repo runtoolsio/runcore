@@ -32,6 +32,7 @@ from runtools.runcore.err import InvalidStateError
 from runtools.runcore.job import (JobStats, JobRun, JobInstanceMetadata, InstanceID,
                                   DuplicateInstanceError, normalize_tags)
 from runtools.runcore.matching import SortOption
+from runtools.runcore.output import OutputLine
 from runtools.runcore.run import TerminationStatus, Outcome
 from runtools.runcore.util import utc_now
 from runtools.runcore.util.lock import LockAcquireTimeoutError
@@ -398,6 +399,16 @@ CREATE TABLE IF NOT EXISTS signals (
     requested_at TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX IF NOT EXISTS signals_instance_idx ON signals (job_id, run_id, ordinal);
+-- UNLOGGED: the tail is expendable cache (WAL for state, none for cache) — crash recovery
+-- truncates it and it refills from the still-running instances' ongoing appends
+CREATE UNLOGGED TABLE IF NOT EXISTS output_tail (
+    job_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL,
+    line_ordinal BIGINT NOT NULL,
+    line JSONB NOT NULL,
+    PRIMARY KEY (job_id, run_id, ordinal, line_ordinal)
+);
 CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS schema_info (version INTEGER NOT NULL);
 """
@@ -665,6 +676,61 @@ class PostgreSQL(EnvironmentDatabase):
             return
         with self._pool.connection() as conn, conn.cursor() as cur:
             cur.executemany("DELETE FROM signals WHERE id = %s", [(i,) for i in ids])
+
+    @override
+    @ensure_open
+    def append_output(self, instance_id, lines):
+        """See `OutputTailStorage.append_output`."""
+        rows = [(instance_id.job_id, instance_id.run_id, instance_id.ordinal,
+                 line.ordinal, Jsonb(line.serialize()))
+                for line in lines]
+        if not rows:
+            return
+        # DO NOTHING: a batch re-flushed after a failed write must be harmless (idempotent appends)
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            cur.executemany(
+                "INSERT INTO output_tail (job_id, run_id, ordinal, line_ordinal, line) "
+                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING", rows)
+
+    @override
+    @ensure_open
+    def prune_output_tail(self, instance_id, keep):
+        """See `OutputTailStorage.prune_output_tail`."""
+        iid = (instance_id.job_id, instance_id.run_id, instance_id.ordinal)
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM output_tail WHERE job_id = %s AND run_id = %s AND ordinal = %s"
+                " AND line_ordinal NOT IN ("
+                " SELECT line_ordinal FROM output_tail WHERE job_id = %s AND run_id = %s AND ordinal = %s"
+                " ORDER BY line_ordinal DESC LIMIT %s)",
+                iid + iid + (keep,))
+
+    @override
+    @ensure_open
+    def delete_output_tails(self, instance_ids):
+        """See `OutputTailStorage.delete_output_tails`."""
+        ids = [(i.job_id, i.run_id, i.ordinal) for i in instance_ids]
+        if not ids:
+            return
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            cur.executemany("DELETE FROM output_tail WHERE job_id = %s AND run_id = %s AND ordinal = %s", ids)
+
+    @override
+    @ensure_open
+    def read_output_tail(self, instance_id, max_lines, *, after_ordinal=None):
+        """See `OutputTailReader.read_output_tail`."""
+        iid = (instance_id.job_id, instance_id.run_id, instance_id.ordinal)
+        max_lines = max_lines if max_lines > 0 else None  # postgres: LIMIT NULL = unlimited
+        if after_ordinal is None:
+            rows = self._fetch(
+                "SELECT line FROM output_tail WHERE job_id = %s AND run_id = %s AND ordinal = %s"
+                " ORDER BY line_ordinal DESC LIMIT %s", iid + (max_lines,))
+            rows = list(reversed(rows))  # newest N, returned oldest first
+        else:
+            rows = self._fetch(
+                "SELECT line FROM output_tail WHERE job_id = %s AND run_id = %s AND ordinal = %s"
+                " AND line_ordinal > %s ORDER BY line_ordinal LIMIT %s", iid + (after_ordinal, max_lines))
+        return [OutputLine.deserialize(r['line']) for r in rows]
 
     @override
     @ensure_open

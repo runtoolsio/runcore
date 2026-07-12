@@ -1,7 +1,6 @@
 """Behaviour of ``SnapshotJobInstanceProxy`` — the snapshot-pushed proxy for polling transports."""
 import pytest
 
-from runtools.runcore.output import Mode
 from runtools.runcore.run import Stage, TerminationStatus
 from runtools.runcore.test.job import fake_job_run
 from runtools.runcore.proxy import SnapshotJobInstanceProxy
@@ -131,4 +130,4 @@ def test_phase_op_posts_signal_envelope():
 
 def test_output_is_not_supported_yet():
     with pytest.raises(NotImplementedError):
-        _proxy(_running())._fetch_output_tail(Mode.TAIL, 0)
+        _proxy(_running())._fetch_output_tail(0)

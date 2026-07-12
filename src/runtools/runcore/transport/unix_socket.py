@@ -25,7 +25,7 @@ from runtools.runcore.client import (
 from runtools.runcore.err import run_isolated_collect_exceptions
 from runtools.runcore.job import InstanceID, JobInstance, JobInstanceMetadata, JobRun
 from runtools.runcore.matching import JobRunCriteria
-from runtools.runcore.output import Mode, OutputLine
+from runtools.runcore.output import OutputLine
 from runtools.runcore.proxy import JobInstanceProxyBase
 from runtools.runcore.run import StopReason
 from runtools.runcore.transport import DiscoveredRuns, EventDrivenInstanceDirectoryBase
@@ -362,13 +362,11 @@ class UnixSocketRpcClient(StreamSocketClient):
 
         self._broadcast_instance_command("stop_instance", instance_id, stop_reason.name)
 
-    def get_output_tail(self, instance_id: InstanceID,
-                        mode: Mode = Mode.TAIL, max_lines: int = 100) -> List[OutputLine]:
+    def get_output_tail(self, instance_id: InstanceID, max_lines: int = 100) -> List[OutputLine]:
         """Retrieves recent output lines from a job instance, wherever it runs.
 
         Args:
             instance_id: ID of the instance to read output from
-            mode: Whether to read from the beginning or end of the buffer
             max_lines: Maximum number of lines to retrieve (default: 100)
 
         Returns:
@@ -381,7 +379,7 @@ class UnixSocketRpcClient(StreamSocketClient):
         def resp_mapper(retval: Any) -> List[OutputLine]:
             return [OutputLine.deserialize(line) for line in retval]
 
-        return self._broadcast_instance_command("get_output_tail", instance_id, max_lines, mode.name,
+        return self._broadcast_instance_command("get_output_tail", instance_id, max_lines,
                                                 retval_mapper=resp_mapper)
 
     def exec_phase_op(self, instance_id: InstanceID, phase_id: str, op_name: str, *op_args) -> Any:
@@ -549,8 +547,8 @@ class UnixSocketJobInstanceProxy(JobInstanceProxyBase):
     def _exec_phase_op(self, phase_id: str, op_name: str, *op_args):
         return self._client.exec_phase_op(self.id, phase_id, op_name, *op_args)
 
-    def _fetch_output_tail(self, mode: Mode, max_lines: int) -> List[OutputLine]:
-        return self._client.get_output_tail(self.id, mode, max_lines)
+    def _fetch_output_tail(self, max_lines: int) -> List[OutputLine]:
+        return self._client.get_output_tail(self.id, max_lines)
 
 
 # ---------------------------------------------------------------------------

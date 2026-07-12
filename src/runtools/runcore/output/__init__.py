@@ -28,7 +28,6 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from enum import Enum, auto
 from pathlib import Path
 from typing import Any, List, Optional, Dict, Iterable
 from urllib.parse import urlparse, unquote
@@ -41,11 +40,6 @@ from runtools.runcore import util
 from runtools.runcore.err import InvalidStateError, RuntoolsException
 
 log = logging.getLogger(__name__)
-
-
-class Mode(Enum):
-    HEAD = auto()
-    TAIL = auto()
 
 
 @dataclass(frozen=True)
@@ -94,8 +88,12 @@ class OutputLocation:
 class Output(ABC):
 
     @abstractmethod
-    def tail(self, mode: Mode = Mode.TAIL, max_lines: int = 0):
-        pass
+    def tail(self, max_lines: int = 0):
+        """Return the newest retained lines, oldest first.
+
+        Args:
+            max_lines: Most lines to return; 0 returns all currently retained lines.
+        """
 
     @property
     @abstractmethod
@@ -299,7 +297,7 @@ class TailBuffer(ABC):
     def add_line(self, line: OutputLine):
         pass
 
-    def get_lines(self, mode: Mode = Mode.TAIL, max_lines: int = 0) -> List[OutputLine]:
+    def get_lines(self, max_lines: int = 0) -> List[OutputLine]:
         pass
 
 
