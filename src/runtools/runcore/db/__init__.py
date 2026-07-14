@@ -276,8 +276,12 @@ class OutputTailStorage(OutputTailReader, ABC):
     """
 
     @abstractmethod
-    def append_output(self, instance_id: InstanceID, lines: Iterable[OutputLine]):
-        """Insert a batch of tail lines for the given instance (duplicates ignored)."""
+    def append_output(self, lines: Iterable[tuple[InstanceID, OutputLine]]):
+        """Insert a batch of tail lines, possibly spanning instances (duplicates ignored).
+
+        The batch unit is the writing node's whole flush — one statement per node per
+        cadence, so transaction rate scales with nodes, not instances.
+        """
 
     @abstractmethod
     def prune_output_tail(self, instance_id: InstanceID, keep: int):
@@ -286,6 +290,14 @@ class OutputTailStorage(OutputTailReader, ABC):
     @abstractmethod
     def delete_output_tails(self, instance_ids: Iterable[InstanceID]):
         """Remove the instances' tails entirely (run finalized, or swept as orphaned)."""
+
+    @abstractmethod
+    def output_tail_instances(self) -> list[InstanceID]:
+        """Return the instances currently holding tail rows — the sweep's discovery primitive.
+
+        Deciding which of them are orphans is the caller's policy (it needs the run and
+        liveness view, which is not this storage's domain).
+        """
 
 
 class EnvironmentDatabase(ConfigStorage, RunStorage, SignalStorage, OutputTailStorage, ABC):

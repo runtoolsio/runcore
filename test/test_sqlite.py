@@ -748,8 +748,8 @@ def _tail_line(n, message=None):
 def test_output_tail_returns_newest_lines_oldest_first(sut):
     a = InstanceID('tail_job', 'r1', 1)
     b = InstanceID('other_job', 'r1', 1)
-    sut.append_output(a, [_tail_line(1), _tail_line(2), _tail_line(3)])
-    sut.append_output(b, [_tail_line(1, 'other')])
+    sut.append_output([(a, _tail_line(1)), (a, _tail_line(2)), (a, _tail_line(3))])
+    sut.append_output([(b, _tail_line(1, 'other'))])
 
     tail = sut.read_output_tail(a, max_lines=2)
     assert [(line.ordinal, line.message) for line in tail] == [(2, 'line 2'), (3, 'line 3')]
@@ -758,7 +758,7 @@ def test_output_tail_returns_newest_lines_oldest_first(sut):
 
 def test_output_tail_incremental_read(sut):
     a = InstanceID('tail_job', 'r1', 1)
-    sut.append_output(a, [_tail_line(1), _tail_line(2), _tail_line(3)])
+    sut.append_output([(a, _tail_line(n)) for n in (1, 2, 3)])
 
     assert [line.ordinal for line in sut.read_output_tail(a, max_lines=10, after_ordinal=1)] == [2, 3]
     assert sut.read_output_tail(a, max_lines=10, after_ordinal=3) == []
@@ -766,16 +766,16 @@ def test_output_tail_incremental_read(sut):
 
 def test_output_tail_reflushed_batch_is_harmless(sut):
     a = InstanceID('tail_job', 'r1', 1)
-    batch = [_tail_line(1), _tail_line(2)]
-    sut.append_output(a, batch)
-    sut.append_output(a, batch + [_tail_line(3)])  # re-flush after a failed write, extended meanwhile
+    batch = [(a, _tail_line(1)), (a, _tail_line(2))]
+    sut.append_output(batch)
+    sut.append_output(batch + [(a, _tail_line(3))])  # re-flush after a failed write, extended meanwhile
 
     assert [line.ordinal for line in sut.read_output_tail(a, max_lines=10)] == [1, 2, 3]
 
 
 def test_output_tail_prune_keeps_newest(sut):
     a = InstanceID('tail_job', 'r1', 1)
-    sut.append_output(a, [_tail_line(n) for n in range(1, 6)])
+    sut.append_output([(a, _tail_line(n)) for n in range(1, 6)])
 
     sut.prune_output_tail(a, keep=2)
 
@@ -785,18 +785,19 @@ def test_output_tail_prune_keeps_newest(sut):
 def test_output_tail_delete(sut):
     a = InstanceID('tail_job', 'r1', 1)
     b = InstanceID('other_job', 'r1', 1)
-    sut.append_output(a, [_tail_line(1)])
-    sut.append_output(b, [_tail_line(1)])
+    sut.append_output([(a, _tail_line(1)), (b, _tail_line(1))])
+    assert set(sut.output_tail_instances()) == {a, b}
 
     sut.delete_output_tails([a])
 
     assert sut.read_output_tail(a, max_lines=10) == []
     assert [line.ordinal for line in sut.read_output_tail(b, max_lines=10)] == [1]
+    assert sut.output_tail_instances() == [b]
 
 
 def test_output_tail_zero_max_lines_reads_whole_tail(sut):
     a = InstanceID('tail_job', 'r1', 1)
-    sut.append_output(a, [_tail_line(n) for n in range(1, 4)])
+    sut.append_output([(a, _tail_line(n)) for n in range(1, 4)])
 
     assert [line.ordinal for line in sut.read_output_tail(a, max_lines=0)] == [1, 2, 3]
     assert [line.ordinal for line in sut.read_output_tail(a, max_lines=0, after_ordinal=1)] == [2, 3]

@@ -385,6 +385,9 @@ class OutputConfig(BaseModel):
 
     default_tail_buffer_size: int = Field(default=DEFAULT_TAIL_BUFFER_SIZE,
                                           description="Default max bytes for in-memory tail buffer")
+    tail_cap: int = Field(default=1000, ge=0,
+                          description="Max lines of the published live output tail kept per instance "
+                                      "(db-transport kinds — see transport doc point 7); 0 disables publishing")
     storages: list[OutputStorageConfig] = Field(
         default_factory=lambda: [OutputStorageConfig(type="file")],
         description="Output storage configurations",

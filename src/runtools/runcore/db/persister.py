@@ -23,7 +23,7 @@ import logging
 from threading import Lock
 from typing import Dict
 
-from runtools.runcore.db import EnvironmentDatabase
+from runtools.runcore.db import RunStorage
 from runtools.runcore.job import InstanceID, InstanceNotifications, JobRun
 
 log = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ log = logging.getLogger(__name__)
 class RunStatePersister:
     """Coalesces job-instance events and persists active run snapshots on flush."""
 
-    def __init__(self, db: EnvironmentDatabase):
+    def __init__(self, db: RunStorage):
         self._db = db
         self._dirty: Dict[InstanceID, JobRun] = {}
         self._lock = Lock()  # Guards _dirty only — never held across DB I/O

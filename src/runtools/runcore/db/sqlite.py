@@ -578,11 +578,10 @@ class SQLite(EnvironmentDatabase):
 
     @override
     @ensure_open
-    def append_output(self, instance_id, lines):
+    def append_output(self, lines):
         """See `OutputTailStorage.append_output`."""
-        rows = [(instance_id.job_id, instance_id.run_id, instance_id.ordinal,
-                 line.ordinal, json.dumps(line.serialize()))
-                for line in lines]
+        rows = [(iid.job_id, iid.run_id, iid.ordinal, line.ordinal, json.dumps(line.serialize()))
+                for iid, line in lines]
         if not rows:
             return
         # OR IGNORE: a batch re-flushed after a failed write must be harmless (idempotent appends)
@@ -612,6 +611,16 @@ class SQLite(EnvironmentDatabase):
             return
         self._conn.executemany("DELETE FROM output_tail WHERE job_id = ? AND run_id = ? AND ordinal = ?", ids)
         self._conn.commit()
+
+    @override
+    @ensure_open
+    def output_tail_instances(self):
+        """See `OutputTailStorage.output_tail_instances`."""
+        cursor = self._conn.execute("SELECT DISTINCT job_id, run_id, ordinal FROM output_tail")
+        try:
+            return [InstanceID(job_id, run_id, ordinal) for job_id, run_id, ordinal in cursor.fetchall()]
+        finally:
+            cursor.close()
 
     @override
     @ensure_open

@@ -679,11 +679,10 @@ class PostgreSQL(EnvironmentDatabase):
 
     @override
     @ensure_open
-    def append_output(self, instance_id, lines):
+    def append_output(self, lines):
         """See `OutputTailStorage.append_output`."""
-        rows = [(instance_id.job_id, instance_id.run_id, instance_id.ordinal,
-                 line.ordinal, Jsonb(line.serialize()))
-                for line in lines]
+        rows = [(iid.job_id, iid.run_id, iid.ordinal, line.ordinal, Jsonb(line.serialize()))
+                for iid, line in lines]
         if not rows:
             return
         # DO NOTHING: a batch re-flushed after a failed write must be harmless (idempotent appends)
@@ -714,6 +713,13 @@ class PostgreSQL(EnvironmentDatabase):
             return
         with self._pool.connection() as conn, conn.cursor() as cur:
             cur.executemany("DELETE FROM output_tail WHERE job_id = %s AND run_id = %s AND ordinal = %s", ids)
+
+    @override
+    @ensure_open
+    def output_tail_instances(self):
+        """See `OutputTailStorage.output_tail_instances`."""
+        rows = self._fetch("SELECT DISTINCT job_id, run_id, ordinal FROM output_tail", ())
+        return [InstanceID(r['job_id'], r['run_id'], r['ordinal']) for r in rows]
 
     @override
     @ensure_open

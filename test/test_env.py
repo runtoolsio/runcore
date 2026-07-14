@@ -20,3 +20,14 @@ def test_each_kind_resolves_a_storage_driver(kind):
 @pytest.mark.parametrize("kind", EnvironmentKind)
 def test_each_kind_has_a_config_type(kind):
     assert kind in _CONFIG_TYPES
+
+
+def test_negative_tail_cap_rejected():
+    """A negative cap would silently drop every published line (and break postgres prunes) —
+    invalid config must fail at load, not at the first tail read; 0 = publishing disabled."""
+    from pydantic import ValidationError
+    from runtools.runcore.output import OutputConfig
+
+    with pytest.raises(ValidationError):
+        OutputConfig(tail_cap=-1)
+    assert OutputConfig(tail_cap=0).tail_cap == 0
