@@ -361,7 +361,7 @@ def _connect_postgres(entry: EnvironmentEntry) -> EnvironmentConnector:
     env_db = postgres.create(entry)
     with open_configured_db(env_db, entry.id, PostgresEnvironmentConfig) as config:
         output_backends = output.create_backends(entry.id, config.output.storages)
-        directory = PollingInstanceDirectory(env_db, lambda run: SnapshotJobInstanceProxy(run, env_db))
+        directory = PollingInstanceDirectory(env_db, lambda run: SnapshotJobInstanceProxy(run, env_db, env_db))
         return compose(entry.id, env_db, directory, output_backends)
 
 

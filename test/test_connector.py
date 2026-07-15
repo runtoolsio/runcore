@@ -19,7 +19,7 @@ def _seed_active(db, run):
 
 
 def _directory(env_db):
-    return PollingInstanceDirectory(env_db, lambda run: SnapshotJobInstanceProxy(run, env_db))
+    return PollingInstanceDirectory(env_db, lambda run: SnapshotJobInstanceProxy(run, env_db, env_db))
 
 
 @pytest.fixture

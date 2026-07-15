@@ -26,7 +26,7 @@ def db():
 
 @pytest.fixture
 def directory(db):
-    sut = PollingInstanceDirectory(db, lambda run: SnapshotJobInstanceProxy(run, db))
+    sut = PollingInstanceDirectory(db, lambda run: SnapshotJobInstanceProxy(run, db, db))
     yield sut
     sut.close()  # idempotent; the poll thread is never started in these tests
 

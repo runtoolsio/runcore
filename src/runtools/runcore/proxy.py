@@ -7,7 +7,7 @@ from typing import Callable, List, Optional, Tuple, override
 from runtools.runcore.job import (
     JobRun, JobInstance, InstanceNotifications, InstanceObservableNotifications,
     InstanceControlEvent, InstanceLifecycleEvent, InstanceOutputEvent, InstancePhaseEvent, InstanceStatusEvent,
-    NotificationBinding, SignalSender, STOP_OP,
+    NotificationBinding, OutputTailReader, SignalSender, STOP_OP,
 )
 from runtools.runcore.matching import MetadataCriterion
 from runtools.runcore.output import Output, OutputLine
@@ -294,15 +294,18 @@ class SnapshotJobInstanceProxy(JobInstanceProxyBase):
     :meth:`update_from_snapshot` instead of binding the proxy to an upstream event source. The proxy
     applies the newer-wins guard, replaces the cached snapshot, and emits the synthesized state
     events to its own notification hub (where a directory's aggregate fans in). Control is posted
-    through the signal sender; output is not yet supported on snapshot transports.
+    through the signal sender; output tail reads come from the shared bounded tail
+    (design point 7) — the newest retained lines, not the complete output.
 
     The directory also pushes liveness (:meth:`update_liveness`) — a snapshot transport cannot tell
     a quiet run from a dead producer, so the heartbeat verdict is part of the proxy's view.
     """
 
-    def __init__(self, initial: JobRun, signal_sender: SignalSender, output_buffer_depth: int = 100):
+    def __init__(self, initial: JobRun, signal_sender: SignalSender, output_tail: OutputTailReader,
+                 output_buffer_depth: int = 100):
         super().__init__(initial, output_buffer_depth)
         self._signals = signal_sender
+        self._output_tail = output_tail
         self._heartbeat_age: Optional[float] = None
         self._lost = False
 
@@ -359,4 +362,4 @@ class SnapshotJobInstanceProxy(JobInstanceProxyBase):
         self._signals.send_signal(self._job_run.instance_id, op_name, phase_id=phase_id, args=op_args)
 
     def _fetch_output_tail(self, max_lines: int) -> List[OutputLine]:
-        raise NotImplementedError("Output is not yet supported on snapshot transports")
+        return self._output_tail.read_output_tail(self._job_run.instance_id, max_lines)

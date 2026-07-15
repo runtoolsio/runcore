@@ -1,6 +1,5 @@
 """Behaviour of ``SnapshotJobInstanceProxy`` — the snapshot-pushed proxy for polling transports."""
-import pytest
-
+from runtools.runcore.output import OutputLine
 from runtools.runcore.run import Stage, TerminationStatus
 from runtools.runcore.test.job import fake_job_run
 from runtools.runcore.proxy import SnapshotJobInstanceProxy
@@ -41,8 +40,20 @@ class _RecordingSender:
         self.sent.append((instance_id, op, phase_id, args))
 
 
+class _FakeTailReader:
+    """Serves canned lines and records reads — the proxy's `OutputTailReader`."""
+
+    def __init__(self, lines=()):
+        self.lines = list(lines)
+        self.reads = []
+
+    def read_output_tail(self, instance_id, max_lines, *, after_ordinal=None):
+        self.reads.append((instance_id, max_lines, after_ordinal))
+        return self.lines
+
+
 def _proxy(run):
-    return SnapshotJobInstanceProxy(run, _RecordingSender())
+    return SnapshotJobInstanceProxy(run, _RecordingSender(), _FakeTailReader())
 
 
 def test_update_applies_newer_snapshot():
@@ -111,7 +122,7 @@ def test_no_change_emits_nothing():
 def test_stop_posts_signal_envelope():
     sender = _RecordingSender()
     run = _running()
-    proxy = SnapshotJobInstanceProxy(run, sender)
+    proxy = SnapshotJobInstanceProxy(run, sender, _FakeTailReader())
 
     proxy.stop()
 
@@ -121,13 +132,19 @@ def test_stop_posts_signal_envelope():
 def test_phase_op_posts_signal_envelope():
     sender = _RecordingSender()
     run = _running()
-    proxy = SnapshotJobInstanceProxy(run, sender)
+    proxy = SnapshotJobInstanceProxy(run, sender, _FakeTailReader())
 
     proxy._exec_phase_op('approval_gate', 'approve')
 
     assert sender.sent == [(run.instance_id, 'approve', 'approval_gate', ())]
 
 
-def test_output_is_not_supported_yet():
-    with pytest.raises(NotImplementedError):
-        _proxy(_running())._fetch_output_tail(0)
+def test_output_tail_reads_from_reader():
+    run = _running()
+    reader = _FakeTailReader([OutputLine('hello', 1)])
+    proxy = SnapshotJobInstanceProxy(run, _RecordingSender(), reader)
+
+    lines = proxy.output.tail(max_lines=5)
+
+    assert [line.message for line in lines] == ['hello']
+    assert reader.reads == [(run.instance_id, 5, None)]
