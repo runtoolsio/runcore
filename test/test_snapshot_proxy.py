@@ -148,3 +148,10 @@ def test_output_tail_reads_from_reader():
 
     assert [line.message for line in lines] == ['hello']
     assert reader.reads == [(run.instance_id, 5, None)]
+
+
+def test_liveness_defaults_to_presumed_live():
+    proxy = _proxy(_running())
+
+    assert not proxy.liveness.is_lost
+    assert proxy.liveness.heartbeat_age is None

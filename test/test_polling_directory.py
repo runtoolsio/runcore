@@ -165,8 +165,8 @@ def test_stale_heartbeat_marks_instance_lost(directory, db):
     directory.reconcile()
 
     proxy = directory.get_instance(run.metadata.instance_id)
-    assert proxy.is_lost
-    assert proxy.heartbeat_age > 60
+    assert proxy.liveness.is_lost
+    assert proxy.liveness.heartbeat_age > 60
 
 
 def test_fresh_heartbeat_keeps_instance_alive(directory, db):
@@ -176,8 +176,8 @@ def test_fresh_heartbeat_keeps_instance_alive(directory, db):
     directory.reconcile()
 
     proxy = directory.get_instance(run.metadata.instance_id)
-    assert not proxy.is_lost
-    assert proxy.heartbeat_age is not None
+    assert not proxy.liveness.is_lost
+    assert proxy.liveness.heartbeat_age is not None
 
 
 def test_lost_instance_stays_in_view(directory, db):

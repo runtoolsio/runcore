@@ -14,7 +14,9 @@ from threading import Event, Thread, current_thread
 from typing import Callable, Optional, cast
 
 from runtools.runcore.db import HEARTBEAT_STALE_AFTER, RunStorage
-from runtools.runcore.job import InstanceNotifications, InstanceObservableNotifications, JobRun, NotificationBinding
+from runtools.runcore.job import (
+    InstanceLiveness, InstanceNotifications, InstanceObservableNotifications, JobRun, NotificationBinding,
+)
 from runtools.runcore.matching import JobRunCriteria
 from runtools.runcore.proxy import JobInstanceProxyBase, SnapshotJobInstanceProxy
 from runtools.runcore.transport import DiscoveredRuns, InstanceDirectoryBase
@@ -101,10 +103,10 @@ class PollingInstanceDirectory(InstanceDirectoryBase):
             if proxy is None:
                 continue
             lost = version.heartbeat_age is not None and version.heartbeat_age > HEARTBEAT_STALE_AFTER
-            if lost and not proxy.is_lost:
+            if lost and not proxy.liveness.is_lost:
                 log.warning("Instance lost: heartbeat stale",
                             extra={"instance": str(instance_id), "age_s": round(version.heartbeat_age, 1)})
-            proxy.update_liveness(version.heartbeat_age, lost)
+            proxy.update_liveness(InstanceLiveness(version.heartbeat_age, lost))
 
     def _poll_loop(self) -> None:
         while not self._stop.wait(self._poll_interval()):

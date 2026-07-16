@@ -488,6 +488,16 @@ class JobInstanceMetadata:
         return str(self.instance_id)
 
 
+@dataclass(frozen=True)
+class InstanceLiveness:
+    """Consumer-side liveness verdict (the three-state model, transport doc point 8):
+    storage-active is the run row, this is the attestation side. Replaced whole on every
+    poll (never mutated), so reads are always a consistent verdict. Default = presumed live.
+    """
+    heartbeat_age: Optional[float] = None
+    is_lost: bool = False
+
+
 class JobInstance(abc.ABC):
     """
     The `JobInstance` class is a central component of this package. It denotes a single occurrence of a job.
@@ -526,6 +536,13 @@ class JobInstance(abc.ABC):
             str: Identifier of the individual run.
         """
         return self.metadata.run_id
+
+    @property
+    def liveness(self) -> InstanceLiveness:
+        """Liveness verdict for this instance view. The default stands for real instances and
+        live-wire proxies — they are never lost; snapshot proxies override with the polling
+        directory's heartbeat verdict."""
+        return InstanceLiveness()
 
     @abc.abstractmethod
     def find_phase_control(self, phase_filter):
@@ -1241,6 +1258,11 @@ class JobInstanceDelegate(JobInstance):
     def metadata(self):
         """Delegates to the wrapped instance's metadata"""
         return self._wrapped.metadata
+
+    @property
+    def liveness(self):
+        """Delegates to the wrapped instance's liveness"""
+        return self._wrapped.liveness
 
     @property
     def id(self):

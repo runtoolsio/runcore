@@ -7,7 +7,7 @@ from typing import Callable, List, Optional, Tuple, override
 from runtools.runcore.job import (
     JobRun, JobInstance, InstanceNotifications, InstanceObservableNotifications,
     InstanceControlEvent, InstanceLifecycleEvent, InstanceOutputEvent, InstancePhaseEvent, InstanceStatusEvent,
-    NotificationBinding, OutputTailReader, SignalSender, STOP_OP,
+    InstanceLiveness, NotificationBinding, OutputTailReader, SignalSender, STOP_OP,
 )
 from runtools.runcore.matching import MetadataCriterion
 from runtools.runcore.output import Output, OutputLine
@@ -306,22 +306,15 @@ class SnapshotJobInstanceProxy(JobInstanceProxyBase):
         super().__init__(initial, output_buffer_depth)
         self._signals = signal_sender
         self._output_tail = output_tail
-        self._heartbeat_age: Optional[float] = None
-        self._lost = False
+        self._liveness = InstanceLiveness()  # Replacement-only, never mutated in place => lock-free reads
 
     @property
-    def heartbeat_age(self) -> Optional[float]:
-        """Seconds since the producing node last attested this run's liveness; None when unknown."""
-        return self._heartbeat_age
+    def liveness(self) -> InstanceLiveness:
+        """The polling directory's heartbeat verdict; a lost run's state may be frozen."""
+        return self._liveness
 
-    @property
-    def is_lost(self) -> bool:
-        """True when the heartbeat is stale — the producing node likely died; the state may be frozen."""
-        return self._lost
-
-    def update_liveness(self, heartbeat_age: Optional[float], lost: bool) -> None:
-        self._heartbeat_age = heartbeat_age
-        self._lost = lost
+    def update_liveness(self, liveness: InstanceLiveness) -> None:
+        self._liveness = liveness
 
     def update_from_snapshot(self, curr: JobRun) -> None:
         """Apply a freshly read snapshot and emit the state events it implies.
