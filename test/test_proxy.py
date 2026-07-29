@@ -17,8 +17,8 @@ from runtools.runcore.util import utc_now
 class FakeProxy(JobInstanceProxyBase):
     """Minimal concrete proxy exercising the transport-neutral state half."""
 
-    def __init__(self, initial, notifications, output_buffer_depth=100):
-        super().__init__(initial, output_buffer_depth)
+    def __init__(self, initial, notifications):
+        super().__init__(initial)
         self.binding = self.bind_to(notifications)
         self.executed_ops = []
         self.stopped_with = None
@@ -164,32 +164,9 @@ def test_output_fetches_default_tail(base_ts, hub):
     assert proxy.fetched_max_lines == 0
 
 
-def test_output_serves_small_tail_from_events(base_ts, hub):
-    run = fake_job_run('j1', created_at=base_ts, term_status=None)
-    proxy = FakeProxy(run, hub)
-
-    for ordinal in (1, 2, 3, 4):
-        fire_output(hub, run, OutputLine(f'l{ordinal}', ordinal))
-
-    assert [line.ordinal for line in proxy.output.tail(max_lines=3)] == [2, 3, 4]
-    assert proxy.fetch_count == 0
-
-
-def test_output_fetches_when_tail_request_exceeds_event_buffer(base_ts, hub):
-    run = fake_job_run('j1', created_at=base_ts, term_status=None)
-    proxy = FakeProxy(run, hub, output_buffer_depth=3)
-    proxy.fetched_lines = [OutputLine(f'l{o}', o) for o in range(1, 8)]
-
-    output = proxy.output
-    for ordinal in (5, 6, 7):
-        fire_output(hub, run, OutputLine(f'l{ordinal}', ordinal))
-
-    assert [line.ordinal for line in output.tail(max_lines=4)] == [4, 5, 6, 7]
-    assert proxy.fetch_count == 1
-    assert proxy.fetched_max_lines == 4
-
-
-def test_output_default_tail_fetches_even_when_events_exist(base_ts, hub):
+def test_output_tail_fetches_even_after_output_events(base_ts, hub):
+    """Proxies cache no output — pull always goes to the transport's authoritative tail;
+    events are a separate streaming lane for subscribers."""
     run = fake_job_run('j1', created_at=base_ts, term_status=None)
     proxy = FakeProxy(run, hub)
     proxy.fetched_lines = [OutputLine(f'l{o}', o) for o in range(1, 8)]
@@ -198,9 +175,9 @@ def test_output_default_tail_fetches_even_when_events_exist(base_ts, hub):
     for ordinal in (5, 6, 7):
         fire_output(hub, run, OutputLine(f'l{ordinal}', ordinal))
 
-    assert [line.ordinal for line in output.tail()] == [1, 2, 3, 4, 5, 6, 7]
+    assert [line.ordinal for line in output.tail(max_lines=3)] == [5, 6, 7]
     assert proxy.fetch_count == 1
-    assert proxy.fetched_max_lines == 0
+    assert proxy.fetched_max_lines == 3
 
 
 def test_output_fetch_results_are_not_cached(base_ts, hub):
@@ -215,29 +192,19 @@ def test_output_fetch_results_are_not_cached(base_ts, hub):
     assert proxy.fetch_count == 2
 
 
-def test_output_buffer_trims_to_depth(base_ts, hub):
-    run = fake_job_run('j1', created_at=base_ts, term_status=None)
-    proxy = FakeProxy(run, hub, output_buffer_depth=3)
-
-    output = proxy.output
-    for ordinal in (1, 2, 3, 4, 5):
-        fire_output(hub, run, OutputLine(f'l{ordinal}', ordinal))
-
-    assert [line.ordinal for line in output.tail(max_lines=3)] == [3, 4, 5]
-    assert proxy.fetch_count == 0
-
-
-def test_output_ignores_events_of_other_instances(base_ts, hub):
+def test_output_events_of_other_instances_are_filtered(base_ts, hub):
+    """The proxy's instance filter drops foreign output events before they reach subscribers."""
     run = fake_job_run('j1', created_at=base_ts, term_status=None)
     proxy = FakeProxy(run, hub)
+    received = []
+    proxy.notifications.add_observer_output(
+        type('R', (), {'instance_output_update': lambda self, e: received.append(e.output_line.message)})())
 
-    output = proxy.output
     other = fake_job_run('j2', created_at=base_ts, term_status=None)
     fire_output(hub, other, OutputLine('other', 1))
     fire_output(hub, run, OutputLine('mine', 1))
 
-    assert [line.message for line in output.tail(max_lines=1)] == ['mine']
-    assert proxy.fetch_count == 0
+    assert received == ['mine']
 
 
 def test_binding_unbind_is_idempotent(base_ts, hub):
@@ -247,13 +214,4 @@ def test_binding_unbind_is_idempotent(base_ts, hub):
     proxy.binding.unbind()  # Second unbind must be a no-op, not a double observer removal
 
 
-def test_output_orders_lines_by_ordinal(base_ts, hub):
-    run = fake_job_run('j1', created_at=base_ts, term_status=None)
-    proxy = FakeProxy(run, hub)
 
-    output = proxy.output
-    for ordinal in (1, 3, 2, 3):  # Late and duplicate deliveries
-        fire_output(hub, run, OutputLine(f'l{ordinal}', ordinal))
-
-    assert [line.ordinal for line in output.tail(max_lines=3)] == [1, 2, 3]
-    assert proxy.fetch_count == 0

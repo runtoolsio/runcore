@@ -1,12 +1,10 @@
-import bisect
 import datetime
 from abc import abstractmethod
-from threading import Lock
 from typing import Callable, List, Optional, Tuple, override
 
 from runtools.runcore.job import (
     JobRun, JobInstance, InstanceNotifications, InstanceObservableNotifications,
-    InstanceControlEvent, InstanceLifecycleEvent, InstanceOutputEvent, InstancePhaseEvent, InstanceStatusEvent,
+    InstanceControlEvent, InstanceLifecycleEvent, InstancePhaseEvent, InstanceStatusEvent,
     InstanceLiveness, NotificationBinding, OutputTailReader, SignalSender, STOP_OP,
 )
 from runtools.runcore.matching import MetadataCriterion
@@ -28,15 +26,14 @@ class JobInstanceProxyBase(JobInstance):
     Subclasses implement command delivery and remote output fetches.
     """
 
-    def __init__(self, initial: JobRun, output_buffer_depth: int = 100):
+    def __init__(self, initial: JobRun):
         self._job_run = initial  # Replacement-only, never mutated in place => lock-free reads
-        self._output = _ProxyOutput(self._fetch_output_tail, output_buffer_depth)
+        self._output = _ProxyOutput(self._fetch_output_tail)
         self._notifications = InstanceObservableNotifications(
             instance_filter=(MetadataCriterion.exact_match(initial.instance_id)))
         self._notifications.add_observer_lifecycle(self._on_lifecycle_update)
         self._notifications.add_observer_phase(self._on_phase_update)
         self._notifications.add_observer_status(self._on_status_update)
-        self._notifications.add_observer_output(self._on_output_update)
 
     @property
     def metadata(self):
@@ -68,9 +65,6 @@ class JobInstanceProxyBase(JobInstance):
 
     def _on_status_update(self, event: InstanceStatusEvent):
         self._update_state(event.job_run)
-
-    def _on_output_update(self, event: InstanceOutputEvent):
-        self._output.add_line(event.output_line)
 
     def snap(self) -> JobRun:
         return self._job_run
@@ -107,43 +101,21 @@ class JobInstanceProxyBase(JobInstance):
 
 
 class _ProxyOutput(Output):
-    """Bounded buffer of output events received since proxy construction.
+    """Pull delegate to the transport's authoritative bounded tail.
 
-    Tail reads covered by the buffer are served locally. Reads the buffer cannot
-    prove complete are served directly from the remote instance; fetched lines are
-    intentionally not merged into the event-fed buffer.
-
-    The buffer is kept sorted by line ordinal and drops duplicate deliveries, so
-    transport delivery order is not load-bearing — the output analog of the
-    :meth:`JobRun.is_newer_than` guard on state.
+    Proxies cache no output: every ``tail()`` goes to the transport (the node's in-memory
+    tail buffer over RPC, or the shared db tail). Output *events* are a separate streaming
+    lane for subscribers — they never pass through here.
     """
 
-    def __init__(self, fetch_tail: Callable[[int], List[OutputLine]], max_lines: int):
+    def __init__(self, fetch_tail: Callable[[int], List[OutputLine]]):
         self._fetch_tail = fetch_tail
-        self._max_lines = max_lines
-        self._lines: List[OutputLine] = []
-        self._lock = Lock()
 
     @property
     def locations(self):
         return ()
 
-    def add_line(self, line: OutputLine):
-        with self._lock:
-            if not self._lines or line.ordinal > self._lines[-1].ordinal:
-                self._lines.append(line)  # Fast path: in-order delivery
-            else:
-                index = bisect.bisect_left(self._lines, line.ordinal, key=lambda l: l.ordinal)
-                if index < len(self._lines) and self._lines[index].ordinal == line.ordinal:
-                    return  # Duplicate delivery
-                self._lines.insert(index, line)
-            del self._lines[:-self._max_lines]
-
     def tail(self, max_lines: int = 0):
-        with self._lock:
-            lines = list(self._lines)
-        if 0 < max_lines <= len(lines):
-            return lines[-max_lines:]
         return self._fetch_tail(max_lines)
 
 
@@ -301,9 +273,8 @@ class SnapshotJobInstanceProxy(JobInstanceProxyBase):
     a quiet run from a dead producer, so the heartbeat verdict is part of the proxy's view.
     """
 
-    def __init__(self, initial: JobRun, signal_sender: SignalSender, output_tail: OutputTailReader,
-                 output_buffer_depth: int = 100):
-        super().__init__(initial, output_buffer_depth)
+    def __init__(self, initial: JobRun, signal_sender: SignalSender, output_tail: OutputTailReader):
+        super().__init__(initial)
         self._signals = signal_sender
         self._output_tail = output_tail
         self._liveness = InstanceLiveness()  # Replacement-only, never mutated in place => lock-free reads
