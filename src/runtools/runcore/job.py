@@ -1127,6 +1127,20 @@ class InstanceNotifications(ABC):
         self.remove_observer_control(observer)
         self.remove_observer_status(observer)
 
+    def add_observer_state_events(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
+        """Register an observer for lifecycle, phase, control, and status events only."""
+        self.add_observer_lifecycle(observer, priority)
+        self.add_observer_phase(observer, priority)
+        self.add_observer_control(observer, priority)
+        self.add_observer_status(observer, priority)
+
+    def remove_observer_state_events(self, observer):
+        """Remove an observer registered by :meth:`add_observer_state_events`."""
+        self.remove_observer_lifecycle(observer)
+        self.remove_observer_phase(observer)
+        self.remove_observer_control(observer)
+        self.remove_observer_status(observer)
+
 
 class JobInstanceObservable(ABC):
     """Marker interface for components that emit instance events."""

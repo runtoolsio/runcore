@@ -68,6 +68,18 @@ def fire_output(hub, job_run, line):
     hub.output_notification.observer_proxy.instance_output_update(event)
 
 
+def test_state_observer_excludes_output(base_ts, hub):
+    run = fake_job_run('j1', created_at=base_ts, term_status=None)
+    received = []
+    hub.add_observer_state_events(received.append)
+
+    fire_output(hub, run, OutputLine('line', 1))
+    fire_lifecycle(hub, lifecycle_event(run, Stage.RUNNING))
+
+    assert len(received) == 1
+    assert isinstance(received[0], InstanceLifecycleEvent)
+
+
 def test_last_updated_is_max_phase_timestamp(base_ts):
     running = fake_job_run('j1', created_at=base_ts, term_status=None)
     ended = fake_job_run('j1', created_at=base_ts, ended_at=base_ts + timedelta(minutes=10))
@@ -212,6 +224,5 @@ def test_binding_unbind_is_idempotent(base_ts, hub):
 
     proxy.binding.unbind()
     proxy.binding.unbind()  # Second unbind must be a no-op, not a double observer removal
-
 
 
