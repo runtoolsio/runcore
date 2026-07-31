@@ -1114,6 +1114,11 @@ class InstanceNotifications(ABC):
         pass
 
     def add_observer_all_events(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
+        """Register an observer for every event channel, including the potentially expensive output stream.
+
+        Prefer :meth:`add_observer_state_events` unless the observer genuinely consumes output —
+        on an environment-wide surface this subscription expresses demand for all-instance output.
+        """
         self.add_observer_lifecycle(observer, priority)
         self.add_observer_phase(observer, priority)
         self.add_observer_output(observer, priority)
