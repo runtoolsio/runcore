@@ -56,15 +56,10 @@ class ObservableNotification(Generic[O]):
     def __init__(self, *,
                  event_filter: Optional[Callable[[Any], bool]] = None,
                  error_hook: Optional[Callable[[O, Tuple[Any], Exception], None]] = None,
-                 force_reraise=False,
-                 on_first_observer: Optional[Callable[[], None]] = None,
-                 on_last_observer: Optional[Callable[[], None]] = None):
+                 force_reraise=False):
         self.event_filter = event_filter
         self.error_hook: Optional[Callable[[O, Tuple[Any], Exception], None]] = error_hook
         self.force_reraise = force_reraise
-        # Demand hooks: fired after the 0 -> 1 (first) and 1 -> 0 (last) observer count transitions only
-        self.on_first_observer = on_first_observer
-        self.on_last_observer = on_last_observer
         self._prioritized_observers = []
         self._observer_proxy = _Proxy(self, force_reraise)
 
@@ -81,18 +76,12 @@ class ObservableNotification(Generic[O]):
         return list(self._prioritized_observers)
 
     def add_observer(self, observer: O, priority: int = DEFAULT_OBSERVER_PRIORITY) -> None:
-        was_empty = not self._prioritized_observers
         self._prioritized_observers = sorted(
             chain(self._prioritized_observers, [(priority, observer)]),
             key=itemgetter(0))
-        if was_empty and self.on_first_observer:
-            self.on_first_observer()
 
     def remove_observer(self, observer: O) -> None:
-        had_observers = bool(self._prioritized_observers)
         self._prioritized_observers = [(priority, o) for priority, o in self._prioritized_observers if o != observer]
-        if had_observers and not self._prioritized_observers and self.on_last_observer:
-            self.on_last_observer()
 
     def observer_context(self, *observers: O, priority: int = DEFAULT_OBSERVER_PRIORITY) -> 'ObserverContext[O]':
         return ObserverContext(self, *observers, priority=priority)
