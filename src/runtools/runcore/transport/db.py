@@ -57,6 +57,10 @@ class PollingInstanceDirectory(InstanceDirectoryBase):
 
     ``proxy_factory`` builds the proxy for each admitted instance — which capabilities a proxy
     gets (e.g. its command channel) is composition-site wiring, not this directory's concern.
+
+    Output events are synthesized under demand only: each poll drives ``sync_output`` on exactly
+    the proxies someone observes output of — through the aggregate (env-wide) or on the proxy
+    itself — so the cost of the output lane lands on tailed instances alone (design point 7).
     """
 
     def __init__(self, db: RunStorage, proxy_factory: Callable[[JobRun], SnapshotJobInstanceProxy], *,
@@ -92,6 +96,7 @@ class PollingInstanceDirectory(InstanceDirectoryBase):
             self._evict_absent(instance_id)
         self._seen_versions = {iid: version.cursor for iid, version in versions.items()}
         self._update_liveness(versions)
+        self._sync_outputs()
 
     def _update_liveness(self, versions) -> None:
         """Interpret heartbeat ages: a stale heartbeat marks the proxy lost — never mutates storage.
@@ -107,6 +112,24 @@ class PollingInstanceDirectory(InstanceDirectoryBase):
                 log.warning("Instance lost: heartbeat stale",
                             extra={"instance": str(instance_id), "age_s": round(version.heartbeat_age, 1)})
             proxy.update_liveness(InstanceLiveness(version.heartbeat_age, lost))
+
+    def _sync_outputs(self) -> None:
+        """Read and emit retained output only for proxies with current output demand."""
+        with self._proxies_lock:
+            proxies = [cast(SnapshotJobInstanceProxy, admitted.proxy) for admitted in self._admitted.values()]
+        for proxy in proxies:
+            if self._has_output_demand(proxy):
+                proxy.sync_output()
+
+    def _has_output_demand(self, proxy: SnapshotJobInstanceProxy) -> bool:
+        """Whether anyone observes this proxy's output: the aggregate has an output observer
+        (env-wide demand), or the proxy's own channel has one besides the directory's aggregate
+        relay — a known object, excluded by identity."""
+        aggregate = self._notifications.output_notification
+        if aggregate.observers:
+            return True
+        relay = aggregate.observer_proxy
+        return any(observer is not relay for observer in proxy.notifications.output_notification.observers)
 
     def _poll_loop(self) -> None:
         while not self._stop.wait(self._poll_interval()):
@@ -139,8 +162,11 @@ class PollingInstanceDirectory(InstanceDirectoryBase):
         """
         ended = self._db.read_runs(JobRunCriteria.instance_match(instance_id), asc=False, limit=1, offset=0)
         proxy = self._snapshot_proxy(instance_id)
-        if proxy is not None and ended:
-            proxy.update_from_snapshot(ended[0])  # Emits ENDED before the proxy is unbound
+        if proxy is not None:
+            if self._has_output_demand(proxy):
+                proxy.sync_output()  # Final increment, before ENDED — the tail linger window keeps rows readable
+            if ended:
+                proxy.update_from_snapshot(ended[0])  # Emits ENDED before the proxy is unbound
         with self._proxies_lock:
             self._ensure_removed(instance_id)
 

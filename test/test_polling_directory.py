@@ -8,7 +8,9 @@ from datetime import timedelta
 import pytest
 
 from runtools.runcore.db import sqlite
+from runtools.runcore.job import InstanceLifecycleEvent, InstanceOutputEvent
 from runtools.runcore.matching import JobRunCriteria
+from runtools.runcore.output import OutputLine
 from runtools.runcore.proxy import SnapshotJobInstanceProxy
 from runtools.runcore.run import Stage, TerminationStatus
 from runtools.runcore.test.job import fake_job_run
@@ -212,3 +214,201 @@ def test_control_request_synthesizes_control_event(directory, db):
 
     [event] = control_events
     assert event.request == request
+
+
+def _append_lines(db, run, *messages, start=1):
+    iid = run.metadata.instance_id
+    db.append_output([(iid, OutputLine(message, start + i)) for i, message in enumerate(messages)])
+
+
+class _CountingTailReader:
+    """OutputTailReader decorator proving tail reads happen only under demand."""
+
+    def __init__(self, db):
+        self._db = db
+        self.reads = 0
+
+    def read_output_tail(self, instance_id, max_lines, *, after_ordinal=None):
+        self.reads += 1
+        return self._db.read_output_tail(instance_id, max_lines, after_ordinal=after_ordinal)
+
+
+def test_no_output_reads_without_demand(db):
+    reader = _CountingTailReader(db)
+    directory = PollingInstanceDirectory(db, lambda run: SnapshotJobInstanceProxy(run, db, reader))
+    run = fake_job_run('j1', created_at=BASE, term_status=None)
+    _seed_active(db, run)
+    _append_lines(db, run, 'one', 'two')
+
+    directory.reconcile()
+    directory.reconcile()  # the directory's own aggregate relay must not count as demand
+
+    assert reader.reads == 0
+
+
+def test_first_output_sync_replays_retained_lines_once(directory, db):
+    run = fake_job_run('j1', created_at=BASE, term_status=None)
+    _seed_active(db, run)
+    _append_lines(db, run, 'old-one', 'old-two')
+    received = []
+    directory.notifications.add_observer_output(received.append)
+
+    directory.reconcile()  # admits and replays the retained tail
+    directory.reconcile()
+
+    assert [e.output_line.message for e in received] == ['old-one', 'old-two']
+
+
+def test_new_lines_are_emitted_in_order(directory, db):
+    run = fake_job_run('j1', created_at=BASE, term_status=None)
+    _seed_active(db, run)
+    received = []
+    directory.notifications.add_observer_output(received.append)
+    directory.reconcile()
+
+    _append_lines(db, run, 'one', 'two')
+    directory.reconcile()
+    directory.reconcile()  # no new lines -> no duplicates
+
+    assert [e.output_line.message for e in received] == ['one', 'two']
+    assert received[0].instance == run.metadata
+
+
+def test_proxy_level_observer_is_output_demand(directory, db):
+    run = fake_job_run('j1', created_at=BASE, term_status=None)
+    _seed_active(db, run)
+    directory.reconcile()
+    proxy = directory.get_instance(run.metadata.instance_id)
+    received = []
+    proxy.notifications.add_observer_output(received.append)
+    directory.reconcile()
+
+    _append_lines(db, run, 'one')
+    directory.reconcile()
+
+    assert [e.output_line.message for e in received] == ['one']
+
+
+def test_demand_lapse_catches_up_without_repeating_delivered_lines(directory, db):
+    run = fake_job_run('j1', created_at=BASE, term_status=None)
+    _seed_active(db, run)
+    received = []
+    directory.notifications.add_observer_output(received.append)
+    directory.reconcile()
+
+    _append_lines(db, run, 'already delivered')
+    directory.reconcile()
+    directory.notifications.remove_observer_output(received.append)
+    _append_lines(db, run, 'unwatched', start=2)
+    directory.reconcile()  # no demand: keep the cursor without reading
+    directory.notifications.add_observer_output(received.append)
+    directory.reconcile()  # catch up across the demand pause
+    _append_lines(db, run, 'watched', start=3)
+    directory.reconcile()
+
+    assert [e.output_line.message for e in received] == ['already delivered', 'unwatched', 'watched']
+
+
+def test_initial_pull_does_not_skip_retained_or_subsequent_output(directory, db):
+    run = fake_job_run('j1', created_at=BASE, term_status=None)
+    _seed_active(db, run)
+    _append_lines(db, run, 'pulled')
+    directory.reconcile()  # admit without output demand
+    proxy = directory.get_instance(run.metadata.instance_id)
+    received = []
+    directory.notifications.add_observer_output(received.append)
+
+    assert [l.message for l in proxy.output.tail()] == ['pulled']
+    _append_lines(db, run, 'streamed', start=2)
+    directory.reconcile()
+
+    assert [e.output_line.message for e in received] == ['pulled', 'streamed']
+
+
+def test_empty_initial_pull_does_not_skip_first_output(directory, db):
+    run = fake_job_run('j1', created_at=BASE, term_status=None)
+    _seed_active(db, run)
+    directory.reconcile()
+    proxy = directory.get_instance(run.metadata.instance_id)
+    received = []
+    directory.notifications.add_observer_output(received.append)
+
+    assert proxy.output.tail() == []  # nothing produced yet at pull time
+    _append_lines(db, run, 'first')
+    directory.reconcile()
+
+    assert [e.output_line.message for e in received] == ['first']
+
+
+def test_pull_does_not_move_the_stream_cursor(directory, db):
+    run = fake_job_run('j1', created_at=BASE, term_status=None)
+    _seed_active(db, run)
+    received = []
+    directory.notifications.add_observer_output(received.append)
+    directory.reconcile()
+    _append_lines(db, run, 'one')
+    directory.reconcile()
+
+    proxy = directory.get_instance(run.metadata.instance_id)
+    proxy.output.tail()  # covers the emitted line; must neither replay nor skip
+    _append_lines(db, run, 'two', start=2)
+    directory.reconcile()
+
+    assert [e.output_line.message for e in received] == ['one', 'two']
+
+
+def test_eviction_emits_final_output_before_ended(directory, db):
+    run = fake_job_run('j1', created_at=BASE, term_status=None)
+    _seed_active(db, run)
+    events = []
+    directory.notifications.add_observer_output(events.append)
+    directory.notifications.add_observer_lifecycle(events.append)
+    directory.reconcile()
+
+    _append_lines(db, run, 'last words')
+    db.store_runs(fake_job_run('j1', created_at=BASE, term_status=TerminationStatus.COMPLETED))
+    directory.reconcile()  # eviction: final output increment, then the terminal replay
+
+    assert [e.output_line.message for e in events if isinstance(e, InstanceOutputEvent)] == ['last words']
+    assert isinstance(events[0], InstanceOutputEvent)  # the final increment precedes ENDED
+    assert any(isinstance(e, InstanceLifecycleEvent) and e.new_stage == Stage.ENDED for e in events)
+
+
+def test_subscribe_and_pull_after_no_demand_check_does_not_lose_output(directory, db, monkeypatch):
+    run = fake_job_run('j1', created_at=BASE, term_status=None)
+    _seed_active(db, run)
+    directory.reconcile()
+    received = []
+    original = directory._has_output_demand
+
+    def subscribe_after_check(proxy):
+        demand = original(proxy)
+        proxy.notifications.add_observer_output(received.append)
+        assert proxy.output.tail() == []
+        _append_lines(db, run, 'arrived after pull')
+        return demand
+
+    with monkeypatch.context() as patch:
+        patch.setattr(directory, '_has_output_demand', subscribe_after_check)
+        directory.reconcile()
+    directory.reconcile()
+
+    assert [e.output_line.message for e in received] == ['arrived after pull']
+
+
+def test_resuming_output_tolerates_pruned_ordinals(directory, db):
+    run = fake_job_run('j1', created_at=BASE, term_status=None)
+    _seed_active(db, run)
+    received = []
+    directory.notifications.add_observer_output(received.append)
+    _append_lines(db, run, 'one')
+    directory.reconcile()
+
+    directory.notifications.remove_observer_output(received.append)
+    _append_lines(db, run, 'two', 'three', 'four', start=2)
+    db.prune_output_tail(run.instance_id, 2)
+    directory.reconcile()
+    directory.notifications.add_observer_output(received.append)
+    directory.reconcile()
+
+    assert [e.output_line.ordinal for e in received] == [1, 3, 4]

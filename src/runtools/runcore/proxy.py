@@ -4,12 +4,13 @@ from typing import Callable, List, Optional, Tuple, override
 
 from runtools.runcore.job import (
     JobRun, JobInstance, InstanceNotifications, InstanceObservableNotifications,
-    InstanceControlEvent, InstanceLifecycleEvent, InstancePhaseEvent, InstanceStatusEvent,
+    InstanceControlEvent, InstanceLifecycleEvent, InstanceOutputEvent, InstancePhaseEvent, InstanceStatusEvent,
     InstanceLiveness, NotificationBinding, OutputTailReader, SignalSender, STOP_OP,
 )
 from runtools.runcore.matching import MetadataCriterion
 from runtools.runcore.output import Output, OutputLine
 from runtools.runcore.run import Stage, StopReason
+from runtools.runcore.util import utc_now
 
 
 class JobInstanceProxyBase(JobInstance):
@@ -278,6 +279,7 @@ class SnapshotJobInstanceProxy(JobInstanceProxyBase):
         self._signals = signal_sender
         self._output_tail = output_tail
         self._liveness = InstanceLiveness()  # Replacement-only, never mutated in place => lock-free reads
+        self._output_cursor = 0  # Retained for the lifetime of this proxy, including demand pauses
 
     @property
     def liveness(self) -> InstanceLiveness:
@@ -327,3 +329,17 @@ class SnapshotJobInstanceProxy(JobInstanceProxyBase):
 
     def _fetch_output_tail(self, max_lines: int) -> List[OutputLine]:
         return self._output_tail.read_output_tail(self._job_run.instance_id, max_lines)
+
+    def sync_output(self) -> None:
+        """Emit retained lines after this proxy's stream cursor.
+
+        Called by the directory's polling thread only while output is observed. The first
+        sync replays the retained tail; later syncs catch up across pauses in demand.
+        Pull reads are independent, so consumers deduplicate overlap by line ordinal.
+        Pruning may leave ordinal gaps: this stream has the same bounds as the stored tail.
+        """
+        lines = self._output_tail.read_output_tail(self._job_run.instance_id, 0, after_ordinal=self._output_cursor)
+        for line in lines:
+            self._output_cursor = line.ordinal
+            event = InstanceOutputEvent(self._job_run.metadata, line, utc_now())
+            self._notifications.output_notification.observer_proxy.instance_output_update(event)
