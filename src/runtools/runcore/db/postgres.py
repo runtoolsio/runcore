@@ -600,16 +600,6 @@ class PostgreSQL(EnvironmentDatabase):
 
     @override
     @ensure_open
-    def read_instance_ids(self, run_match=None):
-        """See `RunStorage.read_instance_ids`."""
-        where, params, complete = build_where_clause(run_match, _PG_DIALECT, alias='h')
-        if complete:
-            rows = self._fetch("SELECT h.job_id, h.run_id, h.ordinal FROM runs h" + where, params)
-            return [InstanceID(r['job_id'], r['run_id'], r['ordinal']) for r in rows]
-        return [InstanceID(*pk) for pk in self._matching_pks(where, params, run_match)]
-
-    @override
-    @ensure_open
     def active_run_versions(self) -> List[RunVersion]:
         """See `RunStorage.active_run_versions`."""
         # updated_at::text → opaque str cursor; a bare TIMESTAMPTZ would read back as a datetime.
@@ -620,6 +610,15 @@ class PostgreSQL(EnvironmentDatabase):
             "WHERE ended IS NULL AND run IS NOT NULL", ())
         return [RunVersion(InstanceID(r['job_id'], r['run_id'], r['ordinal']), r['version'], r['heartbeat_age'])
                 for r in rows]
+
+    @override
+    @ensure_open
+    def live_instances(self, max_age):
+        """See `RunStorage.live_instances`."""
+        rows = self._fetch(
+            "SELECT job_id, run_id, ordinal FROM runs WHERE ended IS NULL "
+            "AND heartbeat_at >= now() - make_interval(secs => %s)", (max_age,))
+        return [InstanceID(r['job_id'], r['run_id'], r['ordinal']) for r in rows]
 
     @override
     @ensure_open

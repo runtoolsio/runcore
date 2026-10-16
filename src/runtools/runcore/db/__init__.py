@@ -163,17 +163,6 @@ class RunStorage(ABC):
         """
 
     @abstractmethod
-    def read_instance_ids(self, run_match=None) -> list[InstanceID]:
-        """Return the IDs of runs matching the criteria, without reading run documents.
-
-        The identity-projection query: same criteria semantics as the full reads, but selecting
-        identity only — so init-only rows participate (matched via identity/tags and the
-        lifecycle projections; they cannot satisfy phase criteria). E.g. a caller checking
-        whether pending signals still have live targets expresses "non-ended" as lifecycle
-        criteria (stage CREATED or RUNNING).
-        """
-
-    @abstractmethod
     def active_run_versions(self) -> list[RunVersion]:
         """Return a change-detection cursor for each materialized active run.
 
@@ -202,6 +191,20 @@ class RunStorage(ABC):
 
         Args:
             *job_runs: Latest active snapshots to persist.
+        """
+
+    @abstractmethod
+    def live_instances(self, max_age: float) -> list[InstanceID]:
+        """Return the non-ended runs that are live: their owner heartbeat within ``max_age`` seconds
+        (the complement of an :class:`InstanceLiveness` lost verdict at the same bound).
+
+        Init-only rows included — they are born attested (``init_run`` sets the heartbeat), so a
+        run whose first snapshot is not yet persisted still counts as owned. Ages are computed on
+        the storage's own clock, like :class:`RunVersion` ``heartbeat_age``; rows without a
+        heartbeat never count.
+
+        Args:
+            max_age: Heartbeat staleness bound in seconds, e.g. ``HEARTBEAT_STALE_AFTER``.
         """
 
     @abstractmethod

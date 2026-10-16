@@ -155,3 +155,25 @@ def test_liveness_defaults_to_presumed_live():
 
     assert not proxy.liveness.is_lost
     assert proxy.liveness.heartbeat_age is None
+
+
+def test_terminal_snapshot_emits_final_output_before_ended():
+    run = _running()
+    proxy = SnapshotJobInstanceProxy(run, _RecordingSender(), _FakeTailReader([OutputLine('last words', 1)]))
+    events = []
+    proxy.notifications.add_observer_output(events.append)
+    proxy.notifications.add_observer_lifecycle(events.append)
+
+    proxy.update_from_snapshot(_ended(), emit_output=True)
+
+    assert [type(e).__name__ for e in events] == ['InstanceOutputEvent', 'InstanceLifecycleEvent']
+    assert events[1].new_stage == Stage.ENDED
+
+
+def test_snapshot_without_output_demand_reads_no_output():
+    reader = _FakeTailReader([OutputLine('unread', 1)])
+    proxy = SnapshotJobInstanceProxy(_running(), _RecordingSender(), reader)
+
+    proxy.update_from_snapshot(_ended())  # nobody watching output
+
+    assert reader.reads == []

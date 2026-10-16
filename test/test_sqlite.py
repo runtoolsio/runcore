@@ -729,15 +729,16 @@ def test_read_signals_age_filter(sut):
     assert [s.instance_id.job_id for s in sut.read_signals(older_than=60)] == ['old']
 
 
-def test_read_instance_ids_with_non_ended_criteria_includes_init_only_rows(sut):
-    init_only = sut.init_run('pending', 'r1', created_at=utc_now())
-    ended_run = fake_job_run('done', 'r1', term_status=TerminationStatus.COMPLETED)
-    _init_and_store(sut, ended_run)
+def test_live_instances_include_init_only_rows_and_require_fresh_heartbeat(sut):
+    init_only = sut.init_run('pending', 'r1', created_at=utc_now())  # no snapshot persisted yet
+    sut.init_run('stale', 'r1', created_at=utc_now())
+    _init_and_store(sut, fake_job_run('done', 'r1', term_status=TerminationStatus.COMPLETED))
+    backdated = (utc_now() - timedelta(minutes=5)).strftime('%Y-%m-%d %H:%M:%S.%f')
+    sut._conn.execute("UPDATE runs SET heartbeat_at = ? WHERE job_id = 'stale'", (backdated,))
+    sut._conn.commit()
 
-    non_ended = JobRunCriteria(
-        lifecycle_criteria=(LifecycleCriterion(stage=Stage.CREATED), LifecycleCriterion(stage=Stage.RUNNING)))
-    assert sut.read_instance_ids(non_ended) == [init_only]  # admitted-not-ended counts; ended doesn't
-    assert sorted(i.job_id for i in sut.read_instance_ids()) == ['done', 'pending']  # no criteria -> all ids
+    assert sut.live_instances(max_age=60) == [init_only]  # ended and stale rows never count
+    assert sorted(i.job_id for i in sut.live_instances(max_age=600)) == ['pending', 'stale']
 # --- output tail (design point 7) ---
 
 

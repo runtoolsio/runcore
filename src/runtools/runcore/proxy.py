@@ -289,20 +289,37 @@ class SnapshotJobInstanceProxy(JobInstanceProxyBase):
     def update_liveness(self, liveness: InstanceLiveness) -> None:
         self._liveness = liveness
 
-    def update_from_snapshot(self, curr: JobRun) -> None:
+    def update_from_snapshot(self, curr: JobRun, *, emit_output: bool = False) -> None:
         """Apply a freshly read snapshot and emit the state events it implies.
 
         Ignores a snapshot that is not newer than the cached one (which also stops a stale active
         snapshot from resurrecting an ended instance). The cache is replaced before emitting so an
         observer that reads :meth:`snap` within its callback sees the new state.
+
+        Args:
+            curr: The snapshot to apply.
+            emit_output: Whether output is currently observed — the directory's demand verdict. On
+                a terminal snapshot the final output increment is then emitted before ENDED (the
+                tail linger window keeps those rows readable).
         """
         prev = self._job_run
         if not curr.is_newer_than(prev):
             return
+        if curr.lifecycle.is_ended and emit_output:
+            self.emit_new_output()
         events = _synthesize_events(prev, curr)
         self._job_run = curr
         for event in events:
             self._emit(event)
+
+    def announce(self) -> None:
+        """Emit a lifecycle event at the instance's current stage, with that stage's real timestamp.
+
+        Introduces an instance first seen mid-life — without it, state observers would hear nothing
+        of an already-running instance until its next transition.
+        """
+        lifecycle = self._job_run.lifecycle
+        self._emit(InstanceLifecycleEvent(self._job_run, lifecycle.stage, lifecycle.last_transition_at))
 
     def _emit(self, event: _InstanceStateEvent) -> None:
         """Fan a synthesized event out through the hub to downstream and aggregate observers.
@@ -330,11 +347,11 @@ class SnapshotJobInstanceProxy(JobInstanceProxyBase):
     def _fetch_output_tail(self, max_lines: int) -> List[OutputLine]:
         return self._output_tail.read_output_tail(self._job_run.instance_id, max_lines)
 
-    def sync_output(self) -> None:
+    def emit_new_output(self) -> None:
         """Emit retained lines after this proxy's stream cursor.
 
         Called by the directory's polling thread only while output is observed. The first
-        sync replays the retained tail; later syncs catch up across pauses in demand.
+        call replays the retained tail; later calls catch up across pauses in demand.
         Pull reads are independent, so consumers deduplicate overlap by line ordinal.
         Pruning may leave ordinal gaps: this stream has the same bounds as the stored tail.
         """

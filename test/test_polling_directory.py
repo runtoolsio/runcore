@@ -78,6 +78,21 @@ def test_first_admission_is_silent(directory, db):
     assert recorder.events == []  # seeding admits without replaying history
 
 
+def test_instance_admitted_after_seed_is_announced_at_current_stage(directory, db):
+    directory.reconcile()  # empty seed — still the seed
+    recorder = _watch_all(directory)
+    run = fake_job_run('j1', created_at=BASE, term_status=None)  # first seen mid-life
+    _seed_active(db, run)
+
+    directory.reconcile()
+    directory.reconcile()  # announced once, not on every poll
+
+    [event] = recorder.events
+    assert event.new_stage == Stage.RUNNING
+    assert event.timestamp == run.lifecycle.started_at
+    assert event.job_run.instance_id == run.instance_id
+
+
 def test_changed_snapshot_updates_proxy_without_spurious_events(directory, db):
     run = fake_job_run('j1', created_at=BASE, term_status=None)
     _seed_active(db, run)

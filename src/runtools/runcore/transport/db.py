@@ -58,7 +58,7 @@ class PollingInstanceDirectory(InstanceDirectoryBase):
     ``proxy_factory`` builds the proxy for each admitted instance — which capabilities a proxy
     gets (e.g. its command channel) is composition-site wiring, not this directory's concern.
 
-    Output events are synthesized under demand only: each poll drives ``sync_output`` on exactly
+    Output events are synthesized under demand only: each poll drives ``emit_new_output`` on exactly
     the proxies someone observes output of — through the aggregate (env-wide) or on the proxy
     itself — so the cost of the output lane lands on tailed instances alone (design point 7).
     """
@@ -73,6 +73,7 @@ class PollingInstanceDirectory(InstanceDirectoryBase):
         self._active_interval = active_interval
         self._idle_interval = idle_interval
         self._seen_versions: dict = {}
+        self._seeded = False  # Set by the first successful poll, even an empty one
         self._stop = Event()
         self._poll_thread = None
 
@@ -96,7 +97,8 @@ class PollingInstanceDirectory(InstanceDirectoryBase):
             self._evict_absent(instance_id)
         self._seen_versions = {iid: version.cursor for iid, version in versions.items()}
         self._update_liveness(versions)
-        self._sync_outputs()
+        self._emit_new_outputs()
+        self._seeded = True
 
     def _update_liveness(self, versions) -> None:
         """Interpret heartbeat ages: a stale heartbeat marks the proxy lost — never mutates storage.
@@ -113,13 +115,13 @@ class PollingInstanceDirectory(InstanceDirectoryBase):
                             extra={"instance": str(instance_id), "age_s": round(version.heartbeat_age, 1)})
             proxy.update_liveness(InstanceLiveness(version.heartbeat_age, lost))
 
-    def _sync_outputs(self) -> None:
+    def _emit_new_outputs(self) -> None:
         """Read and emit retained output only for proxies with current output demand."""
         with self._proxies_lock:
             proxies = [cast(SnapshotJobInstanceProxy, admitted.proxy) for admitted in self._admitted.values()]
         for proxy in proxies:
             if self._has_output_demand(proxy):
-                proxy.sync_output()
+                proxy.emit_new_output()
 
     def _has_output_demand(self, proxy: SnapshotJobInstanceProxy) -> bool:
         """Whether anyone observes this proxy's output: the aggregate has an output observer
@@ -145,16 +147,23 @@ class PollingInstanceDirectory(InstanceDirectoryBase):
         return self._db.read_active_runs(JobRunCriteria.instances_match(instance_ids))
 
     def _apply(self, run: JobRun) -> None:
-        """Admit a newly seen instance (silently) or push the snapshot to its existing proxy."""
+        """Admit a newly seen instance or push the snapshot to its existing proxy.
+
+        The seed poll admits silently — it establishes the view, it is not news. An instance first
+        seen after it is announced at its current stage, once bound, so observers learn of runs
+        that appeared mid-life without replaying their history.
+        """
         proxy = self._snapshot_proxy(run.instance_id)
         if proxy is None:
-            self._admit(run)  # Creates the proxy from the snapshot; no synthesized events on first sight
+            self._admit(run)
+            if self._seeded and (admitted := self._snapshot_proxy(run.instance_id)) is not None:
+                admitted.announce()  # New since the first poll: otherwise no event until it next changes
         else:
             proxy.update_from_snapshot(run)  # Outside the lock — fans out to observers
 
     def _evict_absent(self, instance_id) -> None:
-        """Handle an instance that has left the active scan: replay its terminal snapshot (if any) so
-        observers see ENDED, then drop it.
+        """Handle an instance that has left the active scan: apply its terminal snapshot (if any) so
+        observers see its final output and ENDED, then drop it.
 
         An instance only leaves the active scan by ending or being removed — its row stays in the
         scan while active — so a missing terminal row means it vanished without finalizing (e.g. a
@@ -162,11 +171,9 @@ class PollingInstanceDirectory(InstanceDirectoryBase):
         """
         ended = self._db.read_runs(JobRunCriteria.instance_match(instance_id), asc=False, limit=1, offset=0)
         proxy = self._snapshot_proxy(instance_id)
-        if proxy is not None:
-            if self._has_output_demand(proxy):
-                proxy.sync_output()  # Final increment, before ENDED — the tail linger window keeps rows readable
-            if ended:
-                proxy.update_from_snapshot(ended[0])  # Emits ENDED before the proxy is unbound
+        if proxy is not None and ended:
+            # Before unbinding — the last chance to reach observers
+            proxy.update_from_snapshot(ended[0], emit_output=self._has_output_demand(proxy))
         with self._proxies_lock:
             self._ensure_removed(instance_id)
 

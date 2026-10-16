@@ -492,17 +492,6 @@ class SQLite(EnvironmentDatabase):
 
     @override
     @ensure_open
-    def read_instance_ids(self, run_match=None):
-        """See `RunStorage.read_instance_ids`."""
-        where_clause, where_params, complete = _build_where_clause(run_match, alias='h')
-        if complete:
-            cursor = self._conn.execute(
-                "SELECT h.job_id, h.run_id, h.ordinal FROM runs h" + where_clause, where_params)
-            return [InstanceID(j, r, o) for j, r, o in cursor.fetchall()]
-        return [InstanceID(*pk) for pk in self._matching_pks(where_clause, where_params, run_match)]
-
-    @override
-    @ensure_open
     def active_run_versions(self) -> List[RunVersion]:
         """See `RunStorage.active_run_versions`."""
         cursor = self._conn.cursor()
@@ -515,6 +504,18 @@ class SQLite(EnvironmentDatabase):
             return [RunVersion(InstanceID(r['job_id'], r['run_id'], r['ordinal']), r['updated_at'],
                                r['heartbeat_age'])
                     for r in cursor.fetchall()]
+        finally:
+            cursor.close()
+
+    @override
+    @ensure_open
+    def live_instances(self, max_age):
+        """See `RunStorage.live_instances`."""
+        cursor = self._conn.execute(
+            "SELECT job_id, run_id, ordinal FROM runs WHERE ended IS NULL AND heartbeat_at IS NOT NULL "
+            "AND (julianday('now') - julianday(heartbeat_at)) * 86400.0 <= ?", (max_age,))
+        try:
+            return [InstanceID(j, r, o) for j, r, o in cursor.fetchall()]
         finally:
             cursor.close()
 
