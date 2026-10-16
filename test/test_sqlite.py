@@ -263,6 +263,23 @@ def test_store_without_init(sut):
     assert sut.read_runs() == []
 
 
+def test_first_terminal_write_wins(sut):
+    first = fake_job_run('j1', 'r1', term_status=TerminationStatus.COMPLETED)
+    _init_and_store(sut, first)
+
+    refused = sut.store_runs(fake_job_run('j1', 'r1', term_status=TerminationStatus.FAILED))
+
+    assert refused == [first.instance_id]
+    assert [r.lifecycle.termination.status for r in sut.read_runs()] == [TerminationStatus.COMPLETED]
+
+
+def test_store_reports_no_refusal_for_written_or_missing_rows(sut):
+    run = fake_job_run('j1', 'r1')
+    sut.init_run('j1', 'r1', created_at=run.lifecycle.created_at)
+
+    assert sut.store_runs(run, fake_job_run('ghost', 'r1')) == []  # written; missing init row is only logged
+
+
 def test_last_with_init_only_row(sut):
     """last=True returns the latest completed run even when a newer init-only row exists."""
     _init_and_store(sut, fake_job_run('j1', 'r1', offset_min=1))

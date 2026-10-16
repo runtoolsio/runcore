@@ -789,12 +789,20 @@ class PostgreSQL(EnvironmentDatabase):
     @ensure_open
     def store_runs(self, *job_runs):
         """See `RunStorage.store_runs`. Tags are immutable; ``init_run`` is their sole writer."""
+        refused = []
         with self._pool.connection() as conn, conn.cursor() as cur:
             for run in job_runs:
-                cur.execute(_RUN_UPDATE_SQL, _run_update_params(run))
-                if cur.rowcount == 0:
-                    log.warning("No init row found instance=%s", run.metadata.instance_id,
-                                extra={"instance": str(run.metadata.instance_id)})
+                cur.execute(_RUN_UPDATE_SQL + " AND ended IS NULL", _run_update_params(run))
+                if cur.rowcount:
+                    continue
+                iid = run.metadata.instance_id
+                cur.execute("SELECT 1 FROM runs WHERE job_id = %s AND run_id = %s AND ordinal = %s",
+                            (iid.job_id, iid.run_id, iid.ordinal))
+                if cur.fetchone():
+                    refused.append(iid)
+                else:
+                    log.warning("No init row found instance=%s", iid, extra={"instance": str(iid)})
+        return refused
 
     @override
     @ensure_open

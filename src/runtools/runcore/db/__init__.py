@@ -177,8 +177,15 @@ class RunStorage(ABC):
         """Compute aggregate statistics for jobs matching the specified criteria."""
 
     @abstractmethod
-    def store_runs(self, *job_runs):
-        """Authoritatively update the stored rows for one or more job runs, terminal included."""
+    def store_runs(self, *job_runs) -> list[InstanceID]:
+        """Store the final snapshots of runs whose rows have not ended — the first terminal write wins.
+
+        A terminal row is never overwritten: neither a recovering owner may clobber an operator's
+        resolution nor a repeated finalization an earlier result. A missing init row is logged.
+
+        Returns:
+            The instances whose write was refused because their row had already ended.
+        """
 
     @abstractmethod
     def store_active_runs(self, *job_runs):

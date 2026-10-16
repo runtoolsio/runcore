@@ -653,12 +653,19 @@ class SQLite(EnvironmentDatabase):
         Tags are NOT updated here — ``init_run`` is the sole writer of the
         run_tags junction. Tags are immutable through the run's lifecycle.
         """
+        refused = []
         for run in job_runs:
-            cursor = self._conn.execute(_RUN_UPDATE_SQL, _run_update_values(run))
-            if cursor.rowcount == 0:
-                log.warning("No init row found instance=%s", run.metadata.instance_id,
-                            extra={"instance": str(run.metadata.instance_id)})
+            cursor = self._conn.execute(_RUN_UPDATE_SQL + " AND ended IS NULL", _run_update_values(run))
+            if cursor.rowcount:
+                continue
+            iid = run.metadata.instance_id
+            if self._conn.execute("SELECT 1 FROM runs WHERE job_id = ? AND run_id = ? AND ordinal = ?",
+                                  (iid.job_id, iid.run_id, iid.ordinal)).fetchone():
+                refused.append(iid)
+            else:
+                log.warning("No init row found instance=%s", iid, extra={"instance": str(iid)})
         self._conn.commit()
+        return refused
 
     @override
     @ensure_open
