@@ -191,6 +191,21 @@ class RunStorage(ABC):
         """
 
     @abstractmethod
+    def read_run_ends(self, instance_ids: Iterable[InstanceID]) -> dict[InstanceID, Optional[datetime]]:
+        """Return each existing run's end time — identities and the ``ended`` column only, no snapshots.
+
+        The lifecycle primitive behind operator cleanup: deciding which rows are orphans is the
+        caller's policy.
+
+        Args:
+            instance_ids: The instances to look up.
+
+        Returns:
+            The end time of each instance that has a run row; None while non-ended (init-only rows
+            included). Instances without a row are absent.
+        """
+
+    @abstractmethod
     def live_instances(self, max_age: float) -> list[InstanceID]:
         """Return the non-ended runs that are live: their owner heartbeat within ``max_age`` seconds
         (proof of life — unlike :meth:`JobRun.is_lost`, a missing heartbeat never counts as live).
@@ -282,6 +297,11 @@ class SignalStorage(SignalSender, ABC):
     @abstractmethod
     def delete_signals(self, signal_ids: Iterable[int]):
         """Remove applied (or rejected-and-logged) command rows by their surrogate ids."""
+
+
+TAIL_LINGER_AFTER_END = 10.0
+"""Seconds an ended run's output tail stays readable — covers a follower's last incremental poll, so
+neither the node sweep nor operator cleanup deletes it earlier."""
 
 
 class OutputTailStorage(OutputTailReader, ABC):

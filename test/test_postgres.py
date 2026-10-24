@@ -731,6 +731,21 @@ def test_live_instances_include_init_only_rows_and_require_fresh_heartbeat(sut):
     assert sorted(i.job_id for i in sut.live_instances(max_age=600)) == ['pending', 'stale']
 
 
+def test_read_run_ends_reports_end_times_of_existing_rows_only(sut):
+    active = fake_job_run('active', term_status=None)
+    _init_active(sut, active)
+    ended = fake_job_run('ended', term_status=TerminationStatus.COMPLETED)
+    _init_and_store(sut, ended)
+    init_only = sut.init_run('init_only', 'r1', created_at=utc_now())
+    missing = InstanceID('missing', 'r1')
+
+    ends = sut.read_run_ends([active.instance_id, ended.instance_id, init_only, missing])
+
+    assert ends == {active.instance_id: None, init_only: None,
+                    ended.instance_id: ended.lifecycle.termination.terminated_at}
+    assert sut.read_run_ends([]) == {}
+
+
 # --- mark lost runs (design point 8) ---
 
 def _backdate_heartbeat(db, job_id, minutes):

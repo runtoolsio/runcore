@@ -615,6 +615,18 @@ class PostgreSQL(EnvironmentDatabase):
 
     @override
     @ensure_open
+    def read_run_ends(self, instance_ids):
+        """See `RunStorage.read_run_ends`."""
+        ids = [(i.job_id, i.run_id, i.ordinal) for i in instance_ids]
+        if not ids:
+            return {}
+        rows = self._fetch(
+            "SELECT job_id, run_id, ordinal, ended FROM runs WHERE (job_id, run_id, ordinal) IN ("
+            + ", ".join(["(%s, %s, %s)"] * len(ids)) + ")", [value for iid in ids for value in iid])
+        return {InstanceID(r['job_id'], r['run_id'], r['ordinal']): _read_dt(r['ended']) for r in rows}
+
+    @override
+    @ensure_open
     def live_instances(self, max_age):
         """See `RunStorage.live_instances`."""
         rows = self._fetch(

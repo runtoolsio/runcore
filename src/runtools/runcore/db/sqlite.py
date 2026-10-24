@@ -510,6 +510,22 @@ class SQLite(EnvironmentDatabase):
 
     @override
     @ensure_open
+    def read_run_ends(self, instance_ids):
+        """See `RunStorage.read_run_ends`."""
+        ids = [(i.job_id, i.run_id, i.ordinal) for i in instance_ids]
+        if not ids:
+            return {}
+        cursor = self._conn.execute(
+            "SELECT job_id, run_id, ordinal, ended FROM runs WHERE (job_id, run_id, ordinal) IN ("
+            + ", ".join(["(?, ?, ?)"] * len(ids)) + ")", [value for iid in ids for value in iid])
+        try:
+            return {InstanceID(j, r, o): parse_dt_sql(ended) if ended else None
+                    for j, r, o, ended in cursor.fetchall()}
+        finally:
+            cursor.close()
+
+    @override
+    @ensure_open
     def live_instances(self, max_age):
         """See `RunStorage.live_instances`."""
         cursor = self._conn.execute(
