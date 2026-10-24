@@ -488,16 +488,6 @@ class JobInstanceMetadata:
         return str(self.instance_id)
 
 
-@dataclass(frozen=True)
-class InstanceLiveness:
-    """Consumer-side liveness verdict (the three-state model, transport doc point 8):
-    storage-active is the run row, this is the attestation side. Replaced whole on every
-    poll (never mutated), so reads are always a consistent verdict. Default = presumed live.
-    """
-    heartbeat_age: Optional[float] = None
-    is_lost: bool = False
-
-
 class JobInstance(abc.ABC):
     """
     The `JobInstance` class is a central component of this package. It denotes a single occurrence of a job.
@@ -536,13 +526,6 @@ class JobInstance(abc.ABC):
             str: Identifier of the individual run.
         """
         return self.metadata.run_id
-
-    @property
-    def liveness(self) -> InstanceLiveness:
-        """Liveness verdict for this instance view. The default stands for real instances and
-        live-wire proxies — they are never lost; snapshot proxies override with the polling
-        directory's heartbeat verdict."""
-        return InstanceLiveness()
 
     @abc.abstractmethod
     def find_phase_control(self, phase_filter):
@@ -672,6 +655,15 @@ class ControlRequest:
         )
 
 
+HEARTBEAT_INTERVAL = 15.0
+"""Seconds between liveness touches of a node's active runs (see `RunStorage.touch_heartbeats`).
+Readers treat a heartbeat older than a few multiples of this as a lost run."""
+
+HEARTBEAT_STALE_AFTER = 3 * HEARTBEAT_INTERVAL
+"""Seconds without a heartbeat before a run's owner counts as lost — the shared liveness policy:
+`JobRun.is_lost` reports the run lost, and the signal sweep treats its pending commands as orphaned."""
+
+
 @dataclass(frozen=True)
 class JobRun:
     """
@@ -683,6 +675,9 @@ class JobRun:
     faults: Tuple[Fault, ...] = ()
     status: Optional[Status] = None
     control_requests: Tuple[ControlRequest, ...] = ()
+    heartbeat_at: Optional[datetime.datetime] = field(default=None, compare=False)
+    """Last liveness touch by the owning node — storage metadata attached on read, not job state:
+    excluded from equality, the serialized document and freshness (`is_newer_than`)."""
 
     @property
     def lifecycle(self) -> RunLifecycle:
@@ -769,6 +764,24 @@ class JobRun:
         if other.lifecycle.is_ended and not self.lifecycle.is_ended:
             return False
         return self.last_updated >= other.last_updated
+
+    def is_lost(self, *, now: Optional[datetime.datetime] = None,
+                stale_after: float = HEARTBEAT_STALE_AFTER) -> bool:
+        """Whether this run is non-ended and its known heartbeat is stale.
+
+        A stale heartbeat is evidence of lost contact with the owning node, not proof the node is dead.
+        Compared against the reader's clock, so reader/storage skew can cause false or delayed verdicts.
+
+        Args:
+            now (Optional[datetime.datetime]): Reference time; the reader's clock (`utc_now()`) when omitted.
+            stale_after (float): Seconds without a heartbeat after which the run counts as lost.
+
+        Returns:
+            bool: False for ended runs and for runs without a known heartbeat.
+        """
+        if self.lifecycle.is_ended or self.heartbeat_at is None:
+            return False
+        return ((now or util.utc_now()) - self.heartbeat_at).total_seconds() > stale_after
 
     def search_phases(self, predicate: Optional[Callable[['PhaseRun'], bool]] = None) -> List['PhaseRun']:
         """
@@ -1277,11 +1290,6 @@ class JobInstanceDelegate(JobInstance):
     def metadata(self):
         """Delegates to the wrapped instance's metadata"""
         return self._wrapped.metadata
-
-    @property
-    def liveness(self):
-        """Delegates to the wrapped instance's liveness"""
-        return self._wrapped.liveness
 
     @property
     def id(self):

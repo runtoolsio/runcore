@@ -4,7 +4,8 @@ from datetime import timedelta
 import pytest
 
 from runtools.runcore.job import (
-    InstanceLifecycleEvent, InstanceObservableNotifications, InstanceOutputEvent, InstanceStatusEvent,
+    HEARTBEAT_STALE_AFTER, InstanceLifecycleEvent, InstanceObservableNotifications, InstanceOutputEvent,
+    InstanceStatusEvent,
 )
 from runtools.runcore.output import OutputLine
 from runtools.runcore.proxy import JobInstanceProxyBase
@@ -117,6 +118,34 @@ def test_is_newer_than_never_replaces_ended_with_non_ended(base_ts):
     running = fake_job_run('j1', created_at=base_ts + timedelta(minutes=10), term_status=None)
 
     assert not running.is_newer_than(ended)
+
+
+def test_run_with_stale_heartbeat_is_lost(base_ts):
+    run = replace(fake_job_run('j1', created_at=base_ts, term_status=None), heartbeat_at=base_ts)
+
+    assert run.is_lost(now=base_ts + timedelta(seconds=HEARTBEAT_STALE_AFTER + 1))
+    assert not run.is_lost(now=base_ts + timedelta(seconds=HEARTBEAT_STALE_AFTER))
+
+
+def test_ended_run_is_never_lost(base_ts):
+    run = replace(fake_job_run('j1', created_at=base_ts), heartbeat_at=base_ts)
+
+    assert not run.is_lost(now=base_ts + timedelta(hours=1))
+
+
+def test_run_without_known_heartbeat_is_not_lost(base_ts):
+    run = fake_job_run('j1', created_at=base_ts, term_status=None)  # e.g. a live RPC snapshot
+
+    assert not run.is_lost(now=base_ts + timedelta(hours=1))
+
+
+def test_heartbeat_is_not_job_state(base_ts):
+    run = fake_job_run('j1', created_at=base_ts, term_status=None)
+    touched = replace(run, heartbeat_at=base_ts + timedelta(minutes=1))
+
+    assert touched == run
+    assert 'heartbeat_at' not in touched.serialize()
+    assert run.is_newer_than(touched) and touched.is_newer_than(run)
 
 
 def test_proxy_updates_state_from_events(base_ts, hub):

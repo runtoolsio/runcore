@@ -1,11 +1,12 @@
 import datetime
 from abc import abstractmethod
+from dataclasses import replace
 from typing import Callable, List, Optional, Tuple, override
 
 from runtools.runcore.job import (
     JobRun, JobInstance, InstanceNotifications, InstanceObservableNotifications,
     InstanceControlEvent, InstanceLifecycleEvent, InstanceOutputEvent, InstancePhaseEvent, InstanceStatusEvent,
-    InstanceLiveness, NotificationBinding, OutputTailReader, SignalSender, STOP_OP,
+    NotificationBinding, OutputTailReader, SignalSender, STOP_OP,
 )
 from runtools.runcore.matching import MetadataCriterion
 from runtools.runcore.output import Output, OutputLine
@@ -270,24 +271,22 @@ class SnapshotJobInstanceProxy(JobInstanceProxyBase):
     through the signal sender; output tail reads come from the shared bounded tail
     (design point 7) — the newest retained lines, not the complete output.
 
-    The directory also pushes liveness (:meth:`update_liveness`) — a snapshot transport cannot tell
-    a quiet run from a dead producer, so the heartbeat verdict is part of the proxy's view.
+    The directory also refreshes the run's heartbeat (:meth:`refresh_heartbeat`) — a snapshot
+    transport cannot tell a quiet run from a lost producer, so the cached run answers
+    :meth:`JobRun.is_lost`. Snapshot updates and heartbeat refreshes come from one thread (the
+    directory's poll), so their read-replace steps never race.
     """
 
     def __init__(self, initial: JobRun, signal_sender: SignalSender, output_tail: OutputTailReader):
         super().__init__(initial)
         self._signals = signal_sender
         self._output_tail = output_tail
-        self._liveness = InstanceLiveness()  # Replacement-only, never mutated in place => lock-free reads
         self._output_cursor = 0  # Retained for the lifetime of this proxy, including demand pauses
 
-    @property
-    def liveness(self) -> InstanceLiveness:
-        """The polling directory's heartbeat verdict; a lost run's state may be frozen."""
-        return self._liveness
-
-    def update_liveness(self, liveness: InstanceLiveness) -> None:
-        self._liveness = liveness
+    def refresh_heartbeat(self, heartbeat_at: Optional[datetime.datetime]) -> None:
+        """Replace the cached run with one carrying the latest heartbeat — storage metadata, not job
+        state, so no events are emitted."""
+        self._job_run = replace(self._job_run, heartbeat_at=heartbeat_at)
 
     def update_from_snapshot(self, curr: JobRun, *, emit_output: bool = False) -> None:
         """Apply a freshly read snapshot and emit the state events it implies.
@@ -305,6 +304,8 @@ class SnapshotJobInstanceProxy(JobInstanceProxyBase):
         prev = self._job_run
         if not curr.is_newer_than(prev):
             return
+        if curr.heartbeat_at is None and prev.heartbeat_at is not None:
+            curr = replace(curr, heartbeat_at=prev.heartbeat_at)  # A snapshot without one never erases it
         if curr.lifecycle.is_ended and emit_output:
             self.emit_new_output()
         events = _synthesize_events(prev, curr)

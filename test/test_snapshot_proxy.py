@@ -150,11 +150,29 @@ def test_output_tail_reads_from_reader():
     assert reader.reads == [(run.instance_id, 5, None)]
 
 
-def test_liveness_defaults_to_presumed_live():
-    proxy = _proxy(_running())
+def test_heartbeat_refresh_replaces_snapshot_without_events():
+    run = _running()
+    proxy = _proxy(run)
+    recorder = _Recorder()
+    proxy.notifications.add_observer_lifecycle(recorder)
+    proxy.notifications.add_observer_phase(recorder)
+    proxy.notifications.add_observer_status(recorder)
 
-    assert not proxy.liveness.is_lost
-    assert proxy.liveness.heartbeat_age is None
+    proxy.refresh_heartbeat(BASE)
+
+    assert proxy.snap().heartbeat_at == BASE
+    assert run.heartbeat_at is None  # the held snapshot is replaced, never mutated
+    assert recorder.events == []
+
+
+def test_snapshot_without_heartbeat_keeps_the_known_one():
+    proxy = _proxy(_running())
+    proxy.refresh_heartbeat(BASE)
+
+    proxy.update_from_snapshot(_ended())
+
+    assert proxy.snap().lifecycle.is_ended
+    assert proxy.snap().heartbeat_at == BASE
 
 
 def test_terminal_snapshot_emits_final_output_before_ended():

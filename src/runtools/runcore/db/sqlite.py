@@ -6,6 +6,7 @@ networked/concurrent deployments use the Postgres driver.
 import json
 import logging
 import sqlite3
+from dataclasses import replace
 from datetime import timedelta
 from functools import wraps
 from pathlib import Path
@@ -13,7 +14,7 @@ from threading import Lock
 from typing import List, Iterator, override
 
 from runtools.runcore import paths
-from runtools.runcore.db import EnvironmentDatabase, IncompatibleSchemaError, RunVersion, Signal
+from runtools.runcore.db import EnvironmentDatabase, IncompatibleSchemaError, RunHead, Signal
 from runtools.runcore.db.sql import (build_job_stats, build_order_by, build_where_clause, Dialect, last_run_ids,
                                      LAST_PER_JOB_SQL, matching_pks)
 from runtools.runcore.err import InvalidStateError
@@ -124,8 +125,9 @@ def _to_metadata(r) -> JobInstanceMetadata:
 
 def _to_job_run(r) -> JobRun:
     """Deserialize the whole-run document of a runs row (see the document + projections note
-    on the runs DDL)."""
-    return JobRun.deserialize(json.loads(r['run']))
+    on the runs DDL), attaching the heartbeat column — storage metadata kept out of the document."""
+    heartbeat_at = parse_dt_sql(r['heartbeat_at']) if r['heartbeat_at'] else None
+    return replace(JobRun.deserialize(json.loads(r['run'])), heartbeat_at=heartbeat_at)
 
 
 def _to_signal(r) -> Signal:
@@ -492,17 +494,16 @@ class SQLite(EnvironmentDatabase):
 
     @override
     @ensure_open
-    def active_run_versions(self) -> List[RunVersion]:
-        """See `RunStorage.active_run_versions`."""
+    def active_run_heads(self) -> List[RunHead]:
+        """See `RunStorage.active_run_heads`."""
         cursor = self._conn.cursor()
         cursor.row_factory = sqlite3.Row
         cursor.execute(
-            "SELECT job_id, run_id, ordinal, updated_at, "
-            "(julianday('now') - julianday(heartbeat_at)) * 86400.0 AS heartbeat_age FROM runs "
+            "SELECT job_id, run_id, ordinal, updated_at, heartbeat_at FROM runs "
             "WHERE ended IS NULL AND run IS NOT NULL")
         try:
-            return [RunVersion(InstanceID(r['job_id'], r['run_id'], r['ordinal']), r['updated_at'],
-                               r['heartbeat_age'])
+            return [RunHead(InstanceID(r['job_id'], r['run_id'], r['ordinal']), r['updated_at'],
+                               parse_dt_sql(r['heartbeat_at']) if r['heartbeat_at'] else None)
                     for r in cursor.fetchall()]
         finally:
             cursor.close()

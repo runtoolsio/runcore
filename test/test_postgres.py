@@ -443,33 +443,33 @@ def test_store_active_runs_applies_newer_snapshot(sut):
     assert restored == newer
 
 
-def test_active_run_versions_lists_materialized_active_runs(sut):
+def test_active_run_heads_lists_materialized_active_runs(sut):
     _init_active(sut, fake_job_run('j1', term_status=None))
     _init_active(sut, fake_job_run('j2', term_status=None))
 
-    assert {iid.job_id for iid, *_ in sut.active_run_versions()} == {'j1', 'j2'}
+    assert {iid.job_id for iid, *_ in sut.active_run_heads()} == {'j1', 'j2'}
 
 
-def test_active_run_versions_excludes_ended_and_init_only(sut):
+def test_active_run_heads_excludes_ended_and_init_only(sut):
     _init_active(sut, fake_job_run('active', term_status=None))
     _init_and_store(sut, fake_job_run('ended', term_status=TerminationStatus.COMPLETED))
     init_only = fake_job_run('pending', term_status=None)
     iid = init_only.metadata.instance_id
     sut.init_run(iid.job_id, iid.run_id, created_at=init_only.lifecycle.created_at)  # no snapshot yet
 
-    assert {iid.job_id for iid, *_ in sut.active_run_versions()} == {'active'}
+    assert {iid.job_id for iid, *_ in sut.active_run_heads()} == {'active'}
 
 
-def test_active_run_versions_cursor_changes_on_every_accepted_write(sut):
+def test_active_run_heads_cursor_changes_on_every_accepted_write(sut):
     # Two snapshots with equal domain freshness: the <= guard still accepts the second write, so the
     # write-time cursor must advance — otherwise a poller would skip the deep read and miss it.
     run = fake_job_run('j1', 'r1', offset_min=1, term_status=None)
     sut.init_run('j1', 'r1', created_at=run.lifecycle.created_at)
 
     sut.store_active_runs(run)
-    [(_, before, _)] = sut.active_run_versions()
+    [(_, before, _)] = sut.active_run_heads()
     sut.store_active_runs(run)  # equal last_updated, still accepted by the <= guard
-    [(_, after, _)] = sut.active_run_versions()
+    [(_, after, _)] = sut.active_run_heads()
 
     assert before != after
 
@@ -649,12 +649,12 @@ def test_heartbeat_touch_advances_liveness_without_moving_cursor(sut):
     iid = sut.init_run('hb', 'r1', created_at=run.lifecycle.created_at)
     sut.store_active_runs(run)
     baseline = _read_heartbeat(sut, iid)
-    [(_, cursor_before, _)] = sut.active_run_versions()
+    [(_, cursor_before, _)] = sut.active_run_heads()
 
     sut.touch_heartbeats([iid])
 
     assert _read_heartbeat(sut, iid) > baseline
-    [(_, cursor_after, _)] = sut.active_run_versions()
+    [(_, cursor_after, _)] = sut.active_run_heads()
     assert cursor_after == cursor_before  # liveness must not trigger consumer deep reads
 
 
@@ -667,6 +667,18 @@ def test_heartbeat_touch_skips_ended_runs(sut):
     sut.touch_heartbeats([iid])
 
     assert _read_heartbeat(sut, iid) == heartbeat_at_end
+
+def test_active_reads_carry_the_heartbeat_column(sut):
+    run = fake_job_run('hb', 'r1', created_at=utc_now() - timedelta(minutes=1), term_status=None)
+    _init_active(sut, run)
+    sut.touch_heartbeats([run.metadata.instance_id])
+
+    [active] = sut.read_active_runs()
+    [(_, _, heartbeat_at)] = sut.active_run_heads()
+
+    assert active.heartbeat_at is not None
+    assert active.heartbeat_at == heartbeat_at
+    assert not active.is_lost()
 
 
 # --- signals + control requests ---

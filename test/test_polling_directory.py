@@ -182,8 +182,7 @@ def test_stale_heartbeat_marks_instance_lost(directory, db):
     directory.reconcile()
 
     proxy = directory.get_instance(run.metadata.instance_id)
-    assert proxy.liveness.is_lost
-    assert proxy.liveness.heartbeat_age > 60
+    assert proxy.snap().is_lost()
 
 
 def test_fresh_heartbeat_keeps_instance_alive(directory, db):
@@ -193,8 +192,35 @@ def test_fresh_heartbeat_keeps_instance_alive(directory, db):
     directory.reconcile()
 
     proxy = directory.get_instance(run.metadata.instance_id)
-    assert not proxy.liveness.is_lost
-    assert proxy.liveness.heartbeat_age is not None
+    assert proxy.snap().heartbeat_at is not None
+    assert not proxy.snap().is_lost()
+
+
+def test_unchanged_heartbeat_going_stale_is_logged_once(directory, db, caplog, monkeypatch):
+    run = fake_job_run('j1', created_at=BASE, term_status=None)
+    _seed_active(db, run)
+    directory.reconcile()  # admitted live
+
+    later = utc_now() + timedelta(minutes=5)  # the stored heartbeat stays put; time passes
+    monkeypatch.setattr('runtools.runcore.transport.db.utc_now', lambda: later)
+    directory.reconcile()
+    directory.reconcile()
+
+    assert caplog.text.count("Instance lost") == 1
+
+
+def test_heartbeat_touch_revives_lost_instance_without_events(directory, db):
+    run = fake_job_run('j1', created_at=BASE, term_status=None)
+    _seed_active(db, run)
+    _backdate_heartbeat(db, minutes=5)
+    directory.reconcile()
+    recorder = _watch_all(directory)
+
+    db.touch_heartbeats([run.metadata.instance_id])  # the owner regains contact; the cursor stays put
+    directory.reconcile()
+
+    assert not directory.get_instance(run.metadata.instance_id).snap().is_lost()
+    assert recorder.events == []
 
 
 def test_lost_instance_stays_in_view(directory, db):

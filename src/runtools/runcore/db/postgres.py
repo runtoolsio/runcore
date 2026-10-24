@@ -13,6 +13,7 @@ import hashlib
 import logging
 import re
 import time
+from dataclasses import replace
 from datetime import timezone
 from functools import wraps
 from typing import Iterator, List, override
@@ -25,7 +26,7 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
 from runtools.runcore.db import (EnvironmentDatabase, EnvironmentStoreNotProvisionedError, IncompatibleSchemaError,
-                                 RunVersion, Signal)
+                                 RunHead, Signal)
 from runtools.runcore.db.sql import (build_job_stats, build_order_by, build_where_clause, Dialect, last_run_ids,
                                      LAST_PER_JOB_SQL, matching_pks)
 from runtools.runcore.err import InvalidStateError
@@ -306,8 +307,9 @@ def _to_metadata(row) -> JobInstanceMetadata:
 
 def _to_job_run(row) -> JobRun:
     """Deserialize the whole-run document of a runs row (see the document + projections note
-    on the runs DDL). JSONB reads back as a Python dict."""
-    return JobRun.deserialize(row['run'])
+    on the runs DDL), attaching the heartbeat column — storage metadata kept out of the document.
+    JSONB reads back as a Python dict."""
+    return replace(JobRun.deserialize(row['run']), heartbeat_at=_read_dt(row['heartbeat_at']))
 
 
 def _run_update_params(r: JobRun):
@@ -529,8 +531,8 @@ class PostgreSQL(EnvironmentDatabase):
 
     def _insert_run(self, job_id, run_id, ordinal, created, tags):
         with self._pool.connection() as conn, conn.cursor() as cur:
-            # heartbeat_at is written in *server* time — heartbeat ages are computed against now()
-            # at read, so one clock measures both edges and node/consumer skew cancels
+            # heartbeat_at is written in *server* time — one clock for every writer, and the one
+            # live_instances and the lost-run claim measure staleness against
             cur.execute(
                 "INSERT INTO runs (job_id, run_id, ordinal, created, updated_at, heartbeat_at) "
                 "VALUES (%s, %s, %s, %s, %s, now())",
@@ -600,15 +602,15 @@ class PostgreSQL(EnvironmentDatabase):
 
     @override
     @ensure_open
-    def active_run_versions(self) -> List[RunVersion]:
-        """See `RunStorage.active_run_versions`."""
+    def active_run_heads(self) -> List[RunHead]:
+        """See `RunStorage.active_run_heads`."""
         # updated_at::text → opaque str cursor; a bare TIMESTAMPTZ would read back as a datetime.
-        # See RunVersion for why write-time is the cursor and the invariant it relies on.
+        # See RunHead for why write-time is the cursor and the invariant it relies on.
         rows = self._fetch(
-            "SELECT job_id, run_id, ordinal, updated_at::text AS version, "
-            "EXTRACT(EPOCH FROM now() - heartbeat_at)::float AS heartbeat_age FROM runs "
+            "SELECT job_id, run_id, ordinal, updated_at::text AS version, heartbeat_at FROM runs "
             "WHERE ended IS NULL AND run IS NOT NULL", ())
-        return [RunVersion(InstanceID(r['job_id'], r['run_id'], r['ordinal']), r['version'], r['heartbeat_age'])
+        return [RunHead(InstanceID(r['job_id'], r['run_id'], r['ordinal']), r['version'],
+                           _read_dt(r['heartbeat_at']))
                 for r in rows]
 
     @override

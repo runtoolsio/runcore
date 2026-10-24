@@ -82,17 +82,8 @@ class ConfigStorage(ABC):
         """
 
 
-HEARTBEAT_INTERVAL = 15.0
-"""Seconds between liveness touches of a node's active runs (see :meth:`RunStorage.touch_heartbeats`).
-Readers treat a heartbeat older than a few multiples of this as a lost run."""
-
-HEARTBEAT_STALE_AFTER = 3 * HEARTBEAT_INTERVAL
-"""Seconds without a heartbeat before a run's owner counts as dead — the shared liveness policy:
-consumer proxies report the run lost, and the signal sweep treats its pending commands as orphaned."""
-
-
-class RunVersion(NamedTuple):
-    """Change-detection and liveness row for one materialized active run.
+class RunHead(NamedTuple):
+    """The cheap per-poll view of one materialized active run: change cursor + heartbeat, no snapshot.
 
     ``cursor`` is the row's write-time ``updated_at`` rendered as an opaque string — it changes on
     every accepted write (even when domain freshness ties), so a poller compares it for equality to
@@ -101,13 +92,12 @@ class RunVersion(NamedTuple):
     (multi-writer per row), switch to a monotonic counter. Never parsed, ordered, or treated as a
     datetime (its representation is backend-specific).
 
-    ``heartbeat_age`` is seconds since the run's last liveness touch, computed on the storage's own
-    clock at read time — write and read share one clock, so node/consumer skew cancels. None when
-    the row predates heartbeats.
+    ``heartbeat_at`` is the run's last liveness touch, refreshed onto the cached run without moving
+    the cursor (see :meth:`JobRun.is_lost`). None when the row predates heartbeats.
     """
     instance_id: InstanceID
     cursor: str
-    heartbeat_age: Optional[float]
+    heartbeat_at: Optional[datetime]
 
 
 class RunStorage(ABC):
@@ -159,15 +149,15 @@ class RunStorage(ABC):
         The mirror of :meth:`read_runs` (which returns only ended history): selects rows
         that have no termination and carry a real snapshot, skipping init-only rows the
         run-state persister has not filled yet. Snapshots lag the persister's flush
-        interval and, after a producer crash, may name runs that are no longer running.
+        interval and may include lost runs (see :meth:`JobRun.is_lost`).
         """
 
     @abstractmethod
-    def active_run_versions(self) -> list[RunVersion]:
-        """Return a change-detection cursor for each materialized active run.
+    def active_run_heads(self) -> list[RunHead]:
+        """Return the head (change cursor + heartbeat) of each materialized active run.
 
-        Cheap poll primitive: scans (instance, updated_at) only, without deserializing full
-        snapshots. Includes non-ended rows carrying a real run document (``run IS NOT NULL``),
+        Cheap poll primitive: scans (instance, updated_at, heartbeat_at) only, without deserializing
+        full snapshots. Includes non-ended rows carrying a real run document (``run IS NOT NULL``),
         skips init-only rows. Compare the opaque cursor for equality against a prior scan to find
         changed instances, then deep-read those via :meth:`read_active_runs`.
         """
@@ -203,12 +193,11 @@ class RunStorage(ABC):
     @abstractmethod
     def live_instances(self, max_age: float) -> list[InstanceID]:
         """Return the non-ended runs that are live: their owner heartbeat within ``max_age`` seconds
-        (the complement of an :class:`InstanceLiveness` lost verdict at the same bound).
+        (proof of life — unlike :meth:`JobRun.is_lost`, a missing heartbeat never counts as live).
 
         Init-only rows included — they are born attested (``init_run`` sets the heartbeat), so a
         run whose first snapshot is not yet persisted still counts as owned. Ages are computed on
-        the storage's own clock, like :class:`RunVersion` ``heartbeat_age``; rows without a
-        heartbeat never count.
+        the storage's own clock, so reader skew never orphans a live owner's signals.
 
         Args:
             max_age: Heartbeat staleness bound in seconds, e.g. ``HEARTBEAT_STALE_AFTER``.

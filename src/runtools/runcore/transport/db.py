@@ -13,13 +13,12 @@ import logging
 from threading import Event, Thread, current_thread
 from typing import Callable, Optional, cast
 
-from runtools.runcore.db import HEARTBEAT_STALE_AFTER, RunStorage
-from runtools.runcore.job import (
-    InstanceLiveness, InstanceNotifications, InstanceObservableNotifications, JobRun, NotificationBinding,
-)
+from runtools.runcore.db import RunStorage
+from runtools.runcore.job import InstanceNotifications, InstanceObservableNotifications, JobRun, NotificationBinding
 from runtools.runcore.matching import JobRunCriteria
 from runtools.runcore.proxy import JobInstanceProxyBase, SnapshotJobInstanceProxy
 from runtools.runcore.transport import DiscoveredRuns, InstanceDirectoryBase
+from runtools.runcore.util import utc_now
 
 log = logging.getLogger(__name__)
 
@@ -47,7 +46,7 @@ class DbInstanceDiscovery:
 class PollingInstanceDirectory(InstanceDirectoryBase):
     """Instance directory for snapshot transports: keeps the view current by polling a ``RunStorage``.
 
-    Each :meth:`reconcile` is one poll. A cheap version scan (``active_run_versions``) selects the
+    Each :meth:`reconcile` is one poll. A cheap head scan (``active_run_heads``) selects the
     instances whose stored snapshot changed; those are deep-read and pushed to their
     :class:`SnapshotJobInstanceProxy` (admitting new ones), and instances that have left the active
     set are evicted. The poll *is* the reconciler — there is no inbound event stream, so the proxies
@@ -72,7 +71,8 @@ class PollingInstanceDirectory(InstanceDirectoryBase):
         self._notifications = InstanceObservableNotifications()
         self._active_interval = active_interval
         self._idle_interval = idle_interval
-        self._seen_versions: dict = {}
+        self._seen_cursors: dict = {}
+        self._lost: set = set()  # Instances lost at the previous scan — the transition log's baseline
         self._seeded = False  # Set by the first successful poll, even an empty one
         self._stop = Event()
         self._poll_thread = None
@@ -89,31 +89,36 @@ class PollingInstanceDirectory(InstanceDirectoryBase):
     def reconcile(self) -> None:
         """Run one poll and reconcile the view. Driven solely by the poll loop (single-threaded); a
         future doorbell should wake the loop, not call this concurrently."""
-        versions = {v.instance_id: v for v in self._db.active_run_versions()}
-        changed = [iid for iid, version in versions.items() if self._seen_versions.get(iid) != version.cursor]
+        heads = {h.instance_id: h for h in self._db.active_run_heads()}
+        changed = [iid for iid, head in heads.items() if self._seen_cursors.get(iid) != head.cursor]
         for run in self._deep_read(changed):
             self._apply(run)
-        for instance_id in self._seen_versions.keys() - versions.keys():
+        for instance_id in self._seen_cursors.keys() - heads.keys():
             self._evict_absent(instance_id)
-        self._seen_versions = {iid: version.cursor for iid, version in versions.items()}
-        self._update_liveness(versions)
+        self._seen_cursors = {iid: head.cursor for iid, head in heads.items()}
+        self._refresh_heartbeats(heads)
         self._emit_new_outputs()
         self._seeded = True
 
-    def _update_liveness(self, versions) -> None:
-        """Interpret heartbeat ages: a stale heartbeat marks the proxy lost — never mutates storage.
+    def _refresh_heartbeats(self, heads) -> None:
+        """Carry each scanned heartbeat onto its proxy's run, which then answers ``is_lost`` — never
+        mutates storage.
 
-        Runs after admit/evict so every proxy in the view gets the verdict of the same scan.
+        Runs after admit/evict so every proxy in the view gets the heartbeat of the same scan.
         """
-        for instance_id, version in versions.items():
+        now = utc_now()
+        lost = set()
+        for instance_id, head in heads.items():
             proxy = self._snapshot_proxy(instance_id)
             if proxy is None:
                 continue
-            lost = version.heartbeat_age is not None and version.heartbeat_age > HEARTBEAT_STALE_AFTER
-            if lost and not proxy.liveness.is_lost:
-                log.warning("Instance lost: heartbeat stale",
-                            extra={"instance": str(instance_id), "age_s": round(version.heartbeat_age, 1)})
-            proxy.update_liveness(InstanceLiveness(version.heartbeat_age, lost))
+            proxy.refresh_heartbeat(head.heartbeat_at)
+            if proxy.snap().is_lost(now=now):
+                lost.add(instance_id)
+                if instance_id not in self._lost:
+                    log.warning("Instance lost: heartbeat stale",
+                                extra={"instance": str(instance_id), "heartbeat_at": str(head.heartbeat_at)})
+        self._lost = lost
 
     def _emit_new_outputs(self) -> None:
         """Read and emit retained output only for proxies with current output demand."""
@@ -141,7 +146,7 @@ class PollingInstanceDirectory(InstanceDirectoryBase):
                 log.warning("Instance poll reconcile failed; retrying next interval", exc_info=True)
 
     def _deep_read(self, instance_ids) -> list:
-        """Full snapshots for the changed instances — the deep read the cheap version scan defers."""
+        """Full snapshots for the changed instances — the deep read the cheap head scan defers."""
         if not instance_ids:
             return []  # empty criteria would match everything — never turn no-changes into a full sweep
         return self._db.read_active_runs(JobRunCriteria.instances_match(instance_ids))
