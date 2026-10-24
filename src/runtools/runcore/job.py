@@ -549,15 +549,6 @@ class JobInstance(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def run(self):
-        """
-        Run the job.
-
-        This method is not expected to raise any errors. In case of any failure the error details can be retrieved
-        by calling `exec_error` method.
-        """
-
-    @abc.abstractmethod
     def stop(self, reason=StopReason.STOPPED):
         """
         Attempts to cancel a scheduled job or stop a job that is already executing.
@@ -1354,10 +1345,6 @@ class JobInstanceDelegate(JobInstance):
     def output(self):
         """Delegates to the wrapped instance's output property"""
         return self._wrapped.output
-
-    def run(self):
-        """Delegates to the wrapped instance's run method"""
-        return self._wrapped.run()
 
     def stop(self, reason=StopReason.STOPPED):
         """Delegates to the wrapped instance's stop method"""

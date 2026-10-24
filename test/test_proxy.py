@@ -5,7 +5,7 @@ import pytest
 
 from runtools.runcore.job import (
     HEARTBEAT_STALE_AFTER, InstanceLifecycleEvent, InstanceObservableNotifications, InstanceOutputEvent,
-    InstanceStatusEvent,
+    InstanceStatusEvent, JobInstance,
 )
 from runtools.runcore.output import OutputLine
 from runtools.runcore.proxy import JobInstanceProxyBase
@@ -242,11 +242,12 @@ def test_phase_control_delegates_to_exec_phase_op(base_ts, hub):
     assert proxy.executed_ops == [('program', 'pause', ('now',))]
 
 
-def test_proxy_run_is_not_supported(base_ts, hub):
+def test_proxy_implements_the_whole_consumer_contract_without_run(base_ts, hub):
+    """Running is producer-side (runjob); a proxy has no member it cannot honour."""
     proxy = FakeProxy(fake_job_run('j1', created_at=base_ts, term_status=None), hub)
 
-    with pytest.raises(NotImplementedError):
-        proxy.run()
+    assert isinstance(proxy, JobInstance)
+    assert not hasattr(proxy, 'run')
 
 
 def test_output_fetches_default_tail(base_ts, hub):

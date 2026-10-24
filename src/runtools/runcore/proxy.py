@@ -93,9 +93,6 @@ class JobInstanceProxyBase(JobInstance):
     def stop(self, stop_reason= StopReason.STOPPED):
         pass
 
-    def run(self):
-        raise NotImplementedError("Remote run is not supported")
-
     @property
     @override
     def notifications(self) -> InstanceNotifications:
