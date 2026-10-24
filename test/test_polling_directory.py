@@ -223,6 +223,21 @@ def test_heartbeat_touch_revives_lost_instance_without_events(directory, db):
     assert recorder.events == []
 
 
+def test_marked_lost_run_replays_ended_and_leaves_the_view(directory, db):
+    run = fake_job_run('j1', created_at=BASE, term_status=None)
+    _seed_active(db, run)
+    _backdate_heartbeat(db, minutes=5)
+    directory.reconcile()
+    recorder = _watch_all(directory)
+
+    db.mark_lost_runs([run.metadata.instance_id], stale_after=60)  # estimated end predates the last snapshot
+    directory.reconcile()
+
+    [ended] = [e for e in recorder.events if isinstance(e, InstanceLifecycleEvent) and e.new_stage == Stage.ENDED]
+    assert ended.job_run.lifecycle.termination.status == TerminationStatus.LOST
+    assert directory.get_instances() == []
+
+
 def test_lost_instance_stays_in_view(directory, db):
     # Interpret, never mutate: a lost run remains visible and attributable, not evicted
     run = fake_job_run('j1', created_at=BASE, term_status=None)

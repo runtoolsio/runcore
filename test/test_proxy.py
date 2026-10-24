@@ -9,7 +9,7 @@ from runtools.runcore.job import (
 )
 from runtools.runcore.output import OutputLine
 from runtools.runcore.proxy import JobInstanceProxyBase
-from runtools.runcore.run import Stage, StopReason, TerminationStatus
+from runtools.runcore.run import Outcome, RunLifecycle, Stage, StopReason, TerminationStatus
 from runtools.runcore.status import Event, Status
 from runtools.runcore.test.job import fake_job_run
 from runtools.runcore.util import utc_now
@@ -113,10 +113,13 @@ def test_is_newer_than_applies_on_equal_timestamps(base_ts):
     assert second.is_newer_than(first)
 
 
-def test_is_newer_than_never_replaces_ended_with_non_ended(base_ts):
+def test_is_newer_than_orders_ended_after_non_ended_whatever_the_timestamps(base_ts):
+    """Lifecycle is monotonic — an estimated termination (a run marked lost) may predate the last
+    active snapshot and must still replace it."""
     ended = fake_job_run('j1', created_at=base_ts, ended_at=base_ts + timedelta(minutes=5))
     running = fake_job_run('j1', created_at=base_ts + timedelta(minutes=10), term_status=None)
 
+    assert ended.is_newer_than(running)
     assert not running.is_newer_than(ended)
 
 
@@ -137,6 +140,57 @@ def test_run_without_known_heartbeat_is_not_lost(base_ts):
     run = fake_job_run('j1', created_at=base_ts, term_status=None)  # e.g. a live RPC snapshot
 
     assert not run.is_lost(now=base_ts + timedelta(hours=1))
+
+
+def test_lost_run_ends_at_last_heartbeat_with_every_unfinished_phase(base_ts):
+    heartbeat = base_ts + timedelta(minutes=30)
+    run = replace(fake_job_run('j1', created_at=base_ts, term_status=None), heartbeat_at=heartbeat)
+
+    lost = run.as_lost(now=base_ts + timedelta(hours=1))
+
+    assert lost.lifecycle.termination.status == TerminationStatus.LOST
+    assert lost.lifecycle.termination.status.outcome == Outcome.FAULT
+    assert lost.lifecycle.termination.terminated_at == heartbeat
+    assert all(phase.lifecycle.is_ended for phase in lost.search_phases())
+    finished_before = [p.lifecycle.termination for p in run.search_phases() if p.lifecycle.is_ended]
+    assert finished_before and all(t in [p.lifecycle.termination for p in lost.search_phases()]
+                                   for t in finished_before)  # already ended phases keep their outcome
+
+
+def test_lost_run_never_ends_before_its_start(base_ts):
+    run = replace(fake_job_run('j1', created_at=base_ts, term_status=None), heartbeat_at=base_ts - timedelta(minutes=5))
+
+    lost = run.as_lost(now=base_ts + timedelta(hours=1))
+
+    assert lost.lifecycle.termination.terminated_at == run.lifecycle.started_at
+
+
+def test_lost_run_never_ends_in_the_storage_clock_future(base_ts):
+    run = replace(fake_job_run('j1', created_at=base_ts + timedelta(minutes=10), term_status=None),  # node ahead
+                  heartbeat_at=base_ts - timedelta(minutes=5))
+
+    lost = run.as_lost(now=base_ts)
+
+    assert lost.lifecycle.termination.terminated_at == base_ts
+
+
+def test_never_started_lost_run_ends_at_last_heartbeat_without_start(base_ts):
+    run = fake_job_run('j1', created_at=base_ts, term_status=None)
+    heartbeat = base_ts + timedelta(minutes=5)
+    created = replace(run, heartbeat_at=heartbeat,
+                      root_phase=replace(run.root_phase, lifecycle=RunLifecycle(base_ts), children=()))
+
+    lost = created.as_lost(now=base_ts + timedelta(hours=1))
+
+    assert lost.lifecycle.started_at is None
+    assert lost.lifecycle.termination.terminated_at == heartbeat
+
+
+def test_only_an_active_run_with_a_known_heartbeat_can_be_lost(base_ts):
+    with pytest.raises(ValueError):
+        fake_job_run('j1', created_at=base_ts, term_status=None).as_lost(now=base_ts)  # no heartbeat
+    with pytest.raises(ValueError):
+        replace(fake_job_run('j1', created_at=base_ts), heartbeat_at=base_ts).as_lost(now=base_ts)  # ended
 
 
 def test_heartbeat_is_not_job_state(base_ts):

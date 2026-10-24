@@ -10,7 +10,7 @@ import abc
 import datetime
 import re
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from enum import Enum
 from typing import Dict, Any, Iterable, List, Optional, Tuple, ClassVar, Set, Callable, Protocol, override
@@ -18,7 +18,7 @@ from typing import Dict, Any, Iterable, List, Optional, Tuple, ClassVar, Set, Ca
 from runtools.runcore import util
 from runtools.runcore.err import RuntoolsException
 from runtools.runcore.output import OutputLine, Output, OutputLocation
-from runtools.runcore.run import TerminationStatus, Fault, PhaseRun, Stage, RunLifecycle, StopReason
+from runtools.runcore.run import TerminationStatus, TerminationInfo, Fault, PhaseRun, Stage, RunLifecycle, StopReason
 from runtools.runcore.status import Status
 from runtools.runcore.util import MatchingStrategy, format_dt_iso, unique_timestamp_hex
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
@@ -757,12 +757,13 @@ class JobRun:
     def is_newer_than(self, other: 'JobRun') -> bool:
         """Decide whether this snapshot should replace `other` as the fresher state of the same instance.
 
-        Compares with `>=` because rapid successive updates can share clock resolution
-        and ties must apply (last received wins). Never true when this run would replace
-        an ended state with a non-ended one.
+        Lifecycle is monotonic: an ended snapshot always replaces a non-ended one and never the
+        reverse — whatever the timestamps, since an estimated termination (a run marked lost) may
+        predate the last active snapshot. Otherwise compares with `>=` because rapid successive
+        updates can share clock resolution and ties must apply (last received wins).
         """
-        if other.lifecycle.is_ended and not self.lifecycle.is_ended:
-            return False
+        if self.lifecycle.is_ended != other.lifecycle.is_ended:
+            return self.lifecycle.is_ended
         return self.last_updated >= other.last_updated
 
     def is_lost(self, *, now: Optional[datetime.datetime] = None,
@@ -782,6 +783,37 @@ class JobRun:
         if self.lifecycle.is_ended or self.heartbeat_at is None:
             return False
         return ((now or util.utc_now()) - self.heartbeat_at).total_seconds() > stale_after
+
+    def as_lost(self, *, now: datetime.datetime) -> 'JobRun':
+        """This run terminated as LOST at its last provably-alive moment.
+
+        The end time is an estimate: the later of the last heartbeat and the start, capped at ``now``
+        (the storage clock — ``started`` is node-clock data, so a skewed-ahead node could otherwise
+        leak a future timestamp). A run that never started ends at its last heartbeat. Every unfinished
+        phase ends with it, so the tree is structurally terminal.
+
+        Args:
+            now (datetime.datetime): The marking storage's current time.
+
+        Returns:
+            JobRun: The terminated copy; already ended phases keep their outcome.
+
+        Raises:
+            ValueError: If the run has ended or has no known heartbeat — it cannot be lost.
+        """
+        if self.lifecycle.is_ended or self.heartbeat_at is None:
+            raise ValueError(f"Run {self.instance_id} cannot be lost: ended or without a known heartbeat")
+        started = self.lifecycle.started_at
+        alive_until = max(self.heartbeat_at, started) if started else self.heartbeat_at
+        termination = TerminationInfo(TerminationStatus.LOST, min(alive_until, now),
+                                      "Owner stopped heartbeating; marked lost by an operator")
+
+        def terminate(phase: PhaseRun) -> PhaseRun:
+            lifecycle = phase.lifecycle if phase.lifecycle.termination else replace(phase.lifecycle,
+                                                                                    termination=termination)
+            return replace(phase, lifecycle=lifecycle, children=tuple(terminate(child) for child in phase.children))
+
+        return replace(self, root_phase=terminate(self.root_phase))
 
     def search_phases(self, predicate: Optional[Callable[['PhaseRun'], bool]] = None) -> List['PhaseRun']:
         """

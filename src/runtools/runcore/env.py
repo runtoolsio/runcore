@@ -194,8 +194,10 @@ def _db_module(kind: EnvironmentKind):
             assert_never(kind)  # new kind added but not wired here
 
 
-def _create_env_db(entry: EnvironmentEntry) -> EnvironmentDatabase:
-    """Create an EnvironmentDatabase instance from an entry (unopened).
+def open_env_db(entry: EnvironmentEntry) -> EnvironmentDatabase:
+    """The environment's store, unopened — use it as a context manager.
+
+    Direct storage access for operator maintenance that needs no live view (config, lost runs).
 
     Raises:
         EnvironmentNotFoundError: If the backing store does not exist.
@@ -221,14 +223,14 @@ def ensure_environment(entry: EnvironmentEntry):
 
 def load_env_config(entry: EnvironmentEntry) -> EnvironmentConfig:
     """Load environment config from DB. Returns defaults for missing keys."""
-    with _create_env_db(entry) as db:
+    with open_env_db(entry) as db:
         config_dict = db.load_config(entry.id)
         return _CONFIG_TYPES[entry.kind].model_validate(config_dict)
 
 
 def save_env_config(entry: EnvironmentEntry, config: EnvironmentConfig):
     """Save environment config to the DB."""
-    with _create_env_db(entry) as db:
+    with open_env_db(entry) as db:
         db.save_config(entry.id, config.model_dump(mode='json'))
 
 

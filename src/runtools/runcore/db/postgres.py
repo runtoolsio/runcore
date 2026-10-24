@@ -532,7 +532,7 @@ class PostgreSQL(EnvironmentDatabase):
     def _insert_run(self, job_id, run_id, ordinal, created, tags):
         with self._pool.connection() as conn, conn.cursor() as cur:
             # heartbeat_at is written in *server* time — one clock for every writer, and the one
-            # live_instances and the lost-run claim measure staleness against
+            # live_instances and mark_lost_runs measure staleness against
             cur.execute(
                 "INSERT INTO runs (job_id, run_id, ordinal, created, updated_at, heartbeat_at) "
                 "VALUES (%s, %s, %s, %s, %s, now())",
@@ -621,6 +621,30 @@ class PostgreSQL(EnvironmentDatabase):
             "SELECT job_id, run_id, ordinal FROM runs WHERE ended IS NULL "
             "AND heartbeat_at >= now() - make_interval(secs => %s)", (max_age,))
         return [InstanceID(r['job_id'], r['run_id'], r['ordinal']) for r in rows]
+
+    @override
+    @ensure_open
+    def mark_lost_runs(self, instance_ids, stale_after):
+        """See `RunStorage.mark_lost_runs`.
+
+        ``FOR UPDATE`` locks each candidate and re-checks staleness against a concurrently committed
+        heartbeat; a heartbeat waiting on the lock then finds the row ended. One transaction.
+        """
+        marked = []
+        with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            for iid in instance_ids:
+                cur.execute(
+                    "SELECT run, heartbeat_at, now() AS storage_now FROM runs "
+                    "WHERE job_id = %s AND run_id = %s AND ordinal = %s AND ended IS NULL AND run IS NOT NULL "
+                    "AND heartbeat_at < now() - make_interval(secs => %s) FOR UPDATE",
+                    (iid.job_id, iid.run_id, iid.ordinal, stale_after))
+                row = cur.fetchone()
+                if not row:
+                    continue
+                run = _to_job_run(row).as_lost(now=_read_dt(row['storage_now']))
+                cur.execute(_RUN_UPDATE_SQL, _run_update_params(run))
+                marked.append(iid)
+        return marked
 
     @override
     @ensure_open

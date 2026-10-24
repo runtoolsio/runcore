@@ -97,18 +97,6 @@ class EnvironmentConnector(ABC):
     def iter_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
         pass
 
-    @abstractmethod
-    def read_active_runs(self, run_match=None) -> list[JobRun]:
-        """Persisted snapshots of non-ended runs, read from storage independently of live discovery.
-
-        Includes runs whose node lost contact (see `JobRun.is_lost`), which the live view may not
-        show; excludes init-only rows, which carry no snapshot. Snapshots lag the persister's flush
-        interval.
-
-        Args:
-            run_match (Optional[JobRunCriteria]): Criteria selecting the runs; all when omitted.
-        """
-
     def get_instance(self, instance_id) -> JobInstance:
         instances = self.get_instances(JobRunCriteria.instance_match(instance_id))
         return next(iter(instances), None)
@@ -320,9 +308,6 @@ class _Connector(EnvironmentConnector):
 
     def iter_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
         return self._db.iter_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
-
-    def read_active_runs(self, run_match=None):
-        return self._db.read_active_runs(run_match)
 
     def read_run_stats(self, run_match=None):
         return self._db.read_run_stats(run_match)

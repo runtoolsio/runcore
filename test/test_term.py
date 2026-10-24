@@ -5,8 +5,9 @@ def test_get_statuses():
     fault_statuses = TerminationStatus.get_statuses(Outcome.FAULT)
     assert TerminationStatus.FAILED in fault_statuses
     assert TerminationStatus.ERROR in fault_statuses
+    assert TerminationStatus.LOST in fault_statuses
     assert TerminationStatus.UNKNOWN in fault_statuses  # UNKNOWN uses FAULT as fail-safe
-    assert len(fault_statuses) == 3
+    assert len(fault_statuses) == 4
 
     aborted_statuses = TerminationStatus.get_statuses(Outcome.ABORTED)
     assert TerminationStatus.CANCELLED in aborted_statuses

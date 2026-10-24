@@ -95,6 +95,7 @@ class TerminationStatus(Enum):
 
     FAILED = 31, Outcome.FAULT
     ERROR = 32, Outcome.FAULT
+    LOST = 33, Outcome.FAULT  # Owner stopped heartbeating; resolved by an operator, outcome never recorded
 
     @classmethod
     def from_code(cls, code):

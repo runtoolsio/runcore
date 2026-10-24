@@ -204,6 +204,25 @@ class RunStorage(ABC):
         """
 
     @abstractmethod
+    def mark_lost_runs(self, instance_ids: Iterable[InstanceID], stale_after: float) -> list[InstanceID]:
+        """Resolve the given runs as LOST — those still lost when the mark is written.
+
+        One atomic write: a run is marked only if its row has not ended, carries a run document
+        (init-only rows have nothing to terminate), and its heartbeat is older than ``stale_after``
+        on the storage's own clock at write time — the candidates were listed earlier, and an owner
+        may attest in between. A heartbeat committed before the mark prevents it; a mark committed
+        first makes the owner's own terminal write refused (see :meth:`store_runs`). The stored
+        document becomes terminal (see :meth:`JobRun.as_lost`), so pollers replay ENDED(LOST).
+
+        Args:
+            instance_ids: The candidates to mark — only these, never other lost runs.
+            stale_after: Heartbeat staleness bound in seconds, e.g. ``HEARTBEAT_STALE_AFTER``.
+
+        Returns:
+            The instances marked lost.
+        """
+
+    @abstractmethod
     def touch_heartbeats(self, instance_ids: Iterable[InstanceID]):
         """Refresh the liveness timestamp of still-active runs.
 

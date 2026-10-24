@@ -522,6 +522,34 @@ class SQLite(EnvironmentDatabase):
 
     @override
     @ensure_open
+    def mark_lost_runs(self, instance_ids, stale_after):
+        """See `RunStorage.mark_lost_runs`.
+
+        ``BEGIN IMMEDIATE`` takes the write lock before the staleness check, so no other process can
+        commit a heartbeat between the check and the mark.
+        """
+        marked = []
+        cursor = self._conn.cursor()
+        cursor.row_factory = sqlite3.Row
+        cursor.execute("BEGIN IMMEDIATE")
+        try:
+            with self._conn:  # Commits, or rolls back on error
+                for iid in instance_ids:
+                    row = cursor.execute(
+                        "SELECT run, heartbeat_at FROM runs WHERE job_id = ? AND run_id = ? AND ordinal = ? "
+                        "AND ended IS NULL AND run IS NOT NULL AND heartbeat_at IS NOT NULL "
+                        "AND (julianday('now') - julianday(heartbeat_at)) * 86400.0 > ?",
+                        (iid.job_id, iid.run_id, iid.ordinal, stale_after)).fetchone()
+                    if not row:
+                        continue
+                    cursor.execute(_RUN_UPDATE_SQL, _run_update_values(_to_job_run(row).as_lost(now=utc_now())))
+                    marked.append(iid)
+        finally:
+            cursor.close()
+        return marked
+
+    @override
+    @ensure_open
     def touch_heartbeats(self, instance_ids):
         """See `RunStorage.touch_heartbeats`."""
         ids = [(i.job_id, i.run_id, i.ordinal) for i in instance_ids]

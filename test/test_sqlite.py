@@ -768,6 +768,58 @@ def test_live_instances_include_init_only_rows_and_require_fresh_heartbeat(sut):
 
     assert sut.live_instances(max_age=60) == [init_only]  # ended and stale rows never count
     assert sorted(i.job_id for i in sut.live_instances(max_age=600)) == ['pending', 'stale']
+
+
+# --- mark lost runs (design point 8) ---
+
+def _backdate_heartbeat(db, job_id, minutes):
+    heartbeat = utc_now() - timedelta(minutes=minutes)
+    db._conn.execute("UPDATE runs SET heartbeat_at = ? WHERE job_id = ?",
+                     (heartbeat.strftime('%Y-%m-%d %H:%M:%S.%f'), job_id))
+    db._conn.commit()
+    return heartbeat
+
+
+def test_marked_run_ends_lost_at_its_last_heartbeat(sut):
+    run = fake_job_run('lost', created_at=utc_now() - timedelta(hours=1), term_status=None)
+    _init_active(sut, run)
+    heartbeat = _backdate_heartbeat(sut, 'lost', minutes=5)
+
+    assert sut.mark_lost_runs([run.instance_id], stale_after=60) == [run.instance_id]
+
+    [stored] = sut.read_runs()
+    assert stored.lifecycle.termination.status == TerminationStatus.LOST
+    assert stored.lifecycle.termination.terminated_at == heartbeat
+    assert sut.read_runs(criteria().termination_status(TerminationStatus.LOST).build()) == [stored]
+    assert not sut.read_active_runs()
+
+
+def test_mark_takes_only_requested_runs_still_lost_at_write_time(sut):
+    for job_id in ('fresh', 'stale', 'unrequested'):
+        _init_active(sut, fake_job_run(job_id, term_status=None))
+    _backdate_heartbeat(sut, 'stale', minutes=5)
+    _backdate_heartbeat(sut, 'unrequested', minutes=5)
+    init_only = sut.init_run('init_only', 'r1', created_at=utc_now())
+    _backdate_heartbeat(sut, 'init_only', minutes=5)
+    ended = fake_job_run('ended', term_status=TerminationStatus.COMPLETED)
+    _init_and_store(sut, ended)
+    _backdate_heartbeat(sut, 'ended', minutes=5)
+    requested = [InstanceID('fresh', 'r1'), InstanceID('stale', 'r1'), init_only, ended.instance_id]
+
+    assert sut.mark_lost_runs(requested, stale_after=60) == [InstanceID('stale', 'r1')]
+    assert sorted(r.job_id for r in sut.read_active_runs()) == ['fresh', 'unrequested']
+
+
+def test_owner_terminal_write_is_refused_after_mark(sut):
+    run = fake_job_run('lost', term_status=None)
+    _init_active(sut, run)
+    _backdate_heartbeat(sut, 'lost', minutes=5)
+    sut.mark_lost_runs([run.instance_id], stale_after=60)
+
+    refused = sut.store_runs(fake_job_run('lost', term_status=TerminationStatus.COMPLETED))
+
+    assert refused == [run.instance_id]
+    assert [r.lifecycle.termination.status for r in sut.read_runs()] == [TerminationStatus.LOST]
 # --- output tail (design point 7) ---
 
 
