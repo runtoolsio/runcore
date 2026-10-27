@@ -260,26 +260,53 @@ def open_configured_db(env_db: EnvironmentDatabase, env_id: str,
 def create_environment(entry: EnvironmentEntry, config: EnvironmentConfig):
     """Create a new environment: provision backing store, seed config, and register.
 
-    The name 'local' is reserved for the built-in environment.
+    The name 'local' is reserved for the built-in environment. An already provisioned store is refused rather than
+    re-seeded — its config may be shared with other machines; register it with :func:`add_environment` instead.
 
     Raises:
-        EnvironmentAlreadyExistsError: If environment already registered or name is reserved.
+        EnvironmentAlreadyExistsError: If the environment is already registered, its store already exists, or the
+            name is reserved.
     """
+    registry = _registry_for_new(entry)
+    driver = _db_module(entry.kind)
+    if driver.exists(entry):
+        raise EnvironmentAlreadyExistsError(entry.id)
+    driver.create_environment(entry, config)
+    _register(registry, entry)
+    log.debug("Environment created", extra={"env": entry.id})
+
+
+def add_environment(entry: EnvironmentEntry):
+    """Register an environment whose store already exists — e.g. a postgres environment created on another machine.
+
+    The store and its config are left untouched.
+
+    Raises:
+        EnvironmentAlreadyExistsError: If the environment is already registered or the name is reserved.
+        EnvironmentNotFoundError: If the store does not exist.
+    """
+    registry = _registry_for_new(entry)
+    if not _db_module(entry.kind).exists(entry):
+        raise EnvironmentNotFoundError(f"No store for environment '{entry.id}' at its location", {entry.id})
+    _register(registry, entry)
+    log.debug("Environment added", extra={"env": entry.id})
+
+
+def _registry_for_new(entry: EnvironmentEntry) -> Dict[str, dict]:
     if entry.id == BUILTIN_LOCAL:
         raise EnvironmentAlreadyExistsError(entry.id)
-
     registry = _load_registry()
     if entry.id in registry:
         raise EnvironmentAlreadyExistsError(entry.id)
+    return registry
 
-    _db_module(entry.kind).create_environment(entry, config)
 
+def _register(registry: Dict[str, dict], entry: EnvironmentEntry):
     entry_data = {"kind": entry.kind.value}
     if entry.location:
         entry_data["location"] = entry.location
     registry[entry.id] = entry_data
     _save_registry(registry)
-    log.debug("Environment created", extra={"env": entry.id})
 
 
 def delete_environment(env_id: str, *, delete_db: bool = True):

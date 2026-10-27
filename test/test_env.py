@@ -5,7 +5,10 @@ not at a user's first connect.
 """
 import pytest
 
-from runtools.runcore.env import EnvironmentKind, _CONFIG_TYPES, _db_module
+from runtools.runcore.env import (
+    EnvironmentAlreadyExistsError, EnvironmentEntry, EnvironmentKind, EnvironmentNotFoundError, LocalEnvironmentConfig,
+    _CONFIG_TYPES, _db_module, add_environment, create_environment, load_env_config, lookup, save_env_config,
+)
 
 DRIVER_CONTRACT = ("create", "create_environment", "exists", "delete")
 
@@ -31,3 +34,42 @@ def test_negative_tail_cap_rejected():
     with pytest.raises(ValidationError):
         OutputConfig(tail_cap=-1)
     assert OutputConfig(tail_cap=0).tail_cap == 0
+
+
+# --- Lifecycle: create provisions a new store; add registers an existing one ---
+
+@pytest.fixture
+def machines(tmp_path, monkeypatch):
+    """Two machines sharing one environment store: separate registries, the same database location."""
+    db = tmp_path / 'shared.db'
+
+    def use(machine):
+        monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / machine))
+        return EnvironmentEntry(id='work', kind=EnvironmentKind.LOCAL, location=str(db))
+
+    return use
+
+
+def test_create_refuses_an_existing_store_instead_of_reseeding_its_config(machines):
+    create_environment(machines('a'), LocalEnvironmentConfig())
+
+    with pytest.raises(EnvironmentAlreadyExistsError):
+        create_environment(machines('b'), LocalEnvironmentConfig())
+
+
+def test_add_registers_an_existing_store_and_keeps_its_config(machines):
+    entry = machines('a')
+    create_environment(entry, LocalEnvironmentConfig())
+    config = load_env_config(entry)
+    retention = config.retention.model_copy(update={'keep_days': 7})
+    save_env_config(entry, config.model_copy(update={'retention': retention}))
+
+    add_environment(machines('b'))
+
+    assert lookup('work').location == entry.location
+    assert load_env_config(lookup('work')).retention.keep_days == 7
+
+
+def test_add_requires_an_existing_store(machines):
+    with pytest.raises(EnvironmentNotFoundError):
+        add_environment(machines('a'))
