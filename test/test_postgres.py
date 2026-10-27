@@ -9,6 +9,7 @@ import os
 from datetime import timedelta, timezone
 
 import psycopg
+from psycopg import sql
 import pytest
 from dataclasses import replace
 
@@ -860,3 +861,34 @@ def test_output_tail_zero_max_lines_reads_whole_tail(sut):
 
     assert [line.ordinal for line in sut.read_output_tail(a, max_lines=0)] == [1, 2, 3]
     assert [line.ordinal for line in sut.read_output_tail(a, max_lines=0, after_ordinal=1)] == [2, 3]
+
+
+# --- logins sharing a group role ---
+
+def test_dsn_role_option_reaches_pooled_connections(pg_dsn):
+    """A DSN's `options=-c role=...` (logins acting as a shared group role) must apply to every connection,
+    so the group — not the individual login — owns the environment and every member can operate it."""
+    _drop_group_role(pg_dsn)
+    with psycopg.connect(pg_dsn, autocommit=True) as admin:
+        admin.execute("CREATE ROLE runtools_group_test NOLOGIN")
+        admin.execute("GRANT runtools_group_test TO CURRENT_USER")
+        [database] = admin.execute("SELECT current_database()").fetchone()
+        admin.execute(sql.SQL("GRANT CREATE ON DATABASE {} TO runtools_group_test").format(sql.Identifier(database)))
+    group_dsn = f"{pg_dsn}?options=-c%20role%3Druntools_group_test"
+    entry = EnvironmentEntry(id="group_env", kind="postgres", location=group_dsn)
+    try:
+        _provision(entry)
+        with psycopg.connect(pg_dsn) as admin:
+            [owner] = admin.execute("SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = %s",
+                                    (postgres._schema_name(entry.id),)).fetchone()
+        assert owner == "runtools_group_test"
+    finally:
+        postgres.delete(entry)
+        _drop_group_role(pg_dsn)
+
+
+def _drop_group_role(dsn):
+    with psycopg.connect(dsn, autocommit=True) as admin:
+        if admin.execute("SELECT 1 FROM pg_roles WHERE rolname = 'runtools_group_test'").fetchone():
+            admin.execute("DROP OWNED BY runtools_group_test")  # also revokes its privileges
+            admin.execute("DROP ROLE runtools_group_test")

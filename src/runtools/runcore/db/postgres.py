@@ -427,18 +427,20 @@ class PostgreSQL(EnvironmentDatabase):
 
     def _configure(self, conn):
         # Every pooled connection resolves unqualified names in this env's schema only — so all the
-        # storage SQL stays schema-agnostic. (Timezone is pinned via the connection options.)
+        # storage SQL stays schema-agnostic — and runs in UTC, so naive-UTC binds and TIMESTAMPTZ
+        # comparisons stay consistent. Set here rather than via connection `options`, which would
+        # replace the DSN's own (e.g. `-c role=...` for logins sharing a group role).
         # Session-level SET persists past the commit; the commit is required so the pool doesn't
         # discard the connection for being left in a transaction.
         conn.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(self._schema)))
+        conn.execute("SET TIME ZONE 'UTC'")
         conn.commit()
 
     def _open_pool(self):
         if self._pool is not None:
             raise InvalidStateError("Database connection already opened")
-        # Pin the session to UTC so naive-UTC binds and TIMESTAMPTZ comparisons stay consistent.
         pool = ConnectionPool(self._dsn, min_size=1, max_size=self._max_size, open=False,
-                              kwargs={"options": "-c timezone=UTC"}, configure=self._configure)
+                              configure=self._configure)
         pool.open(wait=True)
         self._pool = pool
 
