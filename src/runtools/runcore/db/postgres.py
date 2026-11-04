@@ -26,7 +26,7 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
 from runtools.runcore.db import (EnvironmentDatabase, EnvironmentStoreNotProvisionedError, IncompatibleSchemaError,
-                                 RunHead, Signal)
+                                 ProfileRolesNotFoundError, RunHead, Signal)
 from runtools.runcore.db.sql import (build_job_stats, build_order_by, build_where_clause, Dialect, last_run_ids,
                                      LAST_PER_JOB_SQL, matching_pks)
 from runtools.runcore.err import InvalidStateError
@@ -96,16 +96,26 @@ def delete(entry) -> None:
             sql.Identifier(_schema_name(entry.id))))
 
 
-def create_environment(entry, config) -> None:
+def create_environment(entry, config, *, grant_profiles: str | None = None) -> None:
     """Provision the schema (privileged DDL) and seed the initial configuration.
 
     The one place that issues DDL — separate from ``open()``, which only validates. Run by an
     administrator; the role needs ``CREATE`` on the database.
+
+    Args:
+        entry: EnvironmentEntry describing the database location.
+        config: EnvironmentConfig to seed as the initial configuration.
+        grant_profiles (str | None): Prefix of existing profile roles (``<prefix>_node``, ``<prefix>_operator``,
+            ``<prefix>_viewer``) to grant access, in the provisioning transaction — the grants follow the tables
+            they cover, so a schema change can't leave a profile without access to a new table.
+
+    Raises:
+        ProfileRolesNotFoundError: If any of the profile roles doesn't exist; nothing is provisioned.
     """
     db = create(entry)
     db._open_pool()
     try:
-        db._provision()
+        db._provision(grant_profiles)
         db.save_config(entry.id, config.model_dump(mode='json'))
     finally:
         db.close()
@@ -415,6 +425,28 @@ CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS schema_info (version INTEGER NOT NULL);
 """
 
+_PROFILES = ("node", "operator", "viewer")
+
+# Access profiles (docs/postgres.md): grants are per table, so they live beside the DDL and change with it.
+# The admin profile needs none — it is the schema owner.
+_PROFILE_GRANTS = """
+GRANT USAGE ON SCHEMA {schema} TO {node}, {operator}, {viewer};
+GRANT SELECT ON ALL TABLES IN SCHEMA {schema} TO {node}, {operator}, {viewer};
+-- Nodes: record runs, publish output, consume commands
+GRANT INSERT, UPDATE ON runs TO {node};
+GRANT INSERT ON run_tags TO {node};
+GRANT INSERT, DELETE ON output_tail TO {node};
+GRANT DELETE ON signals TO {node};
+-- Operators: send commands (stop, approve), mark-lost, clean, prune
+GRANT INSERT, DELETE ON signals TO {operator};
+GRANT UPDATE, DELETE ON runs TO {operator};
+GRANT DELETE ON run_tags, output_tail TO {operator};
+"""
+
+
+def _profile_roles(prefix: str) -> dict[str, str]:
+    return {profile: f"{prefix}_{profile}" for profile in _PROFILES}
+
 
 class PostgreSQL(EnvironmentDatabase):
 
@@ -471,10 +503,16 @@ class PostgreSQL(EnvironmentDatabase):
                 raise IncompatibleSchemaError(version, SCHEMA_VERSION)
 
     @ensure_open
-    def _provision(self):
-        """Create the env's schema + tables (privileged DDL). Idempotent: a no-op if already at the
-        current version, an error if a different version is present."""
+    def _provision(self, grant_profiles=None):
+        """Create the env's schema + tables (privileged DDL), granting the profiles with ``grant_profiles`` set.
+        Idempotent: a no-op if already at the current version, an error if a different version is present."""
         with self._pool.connection() as conn, conn.cursor() as cur:
+            if grant_profiles:
+                roles = _profile_roles(grant_profiles)
+                cur.execute("SELECT rolname FROM pg_roles WHERE rolname = ANY(%s)", (list(roles.values()),))
+                found = {name for (name,) in cur.fetchall()}
+                if missing := [name for name in roles.values() if name not in found]:
+                    raise ProfileRolesNotFoundError(missing)
             # Must precede table DDL; search_path already points here, so tables land in-schema.
             cur.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(self._schema)))
             if _schema_present(conn, self._schema):
@@ -486,6 +524,10 @@ class PostgreSQL(EnvironmentDatabase):
                 return
             cur.execute(_SCHEMA_DDL)
             cur.execute("INSERT INTO schema_info (version) VALUES (%s)", (SCHEMA_VERSION,))
+            if grant_profiles:
+                cur.execute(sql.SQL(_PROFILE_GRANTS).format(
+                    schema=sql.Identifier(self._schema),
+                    **{profile: sql.Identifier(name) for profile, name in roles.items()}))
             log.debug("Schema provisioned")
 
     @override

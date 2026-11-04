@@ -13,8 +13,9 @@ Key Components:
 Driver Module Contract:
     Each driver module must expose four module-level functions:
 
-    create_environment(entry, config) -> None
-        Provision the backing store, init schema, and seed config.
+    create_environment(entry, config, *, grant_profiles=None) -> None
+        Provision the backing store, init schema, and seed config; ``grant_profiles`` grants the profile roles
+        with that prefix access (postgres) or is refused (no roles).
     create(entry, **kwargs) -> EnvironmentDatabase
         Return an (unopened) database handle for an existing environment.
     exists(entry) -> bool
@@ -61,6 +62,14 @@ class EnvironmentStoreNotProvisionedError(RuntoolsException):
             f"Environment '{env_id}' backing store is not provisioned. "
             f"An administrator must create it (create_environment) before it can be opened.")
         self.env_id = env_id
+
+
+class ProfileRolesNotFoundError(RuntoolsException):
+    """Roles named for profile grants don't exist — runtools grants to roles but never creates them."""
+
+    def __init__(self, roles):
+        super().__init__(f"Profile roles not found: {', '.join(roles)}")
+        self.roles = roles
 
 
 class ConfigStorage(ABC):

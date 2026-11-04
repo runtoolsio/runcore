@@ -3,6 +3,8 @@
 Guard tests: adding a new ``EnvironmentKind`` without wiring these tables should fail here,
 not at a user's first connect.
 """
+from pathlib import Path
+
 import pytest
 
 from runtools.runcore.env import (
@@ -73,3 +75,14 @@ def test_add_registers_an_existing_store_and_keeps_its_config(machines):
 def test_add_requires_an_existing_store(machines):
     with pytest.raises(EnvironmentNotFoundError):
         add_environment(machines('a'))
+
+
+def test_profile_grants_are_refused_for_a_local_environment(machines):
+    entry = machines('a')
+
+    with pytest.raises(ValueError):
+        create_environment(entry, LocalEnvironmentConfig(), grant_profiles='runtools')
+
+    assert not Path(entry.location).exists()
+    with pytest.raises(EnvironmentNotFoundError):
+        lookup('work')

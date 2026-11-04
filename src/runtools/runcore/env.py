@@ -257,21 +257,29 @@ def open_configured_db(env_db: EnvironmentDatabase, env_id: str,
 
 # --- Lifecycle ---
 
-def create_environment(entry: EnvironmentEntry, config: EnvironmentConfig):
+def create_environment(entry: EnvironmentEntry, config: EnvironmentConfig, *, grant_profiles: Optional[str] = None):
     """Create a new environment: provision backing store, seed config, and register.
 
     The name 'local' is reserved for the built-in environment. An already provisioned store is refused rather than
     re-seeded — its config may be shared with other machines; register it with :func:`add_environment` instead.
 
+    Args:
+        entry (EnvironmentEntry): The environment to create.
+        config (EnvironmentConfig): Initial configuration stored with the environment.
+        grant_profiles (Optional[str]): postgres only — prefix of the profile roles (``<prefix>_node``,
+            ``<prefix>_operator``, ``<prefix>_viewer``) to grant access to the new environment.
+
     Raises:
         EnvironmentAlreadyExistsError: If the environment is already registered, its store already exists, or the
             name is reserved.
+        ProfileRolesNotFoundError: If a profile role doesn't exist; nothing is created.
+        ValueError: If ``grant_profiles`` is given for a non-postgres environment.
     """
     registry = _registry_for_new(entry)
     driver = _db_module(entry.kind)
     if driver.exists(entry):
         raise EnvironmentAlreadyExistsError(entry.id)
-    driver.create_environment(entry, config)
+    driver.create_environment(entry, config, grant_profiles=grant_profiles)
     _register(registry, entry)
     log.debug("Environment created", extra={"env": entry.id})
 

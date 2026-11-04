@@ -47,13 +47,19 @@ def delete(entry) -> None:
         db_file.unlink()
 
 
-def create_environment(entry, config) -> None:
+def create_environment(entry, config, *, grant_profiles: str | None = None) -> None:
     """Create a new environment: provision backing store, init schema, and seed config.
 
     Args:
         entry: EnvironmentEntry describing the database location.
         config: EnvironmentConfig to seed as the initial configuration.
+        grant_profiles (str | None): Unsupported — part of the driver contract for postgres.
+
+    Raises:
+        ValueError: If ``grant_profiles`` is given — SQLite has no roles; access is the file's permissions.
     """
+    if grant_profiles:
+        raise ValueError("Profile grants need a postgres environment — SQLite access is the file's permissions")
     _resolve_path(entry).parent.mkdir(parents=True, exist_ok=True)
     with create(entry) as db:
         db.save_config(entry.id, config.model_dump(mode='json'))

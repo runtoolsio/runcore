@@ -13,7 +13,8 @@ from psycopg import sql
 import pytest
 from dataclasses import replace
 
-from runtools.runcore.db import EnvironmentStoreNotProvisionedError, IncompatibleSchemaError, postgres
+from runtools.runcore.db import (EnvironmentStoreNotProvisionedError, IncompatibleSchemaError,
+                                 ProfileRolesNotFoundError, postgres)
 from runtools.runcore.db.postgres import AdvisoryLockProvider, PostgreSQL, SCHEMA_VERSION
 from runtools.runcore.env import EnvironmentEntry, PostgresEnvironmentConfig
 from runtools.runcore.err import InvalidStateError
@@ -257,6 +258,74 @@ def test_open_works_without_ddl_privilege(pg_dsn):
         postgres.delete(other)
         with psycopg.connect(pg_dsn, autocommit=True) as admin:
             admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)))
+
+
+# --- profile grants ---
+
+@pytest.fixture
+def profile_roles(pg_dsn):
+    """Profile roles ``rt_grant_node``, ``rt_grant_operator``, ``rt_grant_viewer``; yields their prefix."""
+    from psycopg import errors
+
+    roles = [f"rt_grant_{profile}" for profile in ("node", "operator", "viewer")]
+
+    def drop_roles(admin):
+        for role in roles:
+            admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)))
+
+    try:
+        with psycopg.connect(pg_dsn, autocommit=True) as admin:
+            drop_roles(admin)
+            for role in roles:
+                admin.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(role)))
+    except errors.InsufficientPrivilege:
+        pytest.skip("test DSN role cannot CREATE ROLE")
+    yield "rt_grant"
+    with psycopg.connect(pg_dsn, autocommit=True) as admin:
+        drop_roles(admin)
+
+
+def test_grant_profiles_gives_each_profile_its_access(pg_dsn, profile_roles):
+    entry = EnvironmentEntry(id="grant_env", kind="postgres", location=pg_dsn)
+    schema = postgres._schema_name(entry.id)
+    expected = {
+        ("node", "runs", "INSERT"): True,
+        ("node", "output_tail", "INSERT"): True,
+        ("node", "signals", "DELETE"): True,
+        ("node", "signals", "INSERT"): False,
+        ("node", "config", "UPDATE"): False,
+        ("operator", "signals", "INSERT"): True,
+        ("operator", "runs", "DELETE"): True,
+        ("operator", "runs", "INSERT"): False,
+        ("operator", "config", "UPDATE"): False,
+        ("viewer", "runs", "SELECT"): True,
+        ("viewer", "config", "SELECT"): True,
+        ("viewer", "signals", "INSERT"): False,
+        ("viewer", "runs", "UPDATE"): False,
+    }
+    postgres.delete(entry)
+    try:
+        postgres.create_environment(entry, PostgresEnvironmentConfig(), grant_profiles=profile_roles)
+
+        with psycopg.connect(pg_dsn) as conn:
+            def allowed(profile, table, privilege):
+                return conn.execute("SELECT has_table_privilege(%s, %s, %s)",
+                                    (f"{profile_roles}_{profile}", f"{schema}.{table}", privilege)).fetchone()[0]
+
+            assert {check: allowed(*check) for check in expected} == expected
+    finally:
+        postgres.delete(entry)
+
+
+def test_grant_profiles_with_a_missing_role_creates_nothing(pg_dsn):
+    entry = EnvironmentEntry(id="grant_env", kind="postgres", location=pg_dsn)
+    postgres.delete(entry)
+
+    with pytest.raises(ProfileRolesNotFoundError) as exc_info:
+        postgres.create_environment(entry, PostgresEnvironmentConfig(), grant_profiles="rt_absent")
+
+    assert exc_info.value.roles == ["rt_absent_node", "rt_absent_operator", "rt_absent_viewer"]
+    assert not postgres.exists(entry)
 
 
 # --- round-trip / reads ---
