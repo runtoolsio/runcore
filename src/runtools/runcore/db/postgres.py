@@ -26,7 +26,7 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
 from runtools.runcore.db import (EnvironmentDatabase, EnvironmentStoreNotProvisionedError, IncompatibleSchemaError,
-                                 ProfileRolesNotFoundError, RunHead, Signal)
+                                 NotEnvironmentOwnerError, ProfileRolesNotFoundError, RunHead, Signal)
 from runtools.runcore.db.sql import (build_job_stats, build_order_by, build_where_clause, Dialect, last_run_ids,
                                      LAST_PER_JOB_SQL, matching_pks)
 from runtools.runcore.err import InvalidStateError
@@ -119,6 +119,25 @@ def create_environment(entry, config, *, grant_profiles: str | None = None) -> N
         db.save_config(entry.id, config.model_dump(mode='json'))
     finally:
         db.close()
+
+
+def grant_profiles(entry, prefix: str) -> None:
+    """Grant the profile roles with ``prefix`` access to an existing environment, in one transaction.
+
+    Run by the environment's owner. Repeating it is harmless — a role keeps what it was already granted.
+
+    Args:
+        entry: EnvironmentEntry describing the database location.
+        prefix (str): Prefix of existing profile roles (``<prefix>_node``, ``<prefix>_operator``,
+            ``<prefix>_viewer``).
+
+    Raises:
+        EnvironmentStoreNotProvisionedError: If the environment's schema doesn't exist.
+        NotEnvironmentOwnerError: If the login doesn't own the schema; nothing is granted.
+        ProfileRolesNotFoundError: If any of the profile roles doesn't exist; nothing is granted.
+    """
+    with create(entry) as db:
+        db._grant_profiles(prefix)
 
 
 def create(entry, **kwargs) -> 'PostgreSQL':
@@ -444,8 +463,19 @@ GRANT DELETE ON run_tags, output_tail TO {operator};
 """
 
 
-def _profile_roles(prefix: str) -> dict[str, str]:
-    return {profile: f"{prefix}_{profile}" for profile in _PROFILES}
+def _profile_roles(cur, prefix: str) -> dict[str, str]:
+    """The profile roles with ``prefix``, checked to exist so that a missing one is named, not a bare SQL error."""
+    roles = {profile: f"{prefix}_{profile}" for profile in _PROFILES}
+    cur.execute("SELECT rolname FROM pg_roles WHERE rolname = ANY(%s)", (list(roles.values()),))
+    found = {name for (name,) in cur.fetchall()}
+    if missing := [name for name in roles.values() if name not in found]:
+        raise ProfileRolesNotFoundError(missing)
+    return roles
+
+
+def _grant(cur, schema: str, roles: dict[str, str]):
+    cur.execute(sql.SQL(_PROFILE_GRANTS).format(
+        schema=sql.Identifier(schema), **{profile: sql.Identifier(name) for profile, name in roles.items()}))
 
 
 class PostgreSQL(EnvironmentDatabase):
@@ -507,12 +537,7 @@ class PostgreSQL(EnvironmentDatabase):
         """Create the env's schema + tables (privileged DDL), granting the profiles with ``grant_profiles`` set.
         Idempotent: a no-op if already at the current version, an error if a different version is present."""
         with self._pool.connection() as conn, conn.cursor() as cur:
-            if grant_profiles:
-                roles = _profile_roles(grant_profiles)
-                cur.execute("SELECT rolname FROM pg_roles WHERE rolname = ANY(%s)", (list(roles.values()),))
-                found = {name for (name,) in cur.fetchall()}
-                if missing := [name for name in roles.values() if name not in found]:
-                    raise ProfileRolesNotFoundError(missing)
+            roles = _profile_roles(cur, grant_profiles) if grant_profiles else None
             # Must precede table DDL; search_path already points here, so tables land in-schema.
             cur.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(self._schema)))
             if _schema_present(conn, self._schema):
@@ -524,11 +549,18 @@ class PostgreSQL(EnvironmentDatabase):
                 return
             cur.execute(_SCHEMA_DDL)
             cur.execute("INSERT INTO schema_info (version) VALUES (%s)", (SCHEMA_VERSION,))
-            if grant_profiles:
-                cur.execute(sql.SQL(_PROFILE_GRANTS).format(
-                    schema=sql.Identifier(self._schema),
-                    **{profile: sql.Identifier(name) for profile, name in roles.items()}))
+            if roles:
+                _grant(cur, self._schema, roles)
             log.debug("Schema provisioned")
+
+    @ensure_open
+    def _grant_profiles(self, prefix):
+        with self._pool.connection() as conn, conn.cursor() as cur:
+            # A non-owner's GRANT only warns that nothing was granted, so it would look like success
+            cur.execute("SELECT pg_has_role(nspowner, 'USAGE') FROM pg_namespace WHERE nspname = %s", (self._schema,))
+            if not cur.fetchone()[0]:
+                raise NotEnvironmentOwnerError(self._env_id)
+            _grant(cur, self._schema, _profile_roles(cur, prefix))
 
     @override
     def close(self):

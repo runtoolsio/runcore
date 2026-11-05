@@ -14,7 +14,7 @@ import pytest
 from dataclasses import replace
 
 from runtools.runcore.db import (EnvironmentStoreNotProvisionedError, IncompatibleSchemaError,
-                                 ProfileRolesNotFoundError, postgres)
+                                 NotEnvironmentOwnerError, ProfileRolesNotFoundError, postgres)
 from runtools.runcore.db.postgres import AdvisoryLockProvider, PostgreSQL, SCHEMA_VERSION
 from runtools.runcore.env import EnvironmentEntry, PostgresEnvironmentConfig
 from runtools.runcore.err import InvalidStateError
@@ -285,7 +285,18 @@ def profile_roles(pg_dsn):
         drop_roles(admin)
 
 
-def test_grant_profiles_gives_each_profile_its_access(pg_dsn, profile_roles):
+def _grant_on_create(entry, prefix):
+    postgres.create_environment(entry, PostgresEnvironmentConfig(), grant_profiles=prefix)
+
+
+def _grant_afterwards(entry, prefix):
+    postgres.create_environment(entry, PostgresEnvironmentConfig())
+    postgres.grant_profiles(entry, prefix)
+    postgres.grant_profiles(entry, prefix)  # repeating is harmless
+
+
+@pytest.mark.parametrize("grant", [_grant_on_create, _grant_afterwards])
+def test_grant_profiles_gives_each_profile_its_access(pg_dsn, profile_roles, grant):
     entry = EnvironmentEntry(id="grant_env", kind="postgres", location=pg_dsn)
     schema = postgres._schema_name(entry.id)
     expected = {
@@ -305,7 +316,7 @@ def test_grant_profiles_gives_each_profile_its_access(pg_dsn, profile_roles):
     }
     postgres.delete(entry)
     try:
-        postgres.create_environment(entry, PostgresEnvironmentConfig(), grant_profiles=profile_roles)
+        grant(entry, profile_roles)
 
         with psycopg.connect(pg_dsn) as conn:
             def allowed(profile, table, privilege):
@@ -326,6 +337,27 @@ def test_grant_profiles_with_a_missing_role_creates_nothing(pg_dsn):
 
     assert exc_info.value.roles == ["rt_absent_node", "rt_absent_operator", "rt_absent_viewer"]
     assert not postgres.exists(entry)
+
+
+def test_grant_profiles_to_an_existing_environment_needs_existing_roles(sut, pg_dsn):
+    entry = EnvironmentEntry(id="test_env", kind="postgres", location=pg_dsn)
+
+    with pytest.raises(ProfileRolesNotFoundError):
+        postgres.grant_profiles(entry, "rt_absent")
+
+
+def test_grant_profiles_by_a_non_owner_is_refused(pg_dsn, profile_roles):
+    """A non-owner's GRANT grants nothing, with only a warning — so it must fail instead."""
+    entry = EnvironmentEntry(id="grant_env", kind="postgres", location=pg_dsn)
+    as_operator = entry.model_copy(update={"location": f"{pg_dsn}?options=-c%20role%3D{profile_roles}_operator"})
+    postgres.delete(entry)
+    try:
+        postgres.create_environment(entry, PostgresEnvironmentConfig(), grant_profiles=profile_roles)
+
+        with pytest.raises(NotEnvironmentOwnerError):
+            postgres.grant_profiles(as_operator, profile_roles)
+    finally:
+        postgres.delete(entry)
 
 
 # --- round-trip / reads ---

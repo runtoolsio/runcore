@@ -65,6 +65,15 @@ def create_environment(entry, config, *, grant_profiles: str | None = None) -> N
         db.save_config(entry.id, config.model_dump(mode='json'))
 
 
+def grant_profiles(entry, prefix: str) -> None:
+    """Unsupported — part of the driver contract for postgres.
+
+    Raises:
+        ValueError: Always — SQLite has no roles; access is the file's permissions.
+    """
+    raise ValueError("Profile grants need a postgres environment — SQLite access is the file's permissions")
+
+
 def create(entry, **kwargs):
     """
     Creates SQLite persistence with configurable connection parameters.

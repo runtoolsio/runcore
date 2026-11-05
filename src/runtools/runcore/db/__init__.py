@@ -11,11 +11,13 @@ Key Components:
     RunStorage: Protocol for job run history (runs table).
 
 Driver Module Contract:
-    Each driver module must expose four module-level functions:
+    Each driver module must expose five module-level functions:
 
     create_environment(entry, config, *, grant_profiles=None) -> None
         Provision the backing store, init schema, and seed config; ``grant_profiles`` grants the profile roles
         with that prefix access (postgres) or is refused (no roles).
+    grant_profiles(entry, prefix) -> None
+        Grant the profile roles with that prefix access to an existing environment (postgres) or refuse (no roles).
     create(entry, **kwargs) -> EnvironmentDatabase
         Return an (unopened) database handle for an existing environment.
     exists(entry) -> bool
@@ -70,6 +72,14 @@ class ProfileRolesNotFoundError(RuntoolsException):
     def __init__(self, roles):
         super().__init__(f"Profile roles not found: {', '.join(roles)}")
         self.roles = roles
+
+
+class NotEnvironmentOwnerError(RuntoolsException):
+    """The login doesn't own the environment's store, so it can't grant access to it."""
+
+    def __init__(self, env_id):
+        super().__init__(f"Not the owner of environment '{env_id}' — only its owner can grant access to it")
+        self.env_id = env_id
 
 
 class ConfigStorage(ABC):

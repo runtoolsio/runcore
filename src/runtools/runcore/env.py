@@ -179,8 +179,8 @@ def resolve_env_id(env_id: Optional[str] = None) -> str:
 def _db_module(kind: EnvironmentKind):
     """Resolve the database backend module for an environment kind.
 
-    Each module exposes the driver contract (``create()``, ``create_environment()``, ``exists()``,
-    ``delete()``). Imported lazily per branch so an unused backend's optional deps (e.g. ``psycopg``
+    Each module exposes the driver contract (``create()``, ``create_environment()``, ``grant_profiles()``,
+    ``exists()``, ``delete()``). Imported lazily per branch so an unused backend's optional deps (e.g. ``psycopg``
     for postgres) are never imported.
     """
     match kind:
@@ -282,6 +282,24 @@ def create_environment(entry: EnvironmentEntry, config: EnvironmentConfig, *, gr
     driver.create_environment(entry, config, grant_profiles=grant_profiles)
     _register(registry, entry)
     log.debug("Environment created", extra={"env": entry.id})
+
+
+def grant_profiles(entry: EnvironmentEntry, prefix: str):
+    """Grant the profile roles with ``prefix`` access to an existing environment — for one created without
+    ``grant_profiles``. Repeating it is harmless.
+
+    Args:
+        entry (EnvironmentEntry): The environment, connected as its owner.
+        prefix (str): Prefix of the profile roles (``<prefix>_node``, ``<prefix>_operator``, ``<prefix>_viewer``).
+
+    Raises:
+        EnvironmentStoreNotProvisionedError: If the environment's store doesn't exist.
+        NotEnvironmentOwnerError: If the login doesn't own the environment; nothing is granted.
+        ProfileRolesNotFoundError: If a profile role doesn't exist; nothing is granted.
+        ValueError: For a non-postgres environment.
+    """
+    _db_module(entry.kind).grant_profiles(entry, prefix)
+    log.debug("Profiles granted", extra={"env": entry.id, "prefix": prefix})
 
 
 def add_environment(entry: EnvironmentEntry):

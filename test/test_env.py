@@ -9,10 +9,11 @@ import pytest
 
 from runtools.runcore.env import (
     EnvironmentAlreadyExistsError, EnvironmentEntry, EnvironmentKind, EnvironmentNotFoundError, LocalEnvironmentConfig,
-    _CONFIG_TYPES, _db_module, add_environment, create_environment, load_env_config, lookup, save_env_config,
+    _CONFIG_TYPES, _db_module, add_environment, create_environment, grant_profiles, load_env_config, lookup,
+    save_env_config,
 )
 
-DRIVER_CONTRACT = ("create", "create_environment", "exists", "delete")
+DRIVER_CONTRACT = ("create", "create_environment", "grant_profiles", "exists", "delete")
 
 
 @pytest.mark.parametrize("kind", EnvironmentKind)
@@ -86,3 +87,11 @@ def test_profile_grants_are_refused_for_a_local_environment(machines):
     assert not Path(entry.location).exists()
     with pytest.raises(EnvironmentNotFoundError):
         lookup('work')
+
+
+def test_profile_grants_are_refused_for_an_existing_local_environment(machines):
+    entry = machines('a')
+    create_environment(entry, LocalEnvironmentConfig())
+
+    with pytest.raises(ValueError):
+        grant_profiles(entry, 'runtools')
