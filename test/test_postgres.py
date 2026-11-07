@@ -14,7 +14,8 @@ import pytest
 from dataclasses import replace
 
 from runtools.runcore.db import (EnvironmentStoreNotProvisionedError, IncompatibleSchemaError,
-                                 NotEnvironmentOwnerError, ProfileRolesNotFoundError, postgres)
+                                 NotEnvironmentOwnerError, PermissionDeniedError, ProfileRolesNotFoundError,
+                                 postgres)
 from runtools.runcore.db.postgres import AdvisoryLockProvider, PostgreSQL, SCHEMA_VERSION
 from runtools.runcore.env import EnvironmentEntry, PostgresEnvironmentConfig
 from runtools.runcore.err import InvalidStateError
@@ -249,7 +250,7 @@ def test_open_works_without_ddl_privilege(pg_dsn):
 
         # Same role: provisioning a new env requires DDL → denied.
         postgres.delete(other)
-        with pytest.raises(errors.InsufficientPrivilege):
+        with pytest.raises(PermissionDeniedError, match="permission denied for database"):
             postgres.create_environment(
                 EnvironmentEntry(id=other.id, kind="postgres", location=limited_dsn),
                 PostgresEnvironmentConfig())
@@ -358,6 +359,58 @@ def test_grant_profiles_by_a_non_owner_is_refused(pg_dsn, profile_roles):
             postgres.grant_profiles(as_operator, profile_roles)
     finally:
         postgres.delete(entry)
+
+
+def _as_role(entry, role):
+    """The entry connecting as ``role`` — the DSN's own login switched to it, like a login in that role."""
+    return entry.model_copy(update={"location": f"{entry.location}?options=-c%20role%3D{role}"})
+
+
+@pytest.fixture
+def granted_env(pg_dsn, profile_roles):
+    """An environment created with the ``rt_grant_*`` profiles granted; a role ``rt_outsider`` with no grants."""
+    entry = EnvironmentEntry(id="grant_env", kind="postgres", location=pg_dsn)
+    postgres.delete(entry)
+    postgres.create_environment(entry, PostgresEnvironmentConfig(), grant_profiles=profile_roles)
+    with psycopg.connect(pg_dsn, autocommit=True) as admin:
+        admin.execute("DROP ROLE IF EXISTS rt_outsider")
+        admin.execute("CREATE ROLE rt_outsider NOLOGIN")
+    yield entry
+    postgres.delete(entry)
+    with psycopg.connect(pg_dsn, autocommit=True) as admin:
+        admin.execute("DROP ROLE rt_outsider")
+
+
+def test_a_denied_operation_raises_permission_denied(granted_env):
+    with postgres.create(_as_role(granted_env, "rt_grant_viewer")) as db:
+        with pytest.raises(PermissionDeniedError) as exc_info:
+            db.send_signal(InstanceID("j1", "r1"), "stop")
+
+    assert exc_info.value.reason == "permission denied for table signals"
+    assert isinstance(exc_info.value.__cause__, psycopg.errors.InsufficientPrivilege)  # kept for diagnostics
+
+
+def test_opening_without_schema_access_is_denied(granted_env):
+    """Not a misleading missing `schema_info` table."""
+    with pytest.raises(PermissionDeniedError, match="permission denied for schema"):
+        postgres.create(_as_role(granted_env, "rt_outsider")).open()
+
+
+def test_a_denied_read_raises_permission_denied(pg_dsn, granted_env):
+    schema = sql.Identifier(postgres._schema_name(granted_env.id))
+    with psycopg.connect(pg_dsn, autocommit=True) as admin:  # enough to open, not to read runs
+        admin.execute(sql.SQL("GRANT USAGE ON SCHEMA {0} TO rt_outsider; "
+                              "GRANT SELECT ON {0}.schema_info TO rt_outsider").format(schema))
+
+    with postgres.create(_as_role(granted_env, "rt_outsider")) as db:
+        with pytest.raises(PermissionDeniedError, match="table runs"):
+            list(db.iter_runs())
+
+
+def test_deleting_without_ownership_is_denied(granted_env):
+    with pytest.raises(PermissionDeniedError, match="must be owner"):
+        postgres.delete(_as_role(granted_env, "rt_grant_operator"))
+    assert postgres.exists(granted_env)
 
 
 # --- round-trip / reads ---

@@ -13,6 +13,7 @@ import hashlib
 import logging
 import re
 import time
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import timezone
 from functools import wraps
@@ -20,13 +21,14 @@ from typing import Iterator, List, override
 
 import psycopg
 from psycopg import sql
-from psycopg.errors import LockNotAvailable, UniqueViolation
+from psycopg.errors import InsufficientPrivilege, LockNotAvailable, UniqueViolation
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
 from runtools.runcore.db import (EnvironmentDatabase, EnvironmentStoreNotProvisionedError, IncompatibleSchemaError,
-                                 NotEnvironmentOwnerError, ProfileRolesNotFoundError, RunHead, Signal)
+                                 NotEnvironmentOwnerError, PermissionDeniedError, ProfileRolesNotFoundError, RunHead,
+                                 Signal)
 from runtools.runcore.db.sql import (build_job_stats, build_order_by, build_where_clause, Dialect, last_run_ids,
                                      LAST_PER_JOB_SQL, matching_pks)
 from runtools.runcore.err import InvalidStateError
@@ -91,7 +93,7 @@ def exists(entry) -> bool:
 
 def delete(entry) -> None:
     """Drop the environment's schema (and everything in it). The database is left in place."""
-    with psycopg.connect(_dsn(entry)) as conn:
+    with _privileges(entry.id), psycopg.connect(_dsn(entry)) as conn:
         conn.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
             sql.Identifier(_schema_name(entry.id))))
 
@@ -375,12 +377,22 @@ def _status_csv(*outcomes) -> str:
     return ', '.join(str(s.value) for s in TerminationStatus.get_statuses(*outcomes))
 
 
+@contextmanager
+def _privileges(env_id):
+    """Raise a missing privilege as ``PermissionDeniedError``, so callers needn't know psycopg (an optional dep)."""
+    try:
+        yield
+    except InsufficientPrivilege as e:
+        raise PermissionDeniedError(env_id, e.diag.message_primary) from e
+
+
 def ensure_open(f):
     @wraps(f)
     def wrapper(self, *args, **kwargs):
         if self._pool is None:
             raise InvalidStateError("Database connection not opened")
-        return f(self, *args, **kwargs)
+        with _privileges(self._env_id):
+            return f(self, *args, **kwargs)
 
     return wrapper
 
@@ -526,6 +538,10 @@ class PostgreSQL(EnvironmentDatabase):
         with self._pool.connection() as conn, conn.cursor() as cur:
             if not _schema_present(conn, self._schema):
                 raise EnvironmentStoreNotProvisionedError(self._env_id)
+            # Without USAGE the tables are invisible, which would read as a missing `schema_info` table
+            cur.execute("SELECT has_schema_privilege(%s, 'USAGE')", (self._schema,))
+            if not cur.fetchone()[0]:
+                raise PermissionDeniedError(self._env_id, f"permission denied for schema {self._schema}")
             cur.execute("SELECT version FROM schema_info")
             row = cur.fetchone()
             version = row[0] if row else None

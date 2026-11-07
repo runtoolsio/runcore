@@ -74,6 +74,15 @@ class ProfileRolesNotFoundError(RuntoolsException):
         self.roles = roles
 
 
+class PermissionDeniedError(RuntoolsException):
+    """The login lacks the database privileges for an operation on the environment."""
+
+    def __init__(self, env_id, reason):
+        super().__init__(f"Permission denied in environment '{env_id}': {reason}")
+        self.env_id = env_id
+        self.reason = reason
+
+
 class NotEnvironmentOwnerError(RuntoolsException):
     """The login doesn't own the environment's store, so it can't grant access to it."""
 
